@@ -1,0 +1,19 @@
+[tool]
+name = "ntheemba-auth-service"
+version = "0.1.0"
+description = "Authentication service for Ntheemba platform"
+authors = ["Your Name <youremail@example.com>"]
+license = "MIT"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+fastapi = "^0.68.0"
+uvicorn = "^0.15.0"
+sqlalchemy = "^1.4.22"
+alembic = "^1.7.5"
+pydantic = "^1.8.2"
+python-dotenv = "^0.19.1"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

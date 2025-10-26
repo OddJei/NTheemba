@@ -1,0 +1,12 @@
+browse_catalogue
+├── serve_categories
+│   └── select_category
+│       └── serve_products
+│           └── select_product
+│               └── show_product_details
+│                   ├── add_to_cart
+│                   │   ├── view_cart
+│                   │   │   └── inspect_cart_item
+│                   │   ├── remove_from_cart
+│                   │   └── clear_cart
+│                   

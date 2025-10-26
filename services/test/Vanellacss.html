@@ -1,0 +1,106 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hero — Vanilla CSS</title>
+  <style>
+    :root{
+      --bg-1:#0b1220; --bg-2:#0f172a; --text:#e2e8f0;
+      --muted:#94a3b8; --ring:rgba(255,255,255,.12);
+      --emerald:#34d399; --teal:#5eead4; --cyan:#67e8f9;
+      --black:#0a0f1a; --white: #ffffff;
+      --radius: 16px;
+      --container: 72rem;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;
+      color:var(--text);
+      background: linear-gradient(to bottom, #020617, var(--bg-1) 30%, var(--bg-2));
+      -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+    }
+    .hero{min-height:100vh; display:flex; align-items:center;}
+    .container{width:100%; max-width:var(--container); margin:0 auto; padding:0 1.5rem;}
+    .grid{display:grid; gap:3rem;}
+    .card{
+      position:relative; border-radius:20px; background:rgba(15,23,42,.6);
+      border:1px solid var(--ring); padding:1.5rem; box-shadow:0 25px 60px rgba(0,0,0,.4);
+    }
+    .glow{
+      position:absolute; inset:-16px;
+      background: radial-gradient(60% 60% at 30% 10%, rgba(52,211,153,.2), transparent 60%),
+                  radial-gradient(60% 60% at 90% 40%, rgba(103,232,249,.18), transparent 60%);
+      filter: blur(24px); border-radius:24px; z-index:0;
+    }
+    .badge{
+      display:inline-flex; align-items:center; gap:.5rem;
+      background: rgba(30,41,59,.6); border:1px solid var(--ring);
+      border-radius:999px; padding:.35rem .75rem; font-size:.9rem;
+    }
+    .dot{width:.5rem; height:.5rem; background:var(--emerald); border-radius:50%;}
+    .title{
+      font-size:clamp(2.25rem, 4vw + 1rem, 3.5rem); line-height:1.1; margin:.5rem 0 0;
+      background: linear-gradient(90deg, var(--emerald), var(--teal), var(--cyan));
+      -webkit-background-clip:text; background-clip:text; color:transparent;
+      font-weight:700;
+    }
+    .lead{color:var(--muted); font-size:clamp(1.05rem, 1.2vw + .8rem, 1.3rem); max-width:60ch;}
+    .actions{display:flex; flex-wrap:wrap; gap:.75rem; margin-top:.5rem;}
+    .btn{display:inline-flex; align-items:center; justify-content:center; padding:.8rem 1.1rem;
+      border-radius:12px; font-weight:600; text-decoration:none; transition:.2s ease; border:1px solid transparent;}
+    .btn--primary{background:var(--emerald); color:var(--black);}
+    .btn--primary:hover{filter:brightness(1.05)}
+    .btn--ghost{background:rgba(255,255,255,.06); color:var(--text); border-color:var(--ring);}
+    .btn--ghost:hover{background:rgba(255,255,255,.12)}
+    .kpis{display:flex; align-items:center; gap:1rem; color:#94a3b8; font-size:.95rem; margin-top:.5rem;}
+    .avatars{display:inline-flex; gap:.25rem}
+    .avatar{width:2rem; height:2rem; border-radius:999px; background:rgba(52,211,153,.2); border:2px solid #0b1220}
+    .avatar:nth-child(2){background:rgba(94,234,212,.2)}
+    .avatar:nth-child(3){background:rgba(103,232,249,.2)}
+    .pill{background:rgba(15,23,42,.7); border:1px solid var(--ring); color:#cbd5e1; border-radius:12px; padding:.6rem .8rem; text-align:center}
+    .visual{position:relative; z-index:1}
+    .mock{aspect-ratio:16/9; border-radius:14px; border:1px solid var(--ring); background:rgba(30,41,59,.8);
+      display:grid; place-items:center; color:#94a3b8}
+    @media (min-width: 768px){
+      .grid{grid-template-columns:1fr 1fr; align-items:center;}
+    }
+  </style>
+</head>
+<body>
+  <section class="hero">
+    <div class="container">
+      <div class="grid">
+        <div>
+          <span class="badge"><span class="dot"></span>Made for MSMEs on WhatsApp</span>
+          <h1 class="title">Sell smarter with NTheemba</h1>
+          <p class="lead">Automate orders, track inventory, and chat like a human—right inside WhatsApp. Setup in minutes, not months.</p>
+          <div class="actions">
+            <a class="btn btn--primary" href="#start">Start free</a>
+            <a class="btn btn--ghost" href="#demo">See how it works</a>
+          </div>
+          <div class="kpis">
+            <span class="avatars">
+              <span class="avatar"></span><span class="avatar"></span><span class="avatar"></span>
+            </span>
+            Trusted by 500+ local businesses
+          </div>
+        </div>
+        <div class="visual">
+          <div class="glow"></div>
+          <div class="card">
+            <div class="mock">Illustration / phone mockup</div>
+            <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:.6rem; margin-top:.9rem;">
+              <div class="pill">Orders</div>
+              <div class="pill">Inventory</div>
+              <div class="pill">Broadcast</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</body>
+</html>
+

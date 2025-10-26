@@ -1,0 +1,82 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hero — Hybrid</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root{
+      --brand-1:#34d399; --brand-2:#5eead4; --brand-3:#67e8f9;
+      --ring: rgba(255,255,255,.12);
+    }
+    .brand-gradient-text{
+      background: linear-gradient(90deg, var(--brand-1), var(--brand-2), var(--brand-3));
+      -webkit-background-clip:text; background-clip:text; color:transparent;
+    }
+    .btn-primary{
+      background: var(--brand-1); color:#0b1220; border-radius:12px; font-weight:600;
+      padding:.8rem 1.1rem; display:inline-flex; align-items:center; justify-content:center; transition:.2s ease;
+    }
+    .btn-primary:hover{ filter:brightness(1.05) }
+    .btn-ghost{
+      background: rgba(255,255,255,.06); color:white; border:1px solid var(--ring);
+      border-radius:12px; font-weight:600; padding:.8rem 1.1rem; display:inline-flex; align-items:center; justify-content:center; transition:.2s ease;
+    }
+    .btn-ghost:hover{ background: rgba(255,255,255,.12) }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-950 text-white antialiased">
+  <section class="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-800 flex items-center">
+    <div class="max-w-6xl mx-auto w-full px-6 md:px-10">
+      <div class="grid gap-12 md:grid-cols-2 md:items-center">
+        <!-- Copy -->
+        <div class="space-y-6">
+          <span class="inline-flex items-center gap-2 rounded-full bg-slate-800/60 ring-1 ring-white/10 px-3 py-1 text-sm">
+            <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+            Made for MSMEs on WhatsApp
+          </span>
+
+          <h1 class="text-4xl md:text-6xl font-semibold leading-tight">
+            <span class="brand-gradient-text">Sell smarter with NTheemba</span>
+          </h1>
+
+          <p class="text-slate-300 text-lg md:text-xl max-w-prose">
+            Automate orders, track inventory, and chat like a human—right inside WhatsApp. Setup in minutes, not months.
+          </p>
+
+          <div class="flex flex-wrap gap-3">
+            <a href="#start" class="btn-primary">Start free</a>
+            <a href="#demo" class="btn-ghost">See how it works</a>
+          </div>
+
+          <div class="flex items-center gap-4 pt-2 text-sm text-slate-400">
+            <span class="inline-flex -space-x-2">
+              <span class="w-8 h-8 rounded-full bg-emerald-500/20 ring-2 ring-slate-900"></span>
+              <span class="w-8 h-8 rounded-full bg-teal-500/20 ring-2 ring-slate-900"></span>
+              <span class="w-8 h-8 rounded-full bg-cyan-500/20 ring-2 ring-slate-900"></span>
+            </span>
+            Trusted by 500+ local businesses
+          </div>
+        </div>
+
+        <!-- Visual -->
+        <div class="relative">
+          <div class="absolute -inset-4 bg-gradient-to-tr from-emerald-500/20 via-teal-400/10 to-cyan-300/20 blur-2xl rounded-3xl"></div>
+          <div class="relative rounded-2xl bg-slate-900/60 ring-1 ring-white/10 p-6 shadow-2xl">
+            <div class="aspect-video rounded-xl border border-white/10 bg-slate-800/80 grid place-items-center text-slate-400">
+              Illustration / phone mockup
+            </div>
+            <div class="mt-4 grid grid-cols-3 gap-3 text-sm">
+              <div class="rounded-lg bg-slate-800/70 p-3 text-slate-300">Orders</div>
+              <div class="rounded-lg bg-slate-800/70 p-3 text-slate-300">Inventory</div>
+              <div class="rounded-lg bg-slate-800/70 p-3 text-slate-300">Broadcast</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</body>
+</html>
+

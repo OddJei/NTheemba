@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package notifier;
+
+message EmailRequest {
+  string to = 1;
+  string subject = 2;
+  string message = 3;
+  string html = 4;
+}
+
+message SMSRequest {
+  string to = 1;
+  string message = 2;
+}
+
+message NotifyResponse {
+  bool ok = 1;
+  string status = 2;
+  string error = 3;
+}
+
+service Notifier {
+  rpc SendEmail (EmailRequest) returns (NotifyResponse);
+  rpc SendSMS (SMSRequest) returns (NotifyResponse);
+}

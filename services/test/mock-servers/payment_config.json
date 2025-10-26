@@ -1,0 +1,45 @@
+{
+  "primenet_simulation": {
+    "mtn_success_rate": 0.92,
+    "airtel_success_rate": 0.88,
+    "zamtel_success_rate": 0.85,
+    "simulate_delays": true,
+    "webhook_delay_seconds": 5,
+    "auto_complete_payments": true
+  },
+  "providers": {
+    "mtn": {
+      "enabled": true,
+      "ussd_code": "*170#",
+      "name": "MTN Mobile Money",
+      "market_share": 0.7
+    },
+    "airtel": {
+      "enabled": true,
+      "ussd_code": "*211#",
+      "name": "Airtel Money",
+      "market_share": 0.25
+    },
+    "zamtel": {
+      "enabled": true,
+      "ussd_code": "*255#",
+      "name": "Zamtel Kwacha",
+      "market_share": 0.05
+    }
+  },
+  "webhook_targets": {},
+  "test_accounts": {
+    "260971234567": {
+      "balance": 1000.0,
+      "provider": "mtn"
+    },
+    "260961234567": {
+      "balance": 500.0,
+      "provider": "airtel"
+    },
+    "260951234567": {
+      "balance": 200.0,
+      "provider": "zamtel"
+    }
+  }
+}

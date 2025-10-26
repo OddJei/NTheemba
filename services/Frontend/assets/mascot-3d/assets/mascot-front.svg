@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
+  <!-- Main body group -->
+  <g id="mascot-body">
+    <path id="torso" fill="#FFFFFF" stroke="#000000" stroke-width="2"
+          d="M200,250 Q250,150 300,250 Q300,350 200,350 Z"/>
+    <!-- subtle shading -->
+    <ellipse cx="250" cy="250" rx="95" ry="140" fill="url(#bodyShade)" opacity="0.3"/>
+  </g>
+
+  <!-- Head -->
+  <g id="mascot-head">
+    <circle cx="250" cy="130" r="60" fill="#FFFFFF" stroke="#000" stroke-width="2"/>
+    <ellipse cx="250" cy="130" rx="58" ry="55" fill="url(#headShade)" opacity="0.25"/>
+  </g>
+
+  <!-- Antenna -->
+  <g id="antenna">
+    <rect x="245" y="60" width="10" height="25" fill="#111111"/>
+    <circle cx="250" cy="50" r="8" fill="#3AE5C9" stroke="#000" stroke-width="1"/>
+  </g>
+
+  <!-- Eyes -->
+  <g id="eye-left">
+    <ellipse cx="230" cy="125" rx="10" ry="14" fill="#000000"/>
+    <circle cx="230" cy="125" r="4" fill="#3AE5C9"/>
+  </g>
+  <g id="eye-right">
+    <ellipse cx="270" cy="125" rx="10" ry="14" fill="#000000"/>
+    <circle cx="270" cy="125" r="4" fill="#3AE5C9"/>
+  </g>
+
+  <!-- Mouth -->
+  <path id="mascot-mouth" d="M230,155 Q250,165 270,155" stroke="#000" stroke-width="2" fill="none"/>
+
+  <!-- Arms -->
+  <g id="arm-left-upper">
+    <rect x="160" y="250" width="20" height="60" rx="10" fill="#111111"/>
+  </g>
+  <g id="arm-left-lower">
+    <rect x="150" y="310" width="20" height="60" rx="10" fill="#111111"/>
+  </g>
+  <g id="hand-left">
+    <circle cx="160" cy="375" r="15" fill="#FFFFFF" stroke="#000" stroke-width="2"/>
+  </g>
+
+  <g id="arm-right-upper">
+    <rect x="320" y="250" width="20" height="60" rx="10" fill="#111111"/>
+  </g>
+  <g id="arm-right-lower">
+    <rect x="330" y="310" width="20" height="60" rx="10" fill="#111111"/>
+  </g>
+  <g id="hand-right">
+    <circle cx="340" cy="375" r="15" fill="#FFFFFF" stroke="#000" stroke-width="2"/>
+  </g>
+
+  <!-- Legs -->
+  <g id="leg-left">
+    <rect x="220" y="350" width="20" height="80" rx="8" fill="#111111"/>
+    <ellipse cx="230" cy="440" rx="18" ry="8" fill="#000000"/>
+  </g>
+  <g id="leg-right">
+    <rect x="260" y="350" width="20" height="80" rx="8" fill="#111111"/>
+    <ellipse cx="270" cy="440" rx="18" ry="8" fill="#000000"/>
+  </g>
+
+  <!-- Gradients -->
+  <defs>
+    <radialGradient id="bodyShade" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.3"/>
+    </radialGradient>
+    <radialGradient id="headShade" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.25"/>
+    </radialGradient>
+  </defs>
+</svg>

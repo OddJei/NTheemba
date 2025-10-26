@@ -1,0 +1,46 @@
+default-bot-service/
+├── controllers/
+├── services/
+├── events/
+├── models/
+├── utils/
+│   └── payload_validator.py
+├── api/                         # ← All outbound service calls
+│   ├── auth_service.py
+│   ├── session_service.py
+│   ├── event_service.py
+│   └── notification_service.py
+├── config/
+├── routes/
+├── Dockerfile
+└── main.py
+default-bot-service/
+├── controllers/              # Entry points for handling resolved payloads
+│   └── default_bot_controller.py
+
+├── services/                 # Core logic for tree progression and node execution
+│   ├── tree_progression.py
+│   ├── node_executor.py
+│   └── reply_generator.py
+
+├── events/                   # Emitters to User-Bot Event Service
+│   └── event_emitter.py
+
+├── models/                   # Tree node models, session context, payload schemas
+│   ├── node.py
+│   ├── session_context.py
+│   └── payload.py
+
+├── utils/                    # Redis access, validators, helpers
+│   ├── redis_client.py
+│   ├── tree_loader.py
+│   └── node_validator.py
+
+├── config/                   # Tree mappings, TTLs, bot rules
+│   └── bot_config.py
+
+├── routes/                   # Route declarations (if exposed via API)
+│   └── default_bot_routes.py
+
+├── Dockerfile                # Container definition
+└── main.py                   # Service entry point

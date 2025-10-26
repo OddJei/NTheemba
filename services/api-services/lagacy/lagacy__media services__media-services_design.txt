@@ -1,0 +1,97 @@
+1. Description:
+Handles upload, storage, and retrieval of media assets (images, audio, video, documents) across the platform. It supports MSME branding, product presentation, and messaging. Media Service ensures secure uploads, CDN-backed delivery, and integration with Catalog, Business, Messaging, and Index/Search Services for discoverability and engagement.
+
+2. Features:
+- Upload and store media files (image, audio, video, document)
+- Generate thumbnails or previews
+- Validate file types and size limits
+- Emit media lifecycle events (`media_uploaded`, `media_updated`, `media_deleted`)
+- Serve media via secure URLs
+- Link media to business, product, or message context
+
+3. Schema:
+Table: media_service.media_assets
+- id: UUID (PK)
+- business_id: UUID (FK → business_service.businesses.id, nullable)
+- product_id: UUID (FK → catalog_service.products.id, nullable)
+- message_id: UUID (FK → message_service.messages.id, nullable)
+- file_type: TEXT (e.g., 'image/png', 'video/mp4')
+- file_url: TEXT
+- thumbnail_url: TEXT (optional)
+- metadata: JSONB
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+4. Routes:
+POST   /media/upload                     → Upload media file
+GET    /media/{id}                       → Get media metadata
+GET    /media/business/{id}              → List media for a business
+GET    /media/product/{id}               → List media for a product
+DELETE /media/{id}                       → Delete media
+
+5. External Outreach:
+- Publishes media lifecycle events to Index/Search Service
+- Shares media metadata with Catalog, Business, and Messaging Services
+- May notify Notification Service on upload success/failure
+- May validate business ownership via Business Service
+
+6. Background Work:
+- Thumbnail generation
+- Cleanup of orphaned media
+- Audit sync for media lifecycle
+- Reindex jobs for Index/Search Service
+
+7. Folder Structure (Layered Scaffolding):
+└── media-service/
+    ├── alembic/
+    ├── alembic.ini
+    ├── controllers/
+    ├── services/
+    ├── models/
+    ├── routes/
+    ├── jobs/
+    ├── events/
+    ├── utils/
+    ├── config/
+    ├── Dockerfile
+    └── main.py
+
+8. Alembic Migrations:
+- `alembic init alembic`
+- `alembic revision --autogenerate -m "init media schema"`
+- `alembic upgrade head`
+
+9. Dockerfile:
+FROM python:3.11-slim  
+WORKDIR /app  
+COPY requirements.txt .  
+RUN pip install --no-cache-dir -r requirements.txt  
+COPY . .  
+ENV PYTHONUNBUFFERED=1  
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+10. Scalability Readiness:
+- **Current Target (1–500 MSMEs):**
+  - Object storage integration (e.g., S3, Azure Blob)
+  - Indexed queries on `business_id`, `product_id`
+  - Basic thumbnail generation and cleanup
+
+- **Ready for 1,000 MSMEs:**
+  - CDN-backed delivery
+  - Redis pub/sub for media events
+  - Horizontal scaling with Docker + Kubernetes
+  - Partitioned media table by business_id
+
+- **Path to 10,000+ MSMEs:**
+  - Sharded media table by region or business_id
+  - Event-driven architecture with Kafka/RabbitMQ
+  - Read replicas for analytics queries
+  - Autoscaling policies based on upload volume
+  - Observability stack (Prometheus + Grafana)
+
+11. Mermaid Flowchart Reference:
+- MediaService → BusinessService
+- MediaService → CatalogInventoryService
+- MediaService → MessageService
+- MediaService → IndexSearchService
+- MediaService → NotificationService

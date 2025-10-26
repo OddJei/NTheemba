@@ -1,0 +1,128 @@
+API SERVICE DESIGN: AUTH SERVICE
+
+1. Description:
+Handles authentication, token issuance, and access control across the platform. It secures all API endpoints and ensures contributors, MSMEs, staff, and bots operate within their assigned roles. It manages login sessions, token revocation, and verification flows.
+
+2. Features:
+- User registration and login
+- JWT token generation and refresh
+- Role-based access control (admin, affiliate, msme, staff, default)
+- Password hashing and validation
+- Session invalidation and logout
+- Email/SMS-based verification (optional)
+- Multi-device login support
+
+3. Schema:
+Table: auth_service.roles
+- id: UUID (PK)
+- name: TEXT (e.g., 'admin', 'affiliate', 'msme', 'staff', 'default')
+- description: TEXT
+- created_at: TIMESTAMP
+
+Table: auth_service.users
+- id: UUID (PK)
+- username: TEXT (unique)
+- email: TEXT (unique)
+- phone: TEXT (optional)
+- password_hash: TEXT
+- role_id: UUID (FK → auth_service.roles.id)
+- is_active: BOOLEAN
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Table: auth_service.auth_sessions
+- id: UUID (PK)
+- user_id: UUID (FK → auth_service.users.id)
+- token: TEXT
+- issued_at: TIMESTAMP
+- expires_at: TIMESTAMP
+- revoked: BOOLEAN
+- device_info: TEXT (optional)
+- ip_address: TEXT (optional)
+
+Table: auth_service.verification_tokens (optional)
+- id: UUID (PK)
+- user_id: UUID (FK → auth_service.users.id)
+- token: TEXT
+- type: ENUM('email', 'sms')
+- expires_at: TIMESTAMP
+
+4. Routes:
+POST   /auth/register         → Register new user  
+POST   /auth/login            → Authenticate and issue token  
+POST   /auth/logout           → Invalidate session  
+POST   /auth/refresh          → Refresh JWT token  
+GET    /auth/me               → Get current user profile  
+GET    /auth/verify/{token}   → Verify email/SMS token  
+
+5. External Outreach:
+- Sends verification messages via Notification Service
+- Publishes login events to Audit & Logging Service
+- May fetch contributor roles from Affiliate Service
+- Can trigger onboarding flows via Business Service
+
+6. Background Work:
+- Token expiration cleanup (cron job)
+- Verification token expiry and auto-revoke
+- Audit log sync for login/logout events
+
+7. Scaling Readiness:
+- **Current Target (1–500 users):**
+  - Single instance deployment with connection pooling
+  - Indexed queries on `username`, `email`, and `token`
+  - Basic cron jobs for token cleanup and verification expiry
+
+- **Ready for 1,000 users:**
+  - Stateless service design with Redis for session pub/sub
+  - Horizontal scaling with Docker + Kubernetes
+  - Partitioned session cleanup jobs for faster token invalidation
+  - Circuit breakers for Notification and Business Service calls
+
+- **Path to 10,000+ users:**
+  - Sharded `users` and `auth_sessions` tables (by region or user_id)
+  - Event-driven architecture with Kafka/RabbitMQ for login/logout events
+  - Read replicas for analytics queries (e.g., login trends)
+  - Autoscaling policies based on login throughput and session volume
+  - Observability stack (Prometheus + Grafana) for proactive scaling
+
+8. Folder Structure (Layered Scaffolding):
+└── auth-service/
+    ├── alembic/              # Alembic migration scripts
+    ├── alembic.ini           # Alembic config file
+    ├── controllers/          # Route handlers (e.g., login, register)
+    ├── services/             # Auth logic (e.g., token generation)
+    ├── models/               # SQLAlchemy models for users, roles, auth_sessions
+    ├── routes/               # Route declarations
+    ├── jobs/                 # Background workers (e.g., token cleanup)
+    ├── events/               # Redis/pub-sub emitters (e.g., login events)
+    ├── utils/                # Password hashing, JWT helpers
+    ├── config/               # Token TTLs, secret keys
+    ├── Dockerfile            # Container definition
+    └── main.py               # Entry point
+
+9. Alembic Migrations:
+- `alembic init alembic`
+- `alembic revision --autogenerate -m "init auth schema"`
+- `alembic upgrade head`
+- Migration history stored in `alembic/versions/`
+
+10. Dockerfile:
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+11. Mermaid Flowchart Reference:
+- AuthService → SessionService
+- AuthService → NotificationService
+- AuthService → AuditService
+- AuthService → AffiliateService
+- AuthService → BusinessService

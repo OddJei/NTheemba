@@ -1,0 +1,23 @@
+order
+├── confirm_cart
+│   └── validate_items
+│       └── check_stock
+│       └── calculate_total
+├── select_delivery_option
+│   └── choose_location
+│   └── choose_method
+├── provide_contact_info
+│   └── enter_phone_number
+│   └── enter_name
+├── review_order
+├── select_payment_method
+│   ├── choose_zamtel_money
+│   ├── choose_mtn_money
+│   └── choose_airtel_money
+├── trigger_payment
+│   └── initiate_mobile_money_transaction
+│   └── verify_mobile_money_status
+├── place_order
+│   └── generate_order_id
+│   └── log_order
+│   └── notify_user

@@ -1,0 +1,29 @@
+{
+  "twilio_simulation": {
+    "delivery_success_rate": 0.95,
+    "simulate_delays": true,
+    "otp_length": 6,
+    "otp_expiry_seconds": 300,
+    "whatsapp_enabled": true
+  },
+  "message_templates": {
+    "otp": "Your verification code is: {otp}",
+    "order_confirmation": "Order {order_id} confirmed. Total: {amount} {currency}",
+    "payment_reminder": "Payment pending for order {order_id}: {amount} {currency}"
+  },
+  "providers": {
+    "twilio": {
+      "enabled": true,
+      "simulate_failures": false
+    },
+    "360dialog": {
+      "enabled": true,
+      "simulate_failures": false
+    }
+  },
+  "forward_targets": {
+    "inbound_message": "http://localhost:8000/webhooks/whatsapp_confirm"
+  },
+  "payment_webhook_delay_ms": 500,
+  "next_payment_outcome": "paid"
+}

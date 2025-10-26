@@ -1,0 +1,144 @@
+---
+
+**API SERVICE DESIGN: USER-BOT SESSION SERVICE (Updated with Platform Support)**
+
+1. **Description**  
+Manages user-bot session lifecycles. Each session represents a scoped interaction between a user and a bot. This service creates new sessions, tracks session context, and returns session metadata for routing and enrichment. Session mode is resolved dynamically based on bot type and user role retrieved from Auth Service. Now includes `platform` (e.g., `wa`, `sms`, `web`) to support multi-channel session resolution.
+
+---
+
+2. **Features**  
+- Create a new session for a user-bot interaction  
+- Resolve session mode based on bot type and user role  
+- Track session context (object state, last event ID)  
+- Return session metadata for payload enrichment  
+- Enforce one active session per user-bot-platform combination (optional)  
+- Support both default and custom bots  
+- Support platform-aware session resolution and analytics  
+
+---
+
+3. **Schema**  
+Table: `user_bot_session_service.sessions`
+
+- `id`: UUID (PK)  
+- `user_id`: UUID  
+- `user_phone`: TEXT (indexed)  
+- `bot_id`: UUID  
+- `msme_id`: UUID (nullable)  
+- `bot_type`: ENUM('default', 'custom')  
+- `session_mode`: ENUM('public', 'registered', 'customer', 'staff')  
+- `platform`: TEXT (e.g., 'wa', 'sms', 'web')  
+- `last_event_id`: UUID (nullable)  
+- `object_context`: JSONB (nullable)  
+- `created_at`: TIMESTAMP  
+- `updated_at`: TIMESTAMP  
+
+**Indexes & Constraints**  
+- Composite index on `(user_id, bot_id, platform)`  
+- Index on `user_phone`, `platform`  
+- Optional uniqueness constraint on `(user_phone, bot_id, platform)`  
+
+---
+
+4. **Routes**
+
+- `POST /session/create`  
+- `GET /session/{session_id}`  
+- `GET /session/by-user/{user_id}`  
+- `GET /session/resolve?user_phone=...&bot_id=...&platform=...`  
+- `GET /session/by-phone-platform/{user_phone}/{platform}`  
+- `GET /session/by-bot-platform/{bot_id}/{platform}`  
+
+---
+
+5. **Session Creation Logic**
+
+Input:  
+- `phone_number`, `bot_id`, `bot_type`, `msme_id`, `platform`
+
+Flow:  
+- If `bot_type == "default"`:  
+  - Call Auth Service with `phone_number`  
+  - If `user.role == "msme"` → `session_mode = "registered"`  
+  - Else → `session_mode = "public"`  
+- If `bot_type == "custom"`:  
+  - Call Auth Service with `phone_number` and `msme_id`  
+  - If `user.role == "staff"` → `session_mode = "staff"`  
+  - Else → `session_mode = "customer"`  
+- Create session with resolved mode and platform  
+- Return:  
+  - `session_id`, `session_mode`, `last_event_id = null`, `object_context = null`  
+
+---
+
+6. **External Outreach**  
+- Calls Auth Service to resolve user identity and role  
+- Used by Bot Router to resolve or create session  
+- Referenced by Bot Intent Service to track session continuity  
+
+---
+
+7. **Folder Structure**
+
+```
+user-bot-session-service/
+├── alembic/              # Alembic migration scripts  
+├── alembic.ini           # Alembic config file  
+├── controllers/          # Route handlers (e.g., create, resolve)  
+├── services/             # Session creation and lookup logic  
+├── models/               # SQLAlchemy models for sessions  
+├── routes/               # Route declarations  
+├── utils/                # ID generators, validators  
+├── config/               # TTLs, session rules  
+├── Dockerfile            # Container definition  
+└── main.py               # Entry point for service registration  
+```
+
+---
+
+8. **Alembic Migrations**
+
+```bash
+alembic revision --autogenerate -m "add platform to sessions"  
+alembic upgrade head  
+```
+
+---
+
+9. **Dockerfile**
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+---
+
+10. **Scalability Readiness**
+
+**Current Target (1–500 sessions/day):**  
+- Indexed queries on `user_id`, `bot_id`, `user_phone`, `platform`  
+- Stateless API with persistent session store  
+
+**Ready for 1,000+ sessions/day:**  
+- Redis caching for recent session lookups  
+- Horizontal scaling with Docker + Kubernetes  
+
+**Path to 10,000+ sessions/day:**  
+- Session sharding by `msme_id` or `user_id`  
+- Read replicas for analytics  
+- Autoscaling policies based on session volume  
+- Observability stack (Prometheus + Grafana)  
+
+---

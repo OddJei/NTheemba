@@ -1,0 +1,136 @@
+1. Description:
+Aggregates, analyzes, and exposes platform-wide metrics, trends, and usage patterns. Powers dashboards, discoverability, contributor impact tracking, and operational insights. Ingests events from all core services and computes scores, summaries, and funnels. Designed for scaling from 500 → 10,000+ MSMEs with real-time and batch analytics, supporting both anonymous and authenticated traffic.
+
+2. Features:
+- Ingest events from all services: Ratings, Orders, Sessions, Referrals, Payments, Deliveries, Messaging, etc.
+- Aggregate metrics by MSME, product, bot, contributor, region, and affiliate
+- Compute trending scores, engagement rates, conversion funnels, and retention curves
+- Track contributor impact and affiliate performance
+- Support anonymous traffic via `user_phone` and session ID
+- Expose analytics APIs for dashboards, search, marketing, and investor reporting
+- Emit analytics lifecycle events (`metric_updated`, `trend_detected`, `milestone_achieved`)
+- Support real-time ingestion and scheduled aggregation
+- Optional anomaly detection and alerting
+
+3. Schema:
+Table: analytics_service.metrics
+- id: UUID (PK)
+- entity_type: ENUM('business', 'product', 'bot', 'affiliate', 'category')
+- entity_id: UUID
+- metric_type: TEXT (e.g., 'views', 'orders', 'ratings', 'referrals', 'sessions')
+- value: INTEGER
+- period: TEXT (e.g., 'daily', 'weekly', 'monthly')
+- computed_at: TIMESTAMP
+
+Table: analytics_service.trending_scores
+- id: UUID (PK)
+- entity_type: ENUM('business', 'product', 'bot')
+- entity_id: UUID
+- score: DECIMAL(6,2)
+- rank: INTEGER
+- period: TEXT
+- computed_at: TIMESTAMP
+
+Table: analytics_service.event_logs
+- id: UUID (PK)
+- source_service: TEXT
+- event_type: TEXT
+- payload: JSONB
+- received_at: TIMESTAMP
+
+Table: analytics_service.contributor_impact
+- id: UUID (PK)
+- affiliate_code: TEXT (FK → affiliate_service.affiliates.code)
+- business_id: UUID (FK → business_service.businesses.id)
+- metric_type: TEXT (e.g., 'referrals', 'orders', 'ratings')
+- value: INTEGER
+- computed_at: TIMESTAMP
+
+4. Routes:
+GET    /analytics/metrics/{entity_type}/{entity_id}     → Get metrics for entity
+GET    /analytics/trending/{entity_type}                → Get trending entities
+GET    /analytics/referrals/{affiliate_code}            → Get referral impact
+GET    /analytics/business/{id}/summary                 → Get business performance summary
+GET    /analytics/contributor/{affiliate_code}          → Get contributor impact
+POST   /analytics/event/ingest                          → Ingest custom event
+GET    /analytics/session/{session_id}                  → Get session-level engagement
+GET    /analytics/phone/{user_phone}                    → Get anonymous user metrics
+
+5. External Outreach:
+- Subscribes to events from Ratings, Orders, Sessions, Referrals, Payments, Delivery, Messaging, Cart, etc.
+- Publishes analytics updates to Index/Search and Marketing Services
+- Shares metrics with Business, Affiliate, and Dashboard Services
+- May notify Notification Service on milestone achievements
+- May enrich bot responses via Messaging Service
+- May trigger reindexing for discoverability
+
+6. Background Work:
+- Scheduled aggregation jobs (daily, weekly, monthly)
+- Real-time event ingestion via Redis Streams or Kafka
+- Cleanup of stale or low-impact metrics
+- Audit sync for analytics lifecycle
+- Optional anomaly detection and alerting
+- Contributor impact recalculation
+- Funnel and retention curve generation
+
+7. Folder Structure (Layered Scaffolding):
+└── analytics-service/
+    ├── alembic/
+    ├── alembic.ini
+    ├── controllers/
+    ├── services/
+    ├── models/
+    ├── routes/
+    ├── jobs/
+    ├── events/
+    ├── utils/
+    ├── config/
+    ├── Dockerfile
+    └── main.py
+
+8. Alembic Migrations:
+- `alembic init alembic`
+- `alembic revision --autogenerate -m "init analytics schema"`
+- `alembic upgrade head`
+
+9. Dockerfile:
+FROM python:3.11-slim  
+WORKDIR /app  
+COPY requirements.txt .  
+RUN pip install --no-cache-dir -r requirements.txt  
+COPY . .  
+ENV PYTHONUNBUFFERED=1  
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+10. Scalability Readiness:
+- **Current Target (1–500 MSMEs):**
+  - Indexed queries on `entity_id`, `metric_type`, `affiliate_code`
+  - Basic aggregation jobs and event ingestion
+  - Single instance deployment with connection pooling
+
+- **Ready for 1,000 MSMEs:**
+  - Redis Streams or Kafka for real-time ingestion
+  - Horizontal scaling with Docker + Kubernetes
+  - Partitioned metrics tables by entity type or region
+  - Circuit breakers for downstream enrichment calls
+
+- **Path to 10,000+ MSMEs:**
+  - Sharded metrics and trending tables
+  - Event-driven architecture with Kafka/RabbitMQ
+  - Read replicas for dashboard queries
+  - Autoscaling policies based on ingestion rate and query volume
+  - Observability stack (Prometheus + Grafana)
+  - Contributor impact scoring and affiliate funnel tracking
+
+11. Mermaid Flowchart Reference:
+- AnalyticsService → RatingsService
+- AnalyticsService → OrderService
+- AnalyticsService → ReferralURLService
+- AnalyticsService → DeliveryService
+- AnalyticsService → MessagingService
+- AnalyticsService → CartService
+- AnalyticsService → BusinessService
+- AnalyticsService → AffiliateService
+- AnalyticsService → IndexSearchService
+- AnalyticsService → NotificationService
+- AnalyticsService → AuditService

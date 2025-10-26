@@ -1,0 +1,11 @@
+Flask
+fastapi
+uvicorn
+sqlalchemy
+alembic
+pydantic
+python-dotenv
+passlib
+twilio
+pytest
+httpx

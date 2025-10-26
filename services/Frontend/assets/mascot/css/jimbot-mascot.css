@@ -1,0 +1,26 @@
+/* Base utility the module toggles */
+.jb-animating { will-change: transform, opacity; }
+
+/* Slide in from bottom (mobile entrance) */
+@keyframes jbSlideInUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+.jb-slide-in-up { animation: jbSlideInUp 500ms ease-out both; }
+
+/* Gentle wiggle (idle attention) */
+@keyframes jbWiggle {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(3deg); }
+}
+.jb-wiggle { animation: jbWiggle 600ms ease-in-out infinite; }
+
+/* Optional: subtle wave (one-shot) */
+@keyframes jbWave {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(6deg); }
+  50% { transform: rotate(0deg); }
+  75% { transform: rotate(-6deg); }
+  100% { transform: rotate(0deg); }
+}
+.jb-wave { animation: jbWave 700ms ease-in-out both; }

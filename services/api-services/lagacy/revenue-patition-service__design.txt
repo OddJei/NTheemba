@@ -1,0 +1,7 @@
+API SERVICE DESIGN: REVENUE-PATITION-SERVICE (LEGACY TYPO)
+
+Note: This folder is a legacy/typo copy. The canonical service is `revenue-partition-service`. This file is intentionally minimal and points to the canonical service.
+
+Please use `revenue-partition-service/design.txt` for the authoritative specification.
+
+This file will be kept as a marker to avoid accidentally recreating the typo folder; consider removing it after repository cleanup.

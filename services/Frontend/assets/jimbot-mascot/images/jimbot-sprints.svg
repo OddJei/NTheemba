@@ -1,0 +1,305 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<svg id="NTheemba-sprites" xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 400 300" width="1024" height="768" role="img" aria-label="NTheemba Spritesheet">
+  <defs>
+    <style>
+      :root{
+        --jb-orange:#FF7A22;
+        --jb-orange-dark:#E1600C;
+        --jb-metal:#9AA3AD;
+        --jb-ink:#1B2032;
+        --jb-deep:#0C101A;
+        --accent:#3AE5C9;
+        --white:#FFFFFF;
+      }
+      .ink{ stroke: var(--jb-orange-dark); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      .part{ transform-box: fill-box; }
+    </style>
+
+    <!-- ========== FACE COMPONENTS (reusable) ========== -->
+    <symbol id="eye-open" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="8" fill="#1B2032"/>
+      <circle cx="8" cy="8" r="3.5" fill="#0C101A"/>
+      <circle cx="6.7" cy="6.5" r="1.2" fill="#FFFFFF" opacity=".85"/>
+    </symbol>
+
+    <symbol id="eye-blink" viewBox="0 0 16 16">
+      <rect x="2" y="7" width="12" height="2" rx="1" fill="#1B2032"/>
+    </symbol>
+
+    <symbol id="mouth-neutral" viewBox="0 0 40 14">
+      <rect x="2" y="4" width="36" height="6" rx="3" fill="#0C101A"/>
+    </symbol>
+
+    <symbol id="mouth-smile" viewBox="0 0 40 14">
+      <path d="M4 6 Q20 16 36 6" fill="none" stroke="#0C101A" stroke-width="4" stroke-linecap="round"/>
+    </symbol>
+
+    <!-- ========== HEADS ========== -->
+    <!-- Front head: ears, shell, antenna; face is assembled with <use> -->
+    <symbol id="head-front" viewBox="0 0 120 120">
+      <!-- antenna -->
+      <line x1="60" y1="6" x2="60" y2="22" stroke="var(--jb-metal)" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="60" cy="2" r="5" fill="var(--accent)" stroke="#12CDB1" stroke-width="2"/>
+      <!-- ears -->
+      <circle cx="16" cy="60" r="14" fill="var(--jb-metal)" stroke="#737C86" stroke-width="2"/>
+      <circle cx="104" cy="60" r="14" fill="var(--jb-metal)" stroke="#737C86" stroke-width="2"/>
+      <!-- shell -->
+      <circle cx="60" cy="60" r="42" fill="#FFFFFF" stroke="#DFE6EE" stroke-width="2"/>
+    </symbol>
+
+    <!-- Back head: seam/panel detail -->
+    <symbol id="head-back" viewBox="0 0 120 120">
+      <line x1="60" y1="6" x2="60" y2="22" stroke="var(--jb-metal)" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="60" cy="2" r="5" fill="var(--accent)" stroke="#12CDB1" stroke-width="2"/>
+      <circle cx="16" cy="60" r="14" fill="var(--jb-metal)" stroke="#737C86" stroke-width="2"/>
+      <circle cx="104" cy="60" r="14" fill="var(--jb-metal)" stroke="#737C86" stroke-width="2"/>
+      <circle cx="60" cy="60" r="42" fill="#FFFFFF" stroke="#DFE6EE" stroke-width="2"/>
+      <rect x="58" y="24" width="4" height="72" fill="#D1D9E4" opacity=".7"/>
+      <circle cx="60" cy="68" r="6" fill="#1B2032" opacity=".35"/>
+    </symbol>
+
+    <!-- Side heads: single ear, one eye in assembly -->
+    <symbol id="head-side-left" viewBox="0 0 120 120">
+      <line x1="60" y1="6" x2="60" y2="22" stroke="var(--jb-metal)" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="60" cy="2" r="5" fill="var(--accent)" stroke="#12CDB1" stroke-width="2"/>
+      <circle cx="24" cy="60" r="12" fill="var(--jb-metal)" stroke="#737C86" stroke-width="2"/>
+      <circle cx="60" cy="60" r="42" fill="#FFFFFF" stroke="#DFE6EE" stroke-width="2"/>
+    </symbol>
+
+    <symbol id="head-side-right" viewBox="0 0 120 120">
+      <line x1="60" y1="6" x2="60" y2="22" stroke="var(--jb-metal)" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="60" cy="2" r="5" fill="var(--accent)" stroke="#12CDB1" stroke-width="2"/>
+      <circle cx="96" cy="60" r="12" fill="var(--jb-metal)" stroke="#737C86" stroke-width="2"/>
+      <circle cx="60" cy="60" r="42" fill="#FFFFFF" stroke="#DFE6EE" stroke-width="2"/>
+    </symbol>
+
+    <!-- ========== TORSO (front/back/side) ========== -->
+    <symbol id="torso-front" viewBox="0 0 140 120">
+      <rect x="12" y="10" width="116" height="100" rx="18" fill="var(--jb-orange)" class="ink"/>
+      <rect x="40" y="34" width="60" height="34" rx="8" fill="#1B2032" opacity=".9"/>
+      <circle cx="60" cy="51" r="4" fill="var(--accent)"/>
+      <rect x="70" y="46" width="26" height="8" rx="3" fill="#8AA3FF" opacity=".8"/>
+    </symbol>
+
+    <symbol id="torso-back" viewBox="0 0 140 120">
+      <rect x="12" y="10" width="116" height="100" rx="18" fill="var(--jb-orange)" class="ink"/>
+      <rect x="68" y="14" width="4" height="92" fill="#1B2032" opacity=".5"/>
+      <circle cx="70" cy="40" r="6" fill="#1B2032" opacity=".6"/>
+    </symbol>
+
+    <symbol id="torso-side" viewBox="0 0 140 120">
+      <rect x="20" y="10" width="100" height="100" rx="18" fill="var(--jb-orange)" class="ink"/>
+      <rect x="28" y="34" width="46" height="34" rx="8" fill="#1B2032" opacity=".9"/>
+    </symbol>
+
+    <!-- ========== ARMS (upper/forearm/hands) ========== -->
+    <!-- Note: pivot at top center of each arm part -->
+    <symbol id="arm-upper" viewBox="0 0 14 48">
+      <rect x="2" y="0" width="10" height="46" rx="6" fill="var(--jb-orange)" class="ink"/>
+    </symbol>
+
+    <symbol id="arm-fore" viewBox="0 0 14 38">
+      <rect x="2" y="0" width="10" height="36" rx="6" fill="var(--jb-orange)" class="ink"/>
+    </symbol>
+
+    <!-- Hands variants -->
+    <symbol id="hand-open" viewBox="0 0 22 22">
+      <circle cx="11" cy="11" r="10" fill="#22242C"/>
+    </symbol>
+
+    <symbol id="hand-tap" viewBox="0 0 22 22">
+      <circle cx="11" cy="11" r="10" fill="#22242C"/>
+      <rect x="10" y="2" width="2" height="10" rx="1" fill="#22242C"/>
+    </symbol>
+
+    <symbol id="hand-thumb" viewBox="0 0 26 22">
+      <rect x="10" y="6" width="12" height="10" rx="5" fill="#22242C"/>
+      <rect x="4" y="8" width="8" height="6" rx="3" fill="#22242C"/>
+    </symbol>
+
+    <!-- ========== LEGS (thigh/shin/boot) ========== -->
+    <symbol id="leg-thigh" viewBox="0 0 18 36">
+      <rect x="2" y="0" width="14" height="34" rx="6" fill="var(--jb-orange)" class="ink"/>
+    </symbol>
+
+    <symbol id="leg-shin" viewBox="0 0 18 30">
+      <rect x="2" y="0" width="14" height="28" rx="6" fill="var(--jb-orange)" class="ink"/>
+    </symbol>
+
+    <symbol id="boot" viewBox="0 0 28 12">
+      <rect x="2" y="2" width="24" height="8" rx="4" fill="#22242C"/>
+    </symbol>
+  </defs>
+
+  <!-- ===================== EXAMPLE ASSEMBLIES ===================== -->
+  <!-- FRONT VIEW (IDs match animator expectations) -->
+  <g id="view-front" transform="translate(20,20)">
+    <!-- shadow -->
+    <ellipse cx="100" cy="240" rx="48" ry="10" fill="#000" opacity=".18"/>
+    <!-- torso -->
+    <g id="mascot-body" class="part" transform="translate(30,110)">
+      <use href="#torso-front"/>
+    </g>
+    <!-- head -->
+    <g id="mascot-head" class="part" transform="translate(70,60)">
+      <use href="#head-front"/>
+      <!-- face placement relative to head center (60,60) -->
+      <g id="face" class="part" transform="translate(60,60)">
+        <g id="eye-left" class="part" data-behavior="blink" transform="translate(-16,-4)">
+          <use href="#eye-open"/>
+        </g>
+        <g id="eye-right" class="part" data-behavior="blink" transform="translate(16,-4)">
+          <use href="#eye-open"/>
+        </g>
+        <g id="jaw" class="part" transform="translate(0,14)">
+          <use id="mascot-mouth" href="#mouth-neutral"/>
+        </g>
+      </g>
+    </g>
+    <!-- arms -->
+    <g id="arm-left" class="part" transform="translate(48,128)">
+      <g id="arm-left-upper" class="part">
+        <use href="#arm-upper"/>
+      </g>
+      <g id="arm-left-lower" class="part" transform="translate(7,44)">
+        <use href="#arm-fore"/>
+        <g id="hand-left" class="part" transform="translate(7,36)">
+          <use href="#hand-open"/>
+        </g>
+      </g>
+    </g>
+    <g id="arm-right" class="part" transform="translate(172,128)">
+      <g id="arm-right-upper" class="part">
+        <use href="#arm-upper"/>
+      </g>
+      <g id="arm-right-lower" class="part" transform="translate(7,44)">
+        <use href="#arm-fore"/>
+        <g id="hand-right" class="part" transform="translate(7,36)">
+          <use href="#hand-open"/>
+        </g>
+      </g>
+    </g>
+    <!-- legs -->
+    <g id="leg-left" class="part" transform="translate(96,208)">
+      <use href="#leg-thigh"/>
+      <g transform="translate(0,30)">
+        <use href="#leg-shin"/>
+        <g transform="translate(0,26)">
+          <use href="#boot"/>
+        </g>
+      </g>
+    </g>
+    <g id="leg-right" class="part" transform="translate(124,208)">
+      <use href="#leg-thigh"/>
+      <g transform="translate(0,30)">
+        <use href="#leg-shin"/>
+        <g transform="translate(0,26)">
+          <use href="#boot"/>
+        </g>
+      </g>
+    </g>
+    <!-- optional: pivot markers -->
+    <g id="pivots" opacity=".0">
+      <circle cx="48" cy="128" r="2.5" fill="#3AE5C9"/>
+      <circle cx="172" cy="128" r="2.5" fill="#3AE5C9"/>
+      <circle cx="70" cy="60" r="2.5" fill="#3AE5C9"/>
+      <circle cx="96" cy="208" r="2.5" fill="#3AE5C9"/>
+      <circle cx="124" cy="208" r="2.5" fill="#3AE5C9"/>
+    </g>
+  </g>
+
+  <!-- BACK VIEW -->
+  <g id="view-back" transform="translate(220,20)">
+    <ellipse cx="100" cy="240" rx="48" ry="10" fill="#000" opacity=".18"/>
+    <g id="mascot-body" class="part" transform="translate(30,110)">
+      <use href="#torso-back"/>
+    </g>
+    <g id="mascot-head" class="part" transform="translate(70,60)">
+      <use href="#head-back"/>
+    </g>
+    <!-- arms -->
+    <g id="arm-left" class="part" transform="translate(48,128)">
+      <g id="arm-left-upper" class="part"><use href="#arm-upper"/></g>
+      <g id="arm-left-lower" class="part" transform="translate(7,44)">
+        <use href="#arm-fore"/>
+        <g id="hand-left" class="part" transform="translate(7,36)">
+          <rect x="-8" y="-4" width="16" height="8" rx="3" fill="#22242C"/>
+        </g>
+      </g>
+    </g>
+    <g id="arm-right" class="part" transform="translate(172,128)">
+      <g id="arm-right-upper" class="part"><use href="#arm-upper"/></g>
+      <g id="arm-right-lower" class="part" transform="translate(7,44)">
+        <use href="#arm-fore"/>
+        <g id="hand-right" class="part" transform="translate(7,36)">
+          <rect x="-8" y="-4" width="16" height="8" rx="3" fill="#22242C"/>
+        </g>
+      </g>
+    </g>
+    <!-- legs -->
+    <g id="leg-left" class="part" transform="translate(96,208)">
+      <use href="#leg-thigh"/><g transform="translate(0,30)"><use href="#leg-shin"/><g transform="translate(0,26)"><use href="#boot"/></g></g>
+    </g>
+    <g id="leg-right" class="part" transform="translate(124,208)">
+      <use href="#leg-thigh"/><g transform="translate(0,30)"><use href="#leg-shin"/><g transform="translate(0,26)"><use href="#boot"/></g></g>
+    </g>
+  </g>
+
+  <!-- SIDE LEFT VIEW -->
+  <g id="view-left" transform="translate(20,170)">
+    <ellipse cx="100" cy="120" rx="48" ry="10" fill="#000" opacity=".18"/>
+    <g id="mascot-body" class="part" transform="translate(42,0)">
+      <use href="#torso-side"/>
+    </g>
+    <g id="mascot-head" class="part" transform="translate(90,-50)">
+      <use href="#head-side-left"/>
+      <g id="face" class="part" transform="translate(60,60)">
+        <g id="eye-left" class="part" data-behavior="blink" transform="translate(-10,-4)">
+          <use href="#eye-open"/>
+        </g>
+        <g id="jaw" class="part" transform="translate(0,14)">
+          <use id="mascot-mouth" href="#mouth-neutral"/>
+        </g>
+      </g>
+    </g>
+    <g id="arm-left" class="part" transform="translate(70,18)">
+      <g id="arm-left-upper" class="part"><use href="#arm-upper"/></g>
+      <g id="arm-left-lower" class="part" transform="translate(7,44)">
+        <use href="#arm-fore"/><g id="hand-left" class="part" transform="translate(7,36)"><use href="#hand-open"/></g>
+      </g>
+    </g>
+    <g id="leg-left" class="part" transform="translate(95,98)">
+      <use href="#leg-thigh"/><g transform="translate(0,30)"><use href="#leg-shin"/><g transform="translate(0,26)"><use href="#boot"/></g></g>
+    </g>
+  </g>
+
+  <!-- SIDE RIGHT VIEW -->
+  <g id="view-right" transform="translate(220,170)">
+    <ellipse cx="100" cy="120" rx="48" ry="10" fill="#000" opacity=".18"/>
+    <g id="mascot-body" class="part" transform="translate(18,0)">
+      <use href="#torso-side"/>
+    </g>
+    <g id="mascot-head" class="part" transform="translate(30,-50)">
+      <use href="#head-side-right"/>
+      <g id="face" class="part" transform="translate(60,60)">
+        <g id="eye-right" class="part" data-behavior="blink" transform="translate(10,-4)">
+          <use href="#eye-open"/>
+        </g>
+        <g id="jaw" class="part" transform="translate(0,14)">
+          <use id="mascot-mouth" href="#mouth-neutral"/>
+        </g>
+      </g>
+    </g>
+    <g id="arm-right" class="part" transform="translate(136,18)">
+      <g id="arm-right-upper" class="part"><use href="#arm-upper"/></g>
+      <g id="arm-right-lower" class="part" transform="translate(7,44)">
+        <use href="#arm-fore"/><g id="hand-right" class="part" transform="translate(7,36)"><use href="#hand-open"/></g>
+      </g>
+    </g>
+    <g id="leg-right" class="part" transform="translate(115,98)">
+      <use href="#leg-thigh"/><g transform="translate(0,30)"><use href="#leg-shin"/><g transform="translate(0,26)"><use href="#boot"/></g></g>
+    </g>
+  </g>
+</svg>
+

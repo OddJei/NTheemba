@@ -1,0 +1,73 @@
+msme_user
+├── authenticate_user
+│   ├── send_otp
+│   │   └── verify_otp
+│   │       └── session_success
+
+├── analytics_dashboard
+│   ├── view_sales
+│   ├── view_orders
+│   ├── view_traffic
+
+├── product_management
+│   ├── add_product
+│   │   ├── submit_product_name
+│   │   ├── submit_product_category
+│   │   ├── submit_product_price
+│   │   ├── submit_product_stock
+│   │   ├── submit_product_description
+│   │   ├── submit_product_image_url
+│   │   └── confirm_product_details
+│   │       └── save_product
+
+│   ├── edit_product
+│   │   ├── view_product_list_for_edit
+│   │   │   └── view_product_summary
+│   │   ├── select_product_to_edit
+│   │   ├── choose_field_to_update
+│   │   │   ├── update_product_name
+│   │   │   ├── update_product_category
+│   │   │   ├── update_product_price
+│   │   │   ├── update_product_stock
+│   │   │   ├── update_product_description
+│   │   │   └── update_product_image_url
+│   │   ├── confirm_product_update
+│   │   └── save_product_changes
+
+│   ├── remove_product
+│   │   ├── view_product_list_for_removal
+│   │   │   └── view_product_summary
+│   │   ├── add_to_removal_cart
+│   │   │   ├── view_removal_cart
+│   │   │   │   └── view_removal_cart_item
+│   │   │   ├── remove_from_removal_cart
+│   │   │   ├── clear_removal_cart
+│   │   │   └── confirm_removal_cart
+│   │   │       └── delete_selected_products
+
+│   └── view_product_list
+│       ├── list_all_products
+│       └── view_product_summary
+
+├── profile_management
+│   ├── update_business_name
+│   ├── update_business_type
+│   ├── update_location
+│   ├── update_establishment_year
+│   └── update_contact_info
+
+├── staff_management
+│   ├── add_staff_member
+│   │   ├── submit_staff_name
+│   │   ├── submit_staff_phone
+│   │   ├── submit_staff_position
+│   │   ├── confirm_staff_details
+│   │   └── save_staff_member
+│   ├── remove_staff_member
+│   │   ├── view_staff_list_for_removal
+│   │   │   └── view_staff_summary
+│   │   ├── select_staff_to_remove
+│   │   ├── confirm_staff_removal
+│   │   └── delete_staff_member
+│   └── view_staff_list
+│       └── view_staff_summary

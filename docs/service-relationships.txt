@@ -1,0 +1,15 @@
+%% SERVICE RELATIONSHIP MAP
+%% ─────────────────────────────────────────────────────────────────────────────
+%% STRICT INSTRUCTION:
+%% This file MUST NOT be updated arbitrarily.
+%% Every update MUST be based on a completed API Service Design Template.
+%% When requesting an update, the user MUST provide the full design template
+%% for the service(s) already present in this file.
+%%
+%% This ensures:
+%% - Architectural alignment
+%% - Traceability between design and relationship mapping
+%% - Prevention of misalignment or undocumented dependencies
+%%
+%% DO NOT bypass this rule under any circumstance.
+%% ─────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,133 @@
+API SERVICE DESIGN: BOT SESSION SERVICE
+
+1. Description:
+Manages bot instances used in routing and session orchestration. Each bot is tied to a unique phone number and represents either the Ntheemba default bot or a custom MSME bot. This service ensures bots are created, activated, and linked to businesses with strict one-to-one ownership. It provides CRUD operations and resolution logic for bot identity, business linkage, and user ownership. It does not enrich payloads or orchestrate sessions.
+
+2. Features:
+- Create and manage bot instances
+- Enforce one active bot per business
+- Track bot type (`default`, `custom`)
+- Validate phone number uniqueness
+- Activate/deactivate bots
+- Resolve bot status and metadata for routing
+- Fetch bot, business, and user details via internal and external services
+- Emit bot lifecycle events for audit and analytics
+
+3. Schema:
+Table: bot_session_service.bots
+- id: UUID (PK)
+- phone_number: TEXT (unique, indexed)                  -- Bot identity
+- type: ENUM('default', 'custom')
+- business_id: UUID (FK → business_service.businesses.id, unique, nullable)
+- is_active: BOOLEAN
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Constraints:
+- `phone_number` must be globally unique
+- `business_id` must be unique when `is_active = true`
+- `business_id` is required for `custom` bots, null for `default`
+
+4. Routes:
+POST   /bot/create                        → Create bot instance
+GET    /bot/{id}                          → Get bot details
+PUT    /bot/{id}/update                   → Update bot metadata (type, status)
+DELETE /bot/{id}                          → Deactivate or remove bot
+GET    /bot/{id}/status                   → Check if bot is active
+GET    /bot/by-phone/{phone_number}      → Resolve bot type and return bot, business, and user details
+
+5. Phone Resolution Logic:
+- If `phone_number == "260952675580"`:
+  - Treat as Ntheemba default bot
+  - Return:
+    - `bot_type`: "default"
+    - `bot_id`: "ntb_default"
+    - `is_active`: true
+    - `business_details`: via Business Service
+    - `user_details`: via Auth Service
+- Else:
+  - Look up bot in DB
+  - If found and active:
+    - Return:
+      - `bot_type`: "custom"
+      - `bot_id`: UUID
+      - `business_details`: via Business Service
+      - `user_details`: via Auth Service
+      - `subscription_status`: via Subscription Service
+  - If not found or inactive:
+    - Return 404 or error payload
+
+6. External Outreach:
+- Publishes bot lifecycle events (`bot_created`, `bot_updated`, `bot_deactivated`) to Audit Service
+- May notify Notification Service on bot activation/deactivation
+- Used by Bot Router to resolve routing targets
+- Referenced by User-Bot Session Service for session linkage
+- Calls:
+  - Business Service → `GET /business/{id}`
+  - Auth Service → `GET /user/by-business/{business_id}`
+  - Subscription Service → `GET /subscription/status/{business_id}`
+
+7. Background Work:
+- Cleanup of inactive or expired bot instances
+- Audit sync for bot lifecycle events
+- Optional heartbeat checks for long-lived bots
+
+8. Folder Structure (Layered Scaffolding):
+└── bot-session-service/
+    ├── alembic/              # Alembic migration scripts
+    ├── alembic.ini           # Alembic config file
+    ├── controllers/          # Route handlers (e.g., create, update, status, by-phone)
+    ├── services/             # Bot lifecycle logic
+    ├── models/               # SQLAlchemy models for bots
+    ├── routes/               # Route declarations
+    ├── jobs/                 # Background workers (e.g., cleanup)
+    ├── events/               # Redis/pub-sub emitters (e.g., bot_created)
+    ├── utils/                # Validators, phone formatters
+    ├── config/               # TTLs, bot type rules
+    ├── Dockerfile            # Container definition
+    └── main.py               # Entry point for service registration
+
+9. Alembic Migrations:
+- `alembic init alembic` → Initialize migration folder
+- `alembic revision --autogenerate -m "init bot schema"` → Create migration
+- `alembic upgrade head` → Apply latest migration
+- Migration history stored in `alembic/versions/`
+
+10. Dockerfile:
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+11. Scalability Readiness:
+- **Current Target (1–500 active bots):**
+  - Indexed queries on `phone_number` and `business_id`
+  - Enforced uniqueness constraints at DB level
+  - Single instance deployment with basic lifecycle events
+
+- **Ready for 1,000+ bots:**
+  - Horizontal scaling with Docker + Kubernetes
+  - Redis caching for bot status resolution
+  - Partitioned bot table by region or business type
+  - Circuit breakers for downstream service calls
+
+- **Path to 10,000+ bots:**
+  - Sharded bot table by business_id or phone prefix
+  - Event-driven architecture for bot lifecycle updates
+  - Read replicas for analytics queries
+  - Autoscaling policies based on routing volume
+  - Observability stack (Prometheus + Grafana)
+
+12. Mermaid Flowchart Reference:
+- BotSessionService → AuditService
+- BotSessionService → NotificationService
+- BotSessionService → BotRouter
+- BotSessionService → UserBotSessionService

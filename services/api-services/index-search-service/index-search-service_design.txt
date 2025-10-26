@@ -1,0 +1,126 @@
+API SERVICE DESIGN: INDEX/SEARCH SERVICE
+
+1. Description:
+Provides fast, unified search across MSMEs, affiliates, and products. It consumes lifecycle events from Business, Affiliate, and Catalog Services, indexes them into a search engine (e.g., Elasticsearch, Meilisearch, or OpenSearch), and exposes APIs for keyword, filter, and faceted search. It ensures discoverability and relevance while keeping source-of-truth data in the originating services.
+
+2. Features:
+- Consume lifecycle events (`created`, `updated`, `deleted`) from Business, Affiliate, and Catalog Services
+- Maintain denormalized search indexes for MSMEs, affiliates, and products
+- Support keyword search, filters, and category-based queries
+- Provide faceted search (e.g., by category, region, tags)
+- Expose APIs for frontend discovery (storefronts, dashboards, affiliate lookups)
+- Support bulk reindexing from source services
+- Track indexing status and errors for observability
+
+3. Schema (Search Indexes, not SQL tables):
+Index: businesses_index
+- id: UUID
+- name: TEXT
+- location: TEXT
+- category: TEXT
+- tags: TEXT[]
+- affiliate_code: TEXT
+- is_active: BOOLEAN
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Index: affiliates_index
+- id: UUID
+- code: TEXT
+- user_id: UUID
+- region: TEXT
+- description: TEXT
+- tags: TEXT[]
+- status: ENUM('active', 'suspended', 'expired')
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Index: products_index
+- id: UUID
+- business_id: UUID
+- category_id: UUID
+- name: TEXT
+- description: TEXT
+- tags: TEXT[]
+- price: DECIMAL
+- currency: TEXT
+- is_active: BOOLEAN
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+4. Routes:
+GET    /search/businesses              → Search MSMEs (filters: category, location, tags)
+GET    /search/affiliates              → Search affiliates (filters: region, status, tags)
+GET    /search/products                → Search products (filters: category, price range, tags)
+POST   /search/reindex/businesses      → Trigger bulk reindex of all businesses
+POST   /search/reindex/affiliates      → Trigger bulk reindex of all affiliates
+POST   /search/reindex/products        → Trigger bulk reindex of all products
+GET    /search/status                  → Get indexing status and error logs
+
+5. External Outreach:
+- Consumes events from Business Service (`msme_registered`, `msme_updated`, `msme_suspended`)
+- Consumes events from Affiliate Service (`affiliate_registered`, `affiliate_updated`, `affiliate_suspended`)
+- Consumes events from Catalog Service (`product_created`, `product_updated`, `category_created`, etc.)
+- Publishes indexing logs to Audit Service
+- May notify Notification Service on bulk reindex completion
+
+6. Background Work:
+- Event consumers for real-time indexing
+- Retry queue for failed indexing operations
+- Scheduled reindex jobs (nightly or on-demand)
+- Cleanup of stale or deleted entities from indexes
+- Audit sync for indexing lifecycle events
+
+7. Scaling Readiness:
+- **Current Target (1–500 entities per type):**
+  - Single instance with embedded search engine or lightweight cluster
+  - Direct event consumption from Redis pub/sub
+  - Basic retry queue for failed indexing
+
+- **Ready for 1,000 entities per type:**
+  - Dedicated search engine cluster (Elasticsearch/Meilisearch/OpenSearch)
+  - Horizontal scaling of API layer with Docker + Kubernetes
+  - Partitioned indexing workers for faster throughput
+  - Circuit breakers for upstream event streams
+
+- **Path to 10,000+ entities per type:**
+  - Sharded indexes (by region, business_id, or category)
+  - Event-driven ingestion pipeline with Kafka/RabbitMQ
+  - Read replicas for high-volume query load
+  - Autoscaling policies based on query throughput and indexing backlog
+  - Observability stack (Prometheus + Grafana) for proactive scaling
+
+8. Folder Structure (Layered Scaffolding):
+└── index-search-service/
+    ├── consumers/           # Event consumers (business, affiliate, product)
+    ├── controllers/         # Route handlers (search, reindex)
+    ├── services/            # Indexing logic (e.g., Elasticsearch adapters)
+    ├── models/              # Pydantic models for search payloads
+    ├── routes/              # Route declarations
+    ├── jobs/                # Background workers (e.g., reindex, cleanup)
+    ├── events/              # Redis/Kafka consumers
+    ├── utils/               # Query builders, filters
+    ├── config/              # Search engine config, retry policies
+    ├── Dockerfile
+    └── main.py
+
+9. Dockerfile:
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+10. Mermaid Flowchart Reference:
+- IndexSearchService ← BusinessService
+- IndexSearchService ← AffiliateService
+- IndexSearchService ← CatalogInventoryService
+- IndexSearchService → AuditService
+- IndexSearchService → NotificationService (optional, for reindex completion)

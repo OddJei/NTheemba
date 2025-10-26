@@ -1,0 +1,45 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>NTheemba mascot test</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <!-- Tailwind (CDN) for layout convenience; optional in production -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="../css/NTheemba-mascot.css">
+  <style>
+    body { background: #0b1020; color: #e2e8f0; }
+    .panel { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); }
+  </style>
+</head>
+<body class="min-h-screen antialiased selection:bg-cyan-300/20 selection:text-cyan-100">
+  <main class="max-w-5xl mx-auto px-6 py-12 grid md:grid-cols-[1fr,320px] gap-8 items-start">
+    <section>
+      <h1 class="text-3xl font-semibold tracking-tight">NTheemba Mascot — Playground</h1>
+      <p class="mt-2 text-slate-300">Test wave, wiggle, slide-in, and speech bubble. Resize to see mobile behavior.</p>
+
+      <div class="mt-8 panel rounded-xl p-6">
+        <div class="flex gap-3 flex-wrap">
+          <button class="px-3 py-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200" onclick="window.ntheembaMascot?.play('wave')">Wave</button>
+          <button class="px-3 py-2 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200" onclick="window.ntheembaMascot?.play('wiggle')">Wiggle</button>
+          <button class="px-3 py-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200" onclick="window.ntheembaMascot?.play('slide-in')">Slide In</button>
+          <button class="px-3 py-2 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200" onclick="window.ntheembaMascot?.say('Hi! I help your customers buy faster.')">Say</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="relative h-[320px] md:h-[420px] panel rounded-xl">
+      <div id="mascot" class="absolute right-6 bottom-6 md:right-6 md:bottom-10">
+        <img src="../mascot/images/mascot.svg" alt="NTheemba Mascot" class="w-24 md:w-40 drop-shadow-xl" />
+      </div>
+    </aside>
+  </main>
+
+  <!-- Alpine (optional) -->
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <!-- Engine and glue -->
+  <script src="../js/NTheemba-mascot.js"></script>
+  <script src="../js/NTheemba-ui.js" defer></script>
+</body>
+</html>
+

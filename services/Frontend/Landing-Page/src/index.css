@@ -1,0 +1,278 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* NTheemba Custom Styles */
+@layer components {
+  .ntheemba-heading {
+    font-family: 'Poppins', Arial, sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    position: relative;
+  }
+  
+  .ntheemba-heading::after {
+    content: '';
+    display: block;
+    width: 48px;
+    height: 4px;
+    background-color: #E98F2C;
+    border-radius: 2px;
+    margin-top: 8px;
+    opacity: 0.95;
+  }
+  
+  .ntheemba-subtitle {
+    color: #059669;
+    font-family: 'Poppins', Arial, sans-serif;
+    font-weight: 600;
+    font-size: 1.05rem;
+    margin-bottom: 0.5em;
+    position: relative;
+  }
+  
+  .ntheemba-subtitle::after {
+    content: '';
+    display: block;
+    width: 32px;
+    height: 3px;
+    background-color: #E98F2C;
+    border-radius: 2px;
+    margin-top: 6px;
+    opacity: 0.95;
+  }
+  
+  .ntheemba-body {
+    font-family: 'Hanken Grotesk', 'Poppins', Arial, sans-serif;
+  }
+  
+  .hero-card {
+    width: 80%;
+    height: 70vh;
+    max-width: 1100px;
+    min-height: 420px;
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 24px;
+    box-shadow: 
+      0 8px 32px rgba(0, 0, 0, 0.1),
+      0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+      0 1px 0 rgba(255, 255, 255, 0.2) inset;
+    overflow: visible;
+    padding-top: 18px;
+    position: relative;
+  }
+  
+  .hero-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.1) 0%,
+      rgba(255, 255, 255, 0.05) 50%,
+      rgba(255, 255, 255, 0.02) 100%
+    );
+    border-radius: 24px;
+    pointer-events: none;
+  }
+  
+  .feature-label {
+    position: absolute;
+    top: 0;
+    left: 24px;
+    background: linear-gradient(135deg, #E98F2C, #E9902D);
+    color: white;
+    font-weight: 600;
+    border-radius: 9999px;
+    box-shadow: 0 4px 12px rgba(233, 143, 44, 0.3);
+    padding: 6px 18px;
+    z-index: 30;
+    transform: translateY(-50%);
+    min-width: 120px;
+    text-align: center;
+    font-family: 'Poppins', Arial, sans-serif;
+  }
+  
+  .slide-item {
+    position: relative;
+    display: flex;
+  }
+  
+  .slide-item.hidden {
+    display: none;
+  }
+  
+  .bomba-title {
+    color: #059669;
+    font-family: 'Poppins', Arial, sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    position: relative;
+  }
+  
+  .bomba-subtitle {
+    color: #059669;
+    font-family: 'Poppins', Arial, sans-serif;
+    font-weight: 600;
+    font-size: 1.05rem;
+    margin-bottom: 0.5em;
+    position: relative;
+  }
+  
+  .bomba-desc {
+    font-family: 'Hanken Grotesk', 'Poppins', Arial, sans-serif;
+  }
+  
+  .slide-hero {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* remove orange-white gradient */
+    background: transparent;
+    padding: 0 1rem;
+  }
+  
+  .desktop-two-col {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 1.5rem;
+  }
+  
+  .hero-image {
+    border-radius: 0.5rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  }
+  
+  .bomba-desktop-image {
+    width: 11rem;
+    height: auto;
+  }
+  
+  .soma-title {
+    font-family: 'Poppins', Arial, sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: #1F2937;
+  }
+  
+  .soma-subtitle {
+    font-family: 'Poppins', Arial, sans-serif;
+    font-weight: 600;
+    color: #374151;
+  }
+  
+  .font-poppins {
+    font-family: 'Poppins', Arial, sans-serif;
+  }
+}
+
+@layer base {
+  body {
+    font-family: 'Hanken Grotesk', 'Poppins', Arial, sans-serif;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Poppins', Arial, sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    position: relative;
+  }
+}
+
+/* Responsive Design */
+@media (max-width: 1024px) {
+  .hero-card {
+    width: 90%;
+    height: 72vh;
+  }
+}
+
+@media (max-width: 640px) {
+  .hero-card {
+    width: 360px !important;
+    max-width: 98vw !important;
+    height: 830px !important;
+    min-height: 830px !important;
+    padding: 150px 10px 200px 10px !important;
+    border-radius: 20px !important;
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    box-shadow: 
+      0 8px 32px rgba(0, 0, 0, 0.1),
+      0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+      0 1px 0 rgba(255, 255, 255, 0.2) inset;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    overflow: hidden !important;
+  }
+  
+  .slide-item {
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0;
+  }
+  
+  .bomba-title {
+    font-size: 36px;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 800;
+    text-align: center;
+    color: #000;
+    margin-bottom: 0.25em;
+  }
+  
+  .bomba-subtitle {
+    font-size: 24px;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 400;
+    text-align: center;
+    color: #000;
+    margin-bottom: 0.5em;
+  }
+  
+  .bomba-desc {
+    font-size: 20px;
+    font-family: 'Hanken Grotesk', 'Poppins', sans-serif;
+    font-weight: 300;
+    text-align: center;
+    color: #000;
+    margin-bottom: 1.5em;
+  }
+  
+  .bomba-img {
+    width: 251px;
+    height: 253px;
+    margin: 0 auto 1em auto;
+  }
+  
+  .bomba-nav-btn {
+    width: 150px;
+    height: 50px;
+    background-color: #D9D9D9;
+    border-radius: 10px;
+    font-size: 24px;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 400;
+    color: #000;
+    margin: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: none;
+    border: none;
+    padding: 0;
+  }
+}

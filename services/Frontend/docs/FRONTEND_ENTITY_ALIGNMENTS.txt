@@ -1,0 +1,140 @@
+NTheemba — Frontend ↔ User Domain Entities: Alignment Report
+Summary
+- Quick verdict: The frontend implements many high-level UI entities (users, MSME profiles, products/services, campaigns, subscriptions, ubuntu community, affiliate flows). Core UX is ready for backend wiring. Several backend-focused entities and accounting/analytics artifacts are missing or only mocked.
+
+Where the frontend aligns (present / usable)
+- Users / Profiles: Login, profile pages, KYC status UI placeholders present.
+- MSME (business) profile: MSME pages and owner flows exist (dashboard, branding, products, campaigns).
+- Products & Services: Product/service CRUD UI skeletons and quick-add exist.
+- Campaigns & Links: Campaign UI and affiliate link generation exists.
+- Subscriptions & Billing UI: SubscriptionPlans, BillingPayment components exist (monthly/yearly toggle, mobile-money UI).
+- Ubuntu Community & Plans: Community pages + Ubuntu subscription pages implemented.
+- Affiliates: Affiliate dashboard, link tracking UI, earnings tracker components present (mostly front-end).
+- Messages & Notifications: Messaging UI exists (WhatsApp-native storage indicated).
+- Insights / Analytics: Dashboard panels and metrics UI present (visuals use mock or aggregated data).
+- Auth: Auth provider + token refresh + global handling implemented in frontend.
+- Currency: UI standardized to ZMW.
+
+Where the frontend misaligns or is incomplete (recommended fixes)
+- Orders / Order Items
+  - Frontend: Orders UI partially present; no full order_items model or multi-item cart flows implemented.
+  - Need: Order lines UI, order creation API wiring, stock decrement hooks.
+- Payments / Transactions / Billing Records
+  - Frontend: Mobile-money payment UI exists but real gateway integration and payment_transactions / billing_records reconciliation are not implemented or need webhooks.
+  - Need: webhook handlers, payment status UI, reconciliation export.
+- Affiliate Accounting (earnings / payouts)
+  - Frontend: Earnings UI exists but payout requests, payout history and affiliate_earnings records are not wired to backend.
+  - Need: endpoints for payouts, payout status, provider refs.
+- Click Events / Conversion Attribution
+  - Frontend: Link generation present but click_events and conversion attribution backend are missing.
+  - Need: click capture endpoint, server-side attribution mapping link -> order.
+- Inventory / Stock Movements / Alerts
+  - Frontend: Stock numbers shown; stock_movements, inventory_alerts, and stock adjustments are not tracked persistently.
+  - Need: inventory endpoints + stock movement audit trail.
+- Service Bookings & Reviews
+  - Frontend: Services client supports create form, but booking flow, calendar, and reviews not implemented.
+  - Need: booking endpoints, availability checks, review create/list.
+- Campaign Participation & Referral Detail
+  - Frontend: Campaign UI present; participant join/approval flows and campaign_participants table not integrated.
+- Notifications / Audit Logs / Sessions / OTPs
+  - Frontend: Notifications UI exists; audit, sessions, otp flows are not fully implemented.
+  - Need: session management, OTP verification endpoints, audit logging integration.
+- Analytics Event Store / Materialized Aggregates
+  - Frontend: Insights show aggregates but backend must supply sales_by_day, conversions, etc. Currently mocked.
+  - Need: events ingestion and aggregate endpoints (or direct analytics API).
+- Billing/Subs: invoice history, refunds, and billing_records/invoice endpoints are missing.
+- Data Contracts: Field names and payload shapes must be agreed (e.g., priceZMW vs price, products.price type, subscription API shapes).
+
+Priority action list (next steps to align)
+1. Provide API contract (OpenAPI) for: auth, products, orders(+items), payments, subscriptions, affiliate payouts, click events, insights.
+2. Implement product/orders endpoints and wire frontend mutations (use React-Query hooks already scaffolded).
+3. Add payment webhooks -> update BillingRecord and PaymentTransaction state; show payment status in UI.
+4. Implement click event ingestion and conversion mapping (server-side) and update affiliate link flow.
+5. Add endpoints for stock_movements and inventory_alerts; update product views to request accurate stock.
+6. Implement payout endpoints and history; wire affiliate payout request flows.
+7. Add booking endpoints and review endpoints for services.
+8. Create minimal audit log and session endpoints; wire OTP verification in auth flows.
+9. Agree field naming and types (price as integer cents or decimal, timestamps, currency always ZMW).
+10. Add staging backend and run e2e tests for quick-add, payments, orders, and affiliate conversions.
+
+Quick integration checklist for backend team
+- Provide base URL and env variables (VITE_API_URL).
+- Share OpenAPI for core resources.
+- Provide webhook spec for payment providers (MTN/Airtel/Zamtel).
+- Provide auth token contract and refresh contract as implemented in frontend (POST /auth/refresh).
+- Provide sample payloads for products, orders, subscriptions, payouts, click events.
+
+Conclusion
+- Frontend is functionally ready for integration but expects a backend that exposes the entities and endpoints listed. Implementing the missing server-side entities (order_items, payments, click_events, payouts, inventory audit trails, booking/review endpoints) will complete alignment.
+
+End.
+```// filepath: c:\Users\SMART PC\Documents\NTheemba\services\Frontend\docs\FRONTEND_ENTITY_ALIGNMENTS.txt
+
+NTheemba — Frontend ↔ User Domain Entities: Alignment Report
+Summary
+- Quick verdict: The frontend implements many high-level UI entities (users, MSME profiles, products/services, campaigns, subscriptions, ubuntu community, affiliate flows). Core UX is ready for backend wiring. Several backend-focused entities and accounting/analytics artifacts are missing or only mocked.
+
+Where the frontend aligns (present / usable)
+- Users / Profiles: Login, profile pages, KYC status UI placeholders present.
+- MSME (business) profile: MSME pages and owner flows exist (dashboard, branding, products, campaigns).
+- Products & Services: Product/service CRUD UI skeletons and quick-add exist.
+- Campaigns & Links: Campaign UI and affiliate link generation exists.
+- Subscriptions & Billing UI: SubscriptionPlans, BillingPayment components exist (monthly/yearly toggle, mobile-money UI).
+- Ubuntu Community & Plans: Community pages + Ubuntu subscription pages implemented.
+- Affiliates: Affiliate dashboard, link tracking UI, earnings tracker components present (mostly front-end).
+- Messages & Notifications: Messaging UI exists (WhatsApp-native storage indicated).
+- Insights / Analytics: Dashboard panels and metrics UI present (visuals use mock or aggregated data).
+- Auth: Auth provider + token refresh + global handling implemented in frontend.
+- Currency: UI standardized to ZMW.
+
+Where the frontend misaligns or is incomplete (recommended fixes)
+- Orders / Order Items
+  - Frontend: Orders UI partially present; no full order_items model or multi-item cart flows implemented.
+  - Need: Order lines UI, order creation API wiring, stock decrement hooks.
+- Payments / Transactions / Billing Records
+  - Frontend: Mobile-money payment UI exists but real gateway integration and payment_transactions / billing_records reconciliation are not implemented or need webhooks.
+  - Need: webhook handlers, payment status UI, reconciliation export.
+- Affiliate Accounting (earnings / payouts)
+  - Frontend: Earnings UI exists but payout requests, payout history and affiliate_earnings records are not wired to backend.
+  - Need: endpoints for payouts, payout status, provider refs.
+- Click Events / Conversion Attribution
+  - Frontend: Link generation present but click_events and conversion attribution backend are missing.
+  - Need: click capture endpoint, server-side attribution mapping link -> order.
+- Inventory / Stock Movements / Alerts
+  - Frontend: Stock numbers shown; stock_movements, inventory_alerts, and stock adjustments are not tracked persistently.
+  - Need: inventory endpoints + stock movement audit trail.
+- Service Bookings & Reviews
+  - Frontend: Services client supports create form, but booking flow, calendar, and reviews not implemented.
+  - Need: booking endpoints, availability checks, review create/list.
+- Campaign Participation & Referral Detail
+  - Frontend: Campaign UI present; participant join/approval flows and campaign_participants table not integrated.
+- Notifications / Audit Logs / Sessions / OTPs
+  - Frontend: Notifications UI exists; audit, sessions, otp flows are not fully implemented.
+  - Need: session management, OTP verification endpoints, audit logging integration.
+- Analytics Event Store / Materialized Aggregates
+  - Frontend: Insights show aggregates but backend must supply sales_by_day, conversions, etc. Currently mocked.
+  - Need: events ingestion and aggregate endpoints (or direct analytics API).
+- Billing/Subs: invoice history, refunds, and billing_records/invoice endpoints are missing.
+- Data Contracts: Field names and payload shapes must be agreed (e.g., priceZMW vs price, products.price type, subscription API shapes).
+
+Priority action list (next steps to align)
+1. Provide API contract (OpenAPI) for: auth, products, orders(+items), payments, subscriptions, affiliate payouts, click events, insights.
+2. Implement product/orders endpoints and wire frontend mutations (use React-Query hooks already scaffolded).
+3. Add payment webhooks -> update BillingRecord and PaymentTransaction state; show payment status in UI.
+4. Implement click event ingestion and conversion mapping (server-side) and update affiliate link flow.
+5. Add endpoints for stock_movements and inventory_alerts; update product views to request accurate stock.
+6. Implement payout endpoints and history; wire affiliate payout request flows.
+7. Add booking endpoints and review endpoints for services.
+8. Create minimal audit log and session endpoints; wire OTP verification in auth flows.
+9. Agree field naming and types (price as integer cents or decimal, timestamps, currency always ZMW).
+10. Add staging backend and run e2e tests for quick-add, payments, orders, and affiliate conversions.
+
+Quick integration checklist for backend team
+- Provide base URL and env variables (VITE_API_URL).
+- Share OpenAPI for core resources.
+- Provide webhook spec for payment providers (MTN/Airtel/Zamtel).
+- Provide auth token contract and refresh contract as implemented in frontend (POST /auth/refresh).
+- Provide sample payloads for products, orders, subscriptions, payouts, click events.
+
+Conclusion
+- Frontend is functionally ready for integration but expects a backend that exposes the entities and endpoints listed. Implementing the missing

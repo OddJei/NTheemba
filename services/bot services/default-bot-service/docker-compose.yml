@@ -1,0 +1,201 @@
+version: '3.8'
+
+services:
+  # Redis for session storage
+  redis:
+    image: redis:7-alpine
+    container_name: bot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Default Bot Service
+  bot-service:
+    build: .
+    container_name: default-bot-service
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SERVICE_PORT=8000
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+      # API Service URLs (ports 8100-8199)
+      - AUTH_SERVICE_URL=http://auth-service:8100
+      - SESSION_SERVICE_URL=http://session-service:8101
+      - EVENT_SERVICE_URL=http://event-service:8102
+      - NOTIFICATION_SERVICE_URL=http://notification-service:8103
+      - CATALOG_SERVICE_URL=http://catalog-service:8104
+      - ORDER_SERVICE_URL=http://order-service:8105
+      - PAYMENT_SERVICE_URL=http://payment-service:8106
+      - INVENTORY_SERVICE_URL=http://inventory-service:8107
+      - USER_SERVICE_URL=http://user-service:8108
+      - BUSINESS_SERVICE_URL=http://business-service:8109
+      - AFFILIATE_SERVICE_URL=http://affiliate-service:8110
+      - ANALYTICS_SERVICE_URL=http://analytics-service:8111
+      - REPORT_SERVICE_URL=http://report-service:8112
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Mock API Services (for development/testing)
+  auth-service:
+    image: mockserver/mockserver:5.15.0
+    container_name: auth-service
+    ports:
+      - "8100:1080"
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/auth-service.json
+    volumes:
+      - ./mock-services/auth-service.json:/config/auth-service.json
+    restart: unless-stopped
+
+  session-service:
+    image: mockserver/mockserver:5.15.0
+    container_name: session-service
+    ports:
+      - "8101:1080"
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/session-service.json
+    volumes:
+      - ./mock-services/session-service.json:/config/session-service.json
+    restart: unless-stopped
+
+  event-service:
+    image: mockserver/mockserver:5.15.0
+    container_name: event-service
+    ports:
+      - "8102:1080"
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/event-service.json
+    volumes:
+      - ./mock-services/event-service.json:/config/event-service.json
+    restart: unless-stopped
+
+  notification-service:
+    image: mockserver/mockserver:5.15.0
+    container_name: notification-service
+    ports:
+      - "8103:1080"
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/notification-service.json
+    volumes:
+      - ./mock-services/notification-service.json:/config/notification-service.json
+    restart: unless-stopped
+
+  catalog-service:
+    image: mockserver/mockserver:5.15.0
+    container_name: catalog-service
+    ports:
+      - "8104:1080"
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/catalog-service.json
+    volumes:
+      - ./mock-services/catalog-service.json:/config/catalog-service.json
+    restart: unless-stopped
+
+  order-service:
+    image: mockserver/mockserver:5.15.0
+    container_name: order-service
+    ports:
+      - "8105:1080"
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/order-service.json
+    volumes:
+      - ./mock-services/order-service.json:/config/order-service.json
+    restart: unless-stopped
+
+  payment-service:
+    image: mockserver/mockserver:5.15.0
+    container_name: payment-service
+    ports:
+      - "8106:1080"
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/payment-service.json
+    volumes:
+      - ./mock-services/payment-service.json:/config/payment-service.json
+    restart: unless-stopped
+
+  inventory-service:
+    image: mockserver/mockserver:5.15.0
+    container_name: inventory-service
+    ports:
+      - "8107:1080"
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/inventory-service.json
+    volumes:
+      - ./mock-services/inventory-service.json:/config/inventory-service.json
+    restart: unless-stopped
+
+  user-service:
+    image: mockserver/mockserver:5.15.0
+    container_name: user-service
+    ports:
+      - "8108:1080"
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/user-service.json
+    volumes:
+      - ./mock-services/user-service.json:/config/user-service.json
+    restart: unless-stopped
+
+  business-service:
+    image: mockserver/mockserver:5.15.0
+    container_name: business-service
+    ports:
+      - "8109:1080"
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/business-service.json
+    volumes:
+      - ./mock-services/business-service.json:/config/business-service.json
+    restart: unless-stopped
+
+  affiliate-service:
+    image: mockserver/mockserver:5.15.0
+    container_name: affiliate-service
+    ports:
+      - "8110:1080"
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/affiliate-service.json
+    volumes:
+      - ./mock-services/affiliate-service.json:/config/affiliate-service.json
+    restart: unless-stopped
+
+  analytics-service:
+    image: mockserver/mockserver:5.15.0
+    container_name: analytics-service
+    ports:
+      - "8111:1080"
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/analytics-service.json
+    volumes:
+      - ./mock-services/analytics-service.json:/config/analytics-service.json
+    restart: unless-stopped
+
+  report-service:
+    image: mockserver/mockserver:5.15.0
+    container_name: report-service
+    ports:
+      - "8112:1080"
+    environment:
+      - MOCKSERVER_INITIALIZATION_JSON_PATH=/config/report-service.json
+    volumes:
+      - ./mock-services/report-service.json:/config/report-service.json
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+

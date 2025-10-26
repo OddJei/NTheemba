@@ -1,0 +1,103 @@
+1. Description:
+Captures user ratings and feedback across MSME interactions. Supports rating of businesses, products, bot experiences, and delivery outcomes. Ratings Service ensures traceability, emits events for analytics and discoverability, and integrates with Notification, Catalog, Business, and Delivery Services to close the feedback loop.
+
+2. Features:
+- Submit ratings for MSMEs, products, bots, or delivery
+- Store rating value, optional comment, and context
+- Emit rating lifecycle events (`rating_submitted`, `rating_updated`)
+- Link ratings to user identity or phone number
+- Support anonymous ratings via `user_phone`
+- Expose ratings for analytics, search, and reputation logic
+
+3. Schema:
+Table: ratings_service.ratings
+- id: UUID (PK)
+- user_phone: TEXT (indexed)
+- user_id: UUID (FK → auth_service.users.id, nullable)
+- business_id: UUID (FK → business_service.businesses.id, nullable)
+- product_id: UUID (FK → catalog_service.products.id, nullable)
+- bot_id: UUID (FK → bot_session_service.bots.id, nullable)
+- delivery_id: UUID (FK → delivery_service.deliveries.id, nullable)
+- rating_type: ENUM('business', 'product', 'bot', 'delivery')
+- rating_value: INTEGER CHECK (rating_value BETWEEN 1 AND 5)
+- comment: TEXT (optional)
+- metadata: JSONB
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+4. Routes:
+POST   /rating/submit                    → Submit new rating
+PUT    /rating/{id}/update               → Update rating or comment
+GET    /rating/business/{id}            → Get ratings for a business
+GET    /rating/product/{id}             → Get ratings for a product
+GET    /rating/bot/{id}                 → Get ratings for a bot
+GET    /rating/delivery/{id}            → Get ratings for a delivery
+GET    /rating/user/{user_phone}        → Get ratings by phone
+
+5. External Outreach:
+- Publishes `rating_submitted` events to Notification and Analytics Services
+- Shares rating metadata with Business, Catalog, and Delivery Services
+- May notify MSMEs or staff on low ratings
+- May trigger bot responses via Messaging Service
+
+6. Background Work:
+- Cleanup of outdated or orphaned ratings
+- Audit sync for rating lifecycle
+- Scheduled aggregation jobs for average scores
+- Optional alert triggers for low ratings
+
+7. Folder Structure (Layered Scaffolding):
+└── ratings-service/
+    ├── alembic/
+    ├── alembic.ini
+    ├── controllers/
+    ├── services/
+    ├── models/
+    ├── routes/
+    ├── jobs/
+    ├── events/
+    ├── utils/
+    ├── config/
+    ├── Dockerfile
+    └── main.py
+
+8. Alembic Migrations:
+- `alembic init alembic`
+- `alembic revision --autogenerate -m "init ratings schema"`
+- `alembic upgrade head`
+
+9. Dockerfile:
+FROM python:3.11-slim  
+WORKDIR /app  
+COPY requirements.txt .  
+RUN pip install --no-cache-dir -r requirements.txt  
+COPY . .  
+ENV PYTHONUNBUFFERED=1  
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+10. Scalability Readiness:
+- **Current Target (1–500 MSMEs):**
+  - Indexed queries on `user_phone`, `business_id`, `product_id`
+  - Basic rating lifecycle events and cleanup routines
+
+- **Ready for 1,000 MSMEs:**
+  - Redis cache for rating aggregation
+  - Horizontal scaling with Docker + Kubernetes
+  - Partitioned ratings table by rating_type or business_id
+  - Circuit breakers for Notification and Messaging calls
+
+- **Path to 10,000+ MSMEs:**
+  - Sharded ratings table by region or business_id
+  - Event-driven architecture with Kafka/RabbitMQ
+  - Read replicas for analytics queries
+  - Autoscaling policies based on rating volume
+  - Observability stack (Prometheus + Grafana)
+
+11. Mermaid Flowchart Reference:
+- RatingsService → BusinessService
+- RatingsService → CatalogInventoryService
+- RatingsService → DeliveryService
+- RatingsService → NotificationService
+- RatingsService → MessagingService
+- RatingsService → AnalyticsService
+- RatingsService → AuditService

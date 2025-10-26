@@ -1,0 +1,153 @@
+API SERVICE DESIGN: CATALOG & INVENTORY SERVICE
+
+1. Description:
+Manages product catalogs, categories, and inventory levels for MSMEs. It allows businesses to create, update, and organize products, group them into categories, track stock levels, and emit events when inventory or catalog data changes. It integrates with Business Service for ownership, Payment Service for stock deductions, Notification Service for low-stock alerts, and Index/Search Service for discovery. Designed for scaling from 500 → 10,000+ MSMEs.
+
+2. Features:
+- Create and manage product listings (name, description, price, category, images)
+- Group products into categories (hierarchical or flat)
+- Track inventory levels (stock in/out)
+- Support product variants (size, color, packaging)
+- Emit events on stock changes (low stock, out of stock, restock)
+- Emit product/category lifecycle events to Index/Search Service
+- Expose catalog APIs for storefronts, search, and analytics
+- Provide metadata for marketing and analytics services
+- Reindex endpoint for recovery (bulk re-publish to Index/Search Service)
+
+3. Schema:
+Table: catalog_service.categories
+- id: UUID (PK)
+- business_id: UUID (FK → business_service.businesses.id, optional for global categories)
+- name: TEXT
+- description: TEXT
+- parent_id: UUID (FK → catalog_service.categories.id, nullable)   -- For hierarchical categories
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Table: catalog_service.products
+- id: UUID (PK)
+- business_id: UUID (FK → business_service.businesses.id)
+- category_id: UUID (FK → catalog_service.categories.id, nullable)
+- name: TEXT
+- description: TEXT
+- price: DECIMAL(12,2)
+- currency: TEXT
+- image_url: TEXT (optional)
+- tags: TEXT[] (optional, for search relevance)
+- is_active: BOOLEAN
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Table: catalog_service.product_variants
+- id: UUID (PK)
+- product_id: UUID (FK → catalog_service.products.id)
+- name: TEXT (e.g., "Size M", "Red")
+- sku: TEXT (unique, indexed)
+- price_override: DECIMAL(12,2) (optional)
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Table: catalog_service.inventory
+- id: UUID (PK)
+- variant_id: UUID (FK → catalog_service.product_variants.id)
+- stock_level: INTEGER
+- reserved: INTEGER (default 0)
+- threshold: INTEGER (low-stock alert trigger)
+- updated_at: TIMESTAMP
+
+4. Routes:
+POST   /catalog/category               → Create new category
+GET    /catalog/category/{id}          → Get category details
+GET    /catalog/categories             → List categories (optionally by business)
+PUT    /catalog/category/{id}          → Update category
+DELETE /catalog/category/{id}          → Archive category
+
+POST   /catalog/product                → Create new product
+GET    /catalog/product/{id}           → Get product details
+PUT    /catalog/product/{id}           → Update product details
+DELETE /catalog/product/{id}           → Archive product
+POST   /catalog/product/{id}/variant   → Add product variant
+GET    /catalog/business/{id}          → List products for a business
+
+POST   /inventory/update               → Update stock levels (in/out)
+GET    /inventory/{variant_id}         → Get inventory status
+
+POST   /catalog/reindex/{business_id}  → Re-publish all products/categories for a business to Index/Search Service
+
+5. External Outreach:
+- Validates business ownership via Business Service
+- Emits `stock_low`, `stock_out`, `stock_restocked` events to Notification Service
+- Publishes product/category lifecycle events (`product_created`, `product_updated`, `category_created`, etc.) to Index/Search Service
+- Publishes product/category creation/update events to Audit Service
+- Shares catalog metadata with Analytics and Marketing Services
+- Listens for `payment_success` events from Payment Service to deduct stock
+
+6. Background Work:
+- Scheduled low-stock checks
+- Cleanup of inactive/archived products and categories
+- Audit sync for product, category, and inventory changes
+- Reconciliation jobs for reserved vs. actual stock
+- Reindex jobs for Index/Search Service (periodic or on-demand)
+
+7. Scaling Readiness:
+- **Current Target (1–500 MSMEs):**
+  - Single instance deployment with connection pooling
+  - Indexed queries on `business_id`, `category_id`, `sku`
+  - Basic low-stock checks and alerts
+
+- **Ready for 1,000 MSMEs:**
+  - Stateless service design with Redis for pub/sub events
+  - Horizontal scaling with Docker + Kubernetes
+  - Partitioned inventory tables for faster lookups
+  - Circuit breakers for Notification, Payment, and Index/Search Service calls
+
+- **Path to 10,000+ MSMEs:**
+  - Sharded `products`, `categories`, and `inventory` tables (by business_id or region)
+  - Event-driven architecture with Kafka/RabbitMQ for high-throughput stock/category events
+  - Read replicas for analytics queries (sales trends, stock levels, category performance)
+  - Autoscaling policies based on transaction volume and stock updates
+  - Observability stack (Prometheus + Grafana) for proactive scaling
+
+8. Folder Structure (Layered Scaffolding):
+└── catalog-inventory-service/
+    ├── alembic/
+    ├── alembic.ini
+    ├── controllers/          # Route handlers (e.g., product, category, inventory)
+    ├── services/             # Catalog & inventory logic
+    ├── models/               # SQLAlchemy models for products, categories, variants, inventory
+    ├── routes/               # Route declarations
+    ├── jobs/                 # Background workers (e.g., low-stock checks, reindex jobs)
+    ├── events/               # Redis/pub-sub emitters (e.g., stock_low, product_created)
+    ├── utils/                # SKU generator, validators
+    ├── config/               # Thresholds, retry policies
+    ├── Dockerfile
+    └── main.py
+
+9. Alembic Migrations:
+- `alembic init alembic`
+- `alembic revision --autogenerate -m "init catalog schema"`
+- `alembic upgrade head`
+- Migration history stored in `alembic/versions/`
+
+10. Dockerfile:
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+11. Mermaid Flowchart Reference:
+- CatalogInventoryService → BusinessService
+- CatalogInventoryService → PaymentService
+- CatalogInventoryService → NotificationService
+- CatalogInventoryService → AuditService
+- CatalogInventoryService → AnalyticsService
+- CatalogInventoryService → MarketingService
+- CatalogInventoryService → IndexSearchService

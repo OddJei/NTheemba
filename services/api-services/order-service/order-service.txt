@@ -1,0 +1,116 @@
+1. Description:
+Manages customer orders placed through MSME bots or storefronts. Tracks order lifecycle from creation to fulfillment, links to product variants and inventory, and integrates with Payment Service for transaction validation. Emits events for delivery, messaging, and analytics. Designed for scaling from 500 → 10,000+ MSMEs with traceable, event-driven order flows.
+
+2. Features:
+- Create new orders from product selections
+- Link orders to product variants and inventory
+- Track order status (`pending`, `confirmed`, `paid`, `fulfilled`, `cancelled`)
+- Emit order lifecycle events (`order_created`, `order_paid`, `order_fulfilled`)
+- Validate stock availability before confirmation
+- Link to payment transactions
+- Trigger notifications for order updates
+- Expose order history for MSMEs and customers
+
+3. Schema:
+Table: order_service.orders
+- id: UUID (PK)
+- business_id: UUID (FK → business_service.businesses.id)
+- user_phone: TEXT (indexed)                        -- Customer identifier
+- user_id: UUID (FK → auth_service.users.id, nullable)
+- status: ENUM('pending', 'confirmed', 'paid', 'fulfilled', 'cancelled')
+- total_amount: DECIMAL(12,2)
+- currency: TEXT
+- payment_id: UUID (FK → payment_service.transactions.id, nullable)
+- delivery_location: TEXT
+- metadata: JSONB
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Table: order_service.order_items
+- id: UUID (PK)
+- order_id: UUID (FK → order_service.orders.id)
+- variant_id: UUID (FK → catalog_service.product_variants.id)
+- quantity: INTEGER
+- unit_price: DECIMAL(12,2)
+- subtotal: DECIMAL(12,2)
+- created_at: TIMESTAMP
+
+4. Routes:
+POST   /order/create                     → Create new order
+GET    /order/{id}                       → Get order details
+GET    /order/user/{user_phone}          → List orders by phone
+GET    /order/business/{id}              → List orders for a business
+PUT    /order/{id}/status                → Update order status
+POST   /order/{id}/confirm               → Confirm order and reserve stock
+POST   /order/{id}/pay                   → Link order to payment
+POST   /order/{id}/fulfill               → Mark order as fulfilled
+
+5. External Outreach:
+- Validates product and variant via Catalog Service
+- Checks stock availability via Inventory Service
+- Emits order lifecycle events to Notification and Messaging Services
+- Links to Payment Service for transaction validation
+- Publishes order logs to Audit and Analytics Services
+
+6. Background Work:
+- Cleanup of expired or cancelled orders
+- Retry logic for failed payment or stock reservation
+- Audit sync for order lifecycle
+- Scheduled fulfillment checks
+- Optional delivery coordination jobs
+
+7. Folder Structure (Layered Scaffolding):
+└── order-service/
+    ├── alembic/
+    ├── alembic.ini
+    ├── controllers/
+    ├── services/
+    ├── models/
+    ├── routes/
+    ├── jobs/
+    ├── events/
+    ├── utils/
+    ├── config/
+    ├── Dockerfile
+    └── main.py
+
+8. Alembic Migrations:
+- `alembic init alembic`
+- `alembic revision --autogenerate -m "init order schema"`
+- `alembic upgrade head`
+
+9. Dockerfile:
+FROM python:3.11-slim  
+WORKDIR /app  
+COPY requirements.txt .  
+RUN pip install --no-cache-dir -r requirements.txt  
+COPY . .  
+ENV PYTHONUNBUFFERED=1  
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+10. Scalability Readiness:
+- **Current Target (1–500 MSMEs):**
+  - Indexed queries on `user_phone`, `business_id`, `status`
+  - Basic lifecycle events and cleanup routines
+
+- **Ready for 1,000 MSMEs:**
+  - Redis queue for order ingestion
+  - Horizontal scaling with Docker + Kubernetes
+  - Partitioned order tables by business_id
+  - Circuit breakers for Payment and Inventory calls
+
+- **Path to 10,000+ MSMEs:**
+  - Sharded order tables by region or business_id
+  - Event-driven architecture with Kafka/RabbitMQ
+  - Read replicas for analytics queries
+  - Autoscaling policies based on order volume
+  - Observability stack (Prometheus + Grafana)
+
+11. Mermaid Flowchart Reference:
+- OrderService → BusinessService
+- OrderService → CatalogInventoryService
+- OrderService → PaymentService
+- OrderService → NotificationService
+- OrderService → MessagingService
+- OrderService → AuditService
+- OrderService → AnalyticsService

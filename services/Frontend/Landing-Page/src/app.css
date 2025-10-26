@@ -1,0 +1,47 @@
+/* Additional app-specific styles */
+.slide-hero {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(to bottom, #ff914d, #ffb36b);
+    padding: 0 1rem;
+  }
+  
+  .hero-card {
+    width: 80%;
+    height: 70vh;
+    max-width: 1100px;
+    min-height: 420px;
+    background: rgba(255,255,255,0.06);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.18);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+    overflow: visible !important;
+    padding-top: 18px;
+  }
+  
+  @media (max-width: 1024px) {
+    .hero-card { 
+      width: 90%; 
+      height: 72vh; 
+    }
+  }
+  
+  @media (max-width: 640px) {
+    .hero-card {
+      width: 360px !important;
+      max-width: 98vw !important;
+      height: 830px !important;
+      min-height: 830px !important;
+      padding: 150px 10px 200px 10px !important;
+      border-radius: 20px !important;
+      background: rgba(255, 255, 255, 0.06);
+      box-shadow: none !important;
+      display: flex !important;
+      flex-direction: column !important;
+      justify-content: space-between !important;
+      align-items: center !important;
+      overflow: hidden !important;
+    }
+  }

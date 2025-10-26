@@ -1,0 +1,117 @@
+1. Description:
+Handles inbound and outbound messages exchanged between users and bot instances. Each message is linked to a session and may trigger event logging, routing decisions, or bot responses. This service ensures message persistence, traceability, and optional transformation (e.g., formatting, language normalization).
+
+2. Features:
+- Receive inbound messages from users (via SMS, WhatsApp, etc.)
+- Store messages with metadata (sender, timestamp, channel)
+- Link messages to session, bot, and optionally user
+- Trigger event logging and routing
+- Support outbound bot messages
+- Optional message transformation (e.g., NLP, formatting)
+
+3. Schema:
+Table: message_service.messages
+- id: UUID (PK)
+- session_id: UUID (FK → user_bot_session_service.sessions.id)
+- user_phone: TEXT (indexed, nullable)         -- Primary user identifier
+- user_id: UUID (FK → auth_service.users.id, nullable)
+- bot_id: UUID (FK → bot_session_service.bots.id)
+- direction: ENUM('inbound', 'outbound')
+- channel: TEXT (e.g., 'sms', 'whatsapp', 'web')
+- content: TEXT
+- metadata: JSONB
+- created_at: TIMESTAMP
+
+Constraints:
+- `user_phone` required for inbound messages
+- `direction` must be specified
+- `channel` used for routing and analytics
+
+4. Routes:
+POST   /message/inbound                     → Receive inbound message
+POST   /message/outbound                    → Send outbound bot message
+GET    /message/session/{session_id}        → Get all messages for a session
+GET    /message/phone/{user_phone}          → Get all messages by phone
+GET    /message/bot/{bot_id}                → Get all messages for a bot
+DELETE /message/{id}                        → Remove message
+
+5. External Outreach:
+- Triggers User-Bot Event Service for `message` events
+- Referenced by Bot Router for payload enrichment
+- May notify Notification Service for outbound delivery
+- May invoke NLP Service for message transformation
+- May validate phone via PhoneNumberResolver
+
+6. Background Work:
+- Cleanup of expired or irrelevant messages
+- Audit sync for message lifecycle
+- Optional message replay or summarization
+
+7. Folder Structure (Layered Scaffolding):
+└── message-service/
+    ├── alembic/
+    ├── alembic.ini
+    ├── controllers/
+    ├── services/
+    ├── models/
+    ├── routes/
+    ├── jobs/
+    ├── events/
+    ├── utils/
+    ├── config/
+    ├── Dockerfile
+    └── main.py
+
+8. Alembic Migrations:
+- `alembic init alembic`
+- `alembic revision --autogenerate -m "init message schema"`
+- `alembic upgrade head`
+- Migration history stored in `alembic/versions/`
+
+9. Dockerfile:
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+10. Scalability Readiness:
+- **Current Target (1–10,000 messages):**
+  - Indexed queries on `user_phone`, `session_id`, `bot_id`
+  - Basic lifecycle events and cleanup routines
+
+- **Ready for 100,000+ messages:**
+  - Partitioned message table by bot or channel
+  - Redis queue for inbound message ingestion
+  - Horizontal scaling with Docker + Kubernetes
+  - Streaming pipeline to Event and Analytics Services
+
+- **Path to 1M+ messages:**
+  - Sharded message table by phone prefix or bot_id
+  - Kafka or Redis Streams for real-time ingestion
+  - Read replicas for analytics queries
+  - Autoscaling policies based on message volume
+  - Observability stack (Prometheus + Grafana)
+
+11. Subscribed Services:
+- **Bot Router** → `payload_routed`, `bot_resolved`, `session_resolved`
+- **User-Bot Session Service** → `session_created`, `session_updated`
+- **User-Bot Event Service** → `event_logged`
+- **Notification Service** → `message_delivered`, `message_failed`
+- **PhoneNumberResolver** → `phone_validated`, `phone_normalized`
+- **NLP Service** → `message_transformed`, `intent_detected` (optional)
+
+12. Mermaid Flowchart Reference:
+- MessageService → BotRouter
+- MessageService → UserBotSessionService
+- MessageService → UserBotEventService
+- MessageService → NotificationService
+- MessageService → PhoneNumberResolver
+- MessageService → NLPService

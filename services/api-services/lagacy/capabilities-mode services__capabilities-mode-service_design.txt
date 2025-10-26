@@ -1,0 +1,145 @@
+API SERVICE DESIGN: CAPABILITY & MODE SERVICE
+
+1. Description:
+Defines and enforces user capability modes across the Ntheemba platform. It determines what actions are available to users based on their role, authentication status, and context. It routes users to appropriate service flows (e.g., registration, analytics, product management) and ensures consistent access control across frontend and backend layers.
+
+2. Modes & Capabilities:
+
+Default Object
+  - Public Mode:
+    - Browse products and services (all registered businesses)
+    - Place orders / bulk orders
+    - Track orders
+    - Make payments
+    - Rate products, services, affiliates, MSMEs, and Ntheemba
+    - Register:
+      - Subscription
+      - Business + user details
+      - Route to Registered User Mode
+
+  - Registered User Mode [requires auth: passcode]
+    - Inherits Public Mode (except registration)
+    - Update account details
+    - Update products and services (MSME only, includes image upload)
+    - Access analytics
+    - Generate referral links
+
+Custom Object
+  - Customer Mode [receiver = MSME]
+    - Browse MSME products and services only
+    - Place orders / bulk orders
+    - Track orders
+    - Make payments
+    - Rate MSMEs and products
+    - Redirect to Default Mode if user wants to join Ntheemba
+
+  - Staff Only Mode [requires auth: passcode]
+    - Access analytics
+    - Manage products and services
+    - Manage staff accounts
+
+3. Schema:
+Table: capability_service.modes
+- id: UUID (PK)
+- name: TEXT (e.g., 'public', 'registered_user', 'customer', 'staff_only')
+- description: TEXT
+- requires_auth: BOOLEAN
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Table: capability_service.capabilities
+- id: UUID (PK)
+- mode_id: UUID (FK → capability_service.modes.id)
+- action: TEXT (e.g., 'browse_products', 'rate_affiliate', 'upload_image')
+- target: TEXT (e.g., 'product', 'affiliate', 'msme', 'ntheemba')
+- created_at: TIMESTAMP
+
+Table: capability_service.mode_assignments
+- id: UUID (PK)
+- user_id: UUID (FK → auth_service.users.id)
+- mode_id: UUID (FK → capability_service.modes.id)
+- assigned_at: TIMESTAMP
+
+4. Routes:
+GET    /mode/{user_id}                 → Get current mode for user
+POST   /mode/assign                    → Assign mode to user
+GET    /capabilities/{mode_id}         → List capabilities for a mode
+POST   /capabilities/check             → Check if user can perform action
+GET    /modes                          → List all available modes
+
+5. External Outreach:
+- Validates user identity via Auth Service
+- Routes registration to Business Service
+- Routes product updates to Catalog Service
+- Routes analytics requests to Analytics Service
+- Routes payments to Payment Service
+- Routes ratings to Rating Service (future)
+- Routes link generation to Affiliate Service
+
+6. Background Work:
+- Mode assignment sync on registration
+- Cleanup of expired or orphaned mode assignments
+- Audit sync for mode transitions and capability checks
+
+7. Scaling Readiness:
+- **Current Target (1–500 users):**
+  - Single instance deployment
+  - Indexed queries on `user_id`, `mode_id`
+  - Basic mode assignment and capability checks
+
+- **Ready for 1,000 users:**
+  - Stateless service design with Redis for mode caching
+  - Horizontal scaling with Docker + Kubernetes
+  - Partitioned capability checks for faster routing
+  - Circuit breakers for downstream service calls
+
+- **Path to 10,000+ users:**
+  - Sharded `mode_assignments` table (by user_id or region)
+  - Event-driven architecture for mode transitions
+  - Read replicas for analytics queries
+  - Autoscaling policies based on login and routing volume
+  - Observability stack (Prometheus + Grafana)
+
+8. Folder Structure (Layered Scaffolding):
+└── capability-mode-service/
+    ├── alembic/
+    ├── alembic.ini
+    ├── controllers/          # Route handlers (e.g., assign, check)
+    ├── services/             # Mode logic (e.g., capability resolution)
+    ├── models/               # SQLAlchemy models for modes, capabilities, assignments
+    ├── routes/               # Route declarations
+    ├── jobs/                 # Background workers (e.g., cleanup)
+    ├── events/               # Redis/pub-sub emitters (e.g., mode_assigned)
+    ├── utils/                # Validators, capability matchers
+    ├── config/               # Mode definitions, TTLs
+    ├── Dockerfile
+    └── main.py
+
+9. Alembic Migrations:
+- `alembic init alembic`
+- `alembic revision --autogenerate -m "init capability schema"`
+- `alembic upgrade head`
+- Migration history stored in `alembic/versions/`
+
+10. Dockerfile:
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+11. Mermaid Flowchart Reference:
+- CapabilityModeService → AuthService
+- CapabilityModeService → BusinessService
+- CapabilityModeService → CatalogInventoryService
+- CapabilityModeService → PaymentService
+- CapabilityModeService → AnalyticsService
+- CapabilityModeService → AffiliateService
+- CapabilityModeService → RatingService (future)

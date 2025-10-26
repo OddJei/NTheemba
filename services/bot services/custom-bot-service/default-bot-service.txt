@@ -1,0 +1,16 @@
+default-bot-service/
+├── controllers/
+├── services/
+├── events/
+├── models/
+├── utils/
+│   └── payload_validator.py
+├── api/                         # ← All outbound service calls
+│   ├── auth_service.py
+│   ├── session_service.py
+│   ├── event_service.py
+│   └── notification_service.py
+├── config/
+├── routes/
+├── Dockerfile
+└── main.py

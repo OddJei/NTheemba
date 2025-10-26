@@ -1,0 +1,82 @@
+MSME Referral Tracker Service (MRTS)
+
+1. Description:
+Tracks MSME referrals made by affiliates and awards a free 1-month subscription when an affiliate successfully refers 3 MSMEs. Designed for simplicity, with future scaling in mind.
+
+2. Features:
+- Track MSME referrals per affiliate
+- Count only verified MSMEs (e.g. completed onboarding or first transaction)
+- Award free 1-month subscription after every 3 verified referrals
+- Emit ReferralMilestoneAchieved event to SubscriptionService
+- Reset referral count after each reward cycle
+
+3. Schema:
+Table: msme_referral_service.referrals
+- id: UUID (PK)
+- affiliate_id: UUID (FK → affiliate_service.affiliates.id)
+- msme_id: UUID (FK → msme_service.msmes.id)
+- verified: BOOLEAN
+- created_at: TIMESTAMP
+
+Table: msme_referral_service.milestones
+- id: UUID (PK)
+- affiliate_id: UUID
+- milestone_count: INTEGER
+- last_awarded_at: TIMESTAMP
+
+4. Routes:
+POST   /referral/submit                      → Submit MSME referral
+POST   /referral/verify                      → Mark referral as verified
+GET    /referral/count/{affiliate_id}        → Get verified referral count
+POST   /milestone/check                      → Check if milestone reached
+POST   /milestone/reset                      → Reset referral count after reward
+
+5. External Outreach:
+- Emits ReferralMilestoneAchieved to SubscriptionService
+- Optionally logs to AnalyticsService
+
+6. Folder Structure:
+└── msme-referral-service/
+    ├── alembic/
+    ├── alembic.ini
+    ├── controllers/
+    ├── services/
+    ├── models/
+    ├── routes/
+    ├── jobs/
+    ├── events/
+    ├── utils/
+    ├── config/
+    ├── Dockerfile
+    └── main.py
+
+7. Alembic Migrations:
+- alembic init alembic
+- alembic revision --autogenerate -m "init msme referral schema"
+- alembic upgrade head
+
+8. Dockerfile:
+FROM python:3.11-slim  
+WORKDIR /app  
+COPY requirements.txt .  
+RUN pip install --no-cache-dir -r requirements.txt  
+COPY . .  
+ENV PYTHONUNBUFFERED=1  
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+9. Scalability Readiness:
+- Current Target (1–500 affiliates):
+  - Simple milestone logic
+  - Manual verification
+  - Basic event emission
+
+- Ready for 1,000+ affiliates:
+  - Async verification queue
+  - Redis cache for referral counts
+  - NotificationService integration
+
+- Path to 10,000+ affiliates:
+  - Sharded referral table
+  - Event-driven milestone engine
+  - SubscriptionService webhook listener
+  - Regional milestone campaigns

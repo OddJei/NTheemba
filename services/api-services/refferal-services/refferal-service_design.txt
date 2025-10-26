@@ -1,0 +1,105 @@
+1. Description:
+Generates and resolves referral URLs that encode affiliate or MSME codes. Enables trackable onboarding, contributor attribution, and reward logic. Referral links route users directly to MSME bot instances with prefilled context. Only “refer a business” links route to the default bot instance (#2609526780).
+
+2. Features:
+- Generate referral URLs for affiliates or MSMEs
+- Resolve referral URLs to code metadata
+- Route users to MSME bot instance with prefilled affiliate code + product context
+- Route “refer a business” links to default bot instance (#2609526780)
+- Track click-throughs and conversions
+- Emit referral lifecycle events (`referral_clicked`, `referral_converted`)
+- Support expiration and usage limits
+
+3. Schema:
+Table: referral_url_service.referral_links
+- id: UUID (PK)
+- code: TEXT (FK → affiliate_service.affiliates.code OR business_service.msme_codes.code)
+- url: TEXT (unique)
+- type: ENUM('affiliate', 'msme', 'refer_business')
+- target_bot_id: UUID (nullable)                 -- MSME bot instance or default bot
+- prefill_text: TEXT                             -- Affiliate code + product details
+- usage_count: INTEGER
+- max_usage: INTEGER (optional)
+- expires_at: TIMESTAMP (optional)
+- created_at: TIMESTAMP
+
+Table: referral_url_service.click_logs
+- id: UUID (PK)
+- referral_id: UUID (FK → referral_url_service.referral_links.id)
+- user_phone: TEXT (optional)
+- ip_address: TEXT
+- user_agent: TEXT
+- timestamp: TIMESTAMP
+
+4. Routes:
+POST   /referral/generate                → Generate referral URL
+GET    /referral/{code}/resolve          → Resolve referral URL to metadata
+GET    /referral/{code}/clicks           → Get click logs
+POST   /referral/{code}/track            → Log referral click
+
+5. External Outreach:
+- Publishes referral events to Affiliate Tracker Service
+- Shares metadata with Business and Affiliate Services
+- Routes user to MSME bot instance via Bot Router
+- May notify Notification Service on conversion
+- May validate code via Affiliate or Business Service
+
+6. Background Work:
+- Expiry checks
+- Cleanup of expired or unused links
+- Audit sync for referral lifecycle
+- Reindex jobs for Index/Search Service
+
+7. Folder Structure (Layered Scaffolding):
+└── referral-url-service/
+    ├── alembic/
+    ├── alembic.ini
+    ├── controllers/
+    ├── services/
+    ├── models/
+    ├── routes/
+    ├── jobs/
+    ├── events/
+    ├── utils/
+    ├── config/
+    ├── Dockerfile
+    └── main.py
+
+8. Alembic Migrations:
+- `alembic init alembic`
+- `alembic revision --autogenerate -m "init referral schema"`
+- `alembic upgrade head`
+
+9. Dockerfile:
+FROM python:3.11-slim  
+WORKDIR /app  
+COPY requirements.txt .  
+RUN pip install --no-cache-dir -r requirements.txt  
+COPY . .  
+ENV PYTHONUNBUFFERED=1  
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+10. Scalability Readiness:
+- **Current Target (1–500 links):**
+  - Indexed queries on `code`, `url`
+  - Basic click tracking and expiry checks
+
+- **Ready for 1,000+ links:**
+  - Shortlink generator (e.g., `ntheemba.com/r/AFF-XYZ123`)
+  - Redis cache for fast resolution
+  - Horizontal scaling with Docker + Kubernetes
+
+- **Path to 10,000+ links:**
+  - Sharded referral table by code prefix
+  - Event-driven architecture for click tracking
+  - Read replicas for analytics queries
+  - Autoscaling policies based on referral volume
+  - Observability stack (Prometheus + Grafana)
+
+11. Mermaid Flowchart Reference:
+- ReferralURLService → BusinessService
+- ReferralURLService → AffiliateService
+- ReferralURLService → AffiliateTrackerService
+- ReferralURLService → NotificationService
+- ReferralURLService → IndexSearchService
+- ReferralURLService → BotRouter

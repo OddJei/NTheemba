@@ -1,0 +1,213 @@
+You're absolutely right! I missed the **order feature** in public mode. Let me check the order intent structure and then provide the implementation steps.
+
+
+[1 tool called]
+
+Perfect! Now I have the complete picture. **Public Mode** has these features:
+1. **Catalog Browsing** 
+2. **Registration**
+3. **Order** (with the tree structure you showed)
+
+## 🚀 **Implementation Steps for Default Bot Service**
+
+### **Phase 1: Core Infrastructure**
+
+#### **Step 1: Project Structure Setup**
+```
+default-bot-service/
+├── controllers/
+│   └── default_bot_controller.py
+├── services/
+│   ├── tree_progression.py
+│   └── node_executor.py
+├── handlers/
+│   ├── public_mode/
+│   │   ├── catalog_browse.py
+│   │   ├── registration.py
+│   │   └── order.py
+│   └── registered_mode/
+│       ├── msme/
+│       │   ├── product_management.py
+│       │   ├── analytics_dashboard.py
+│       │   └── profile_management.py
+│       └── affiliate/
+│           ├── catalog_browse.py
+│           └── link_management.py
+├── events/
+│   └── event_emitter.py
+├── models/
+│   ├── node.py
+│   ├── session_context.py
+│   └── payload.py
+├── utils/
+│   ├── redis_client.py
+│   ├── tree_loader.py
+│   ├── node_validator.py
+│   └── payload_validator.py
+├── api/
+│   ├── auth_service.py
+│   ├── session_service.py
+│   ├── event_service.py
+│   └── notification_service.py
+├── config/
+│   └── bot_config.py
+├── routes/
+│   └── default_bot_routes.py
+├── main.py
+└── Dockerfile
+```
+
+#### **Step 2: Core Models Implementation**
+- **`models/payload.py`**: Define payload schema with `meta.session[mode]` and `user[role]`
+- **`models/session_context.py`**: Session state and enrichment structure
+- **`models/node.py`**: Tree node metadata structure
+
+#### **Step 3: Redis Integration**
+- **`utils/redis_client.py`**: Redis connection and session management
+- **`utils/tree_loader.py`**: Load intent trees from Redis/file
+- **`utils/node_validator.py`**: Validate node transitions
+
+### **Phase 2: Core Services**
+
+#### **Step 4: Tree Progression Service**
+- **`services/tree_progression.py`**:
+  - Validate current node
+  - Determine if `next_node` is allowed
+  - Update Redis with new `current_node`
+  - Ensure session continuity
+
+#### **Step 5: Node Executor Service**
+- **`services/node_executor.py`**:
+  - Route execution based on `session_mode` and `node_name`
+  - Call appropriate handler functions
+  - Handle mode/role-based routing logic
+
+### **Phase 3: Handler Implementation**
+
+#### **Step 6: Public Mode Handlers**
+
+**`handlers/public_mode/catalog_browse.py`**:
+```python
+def serve_categories(session_id, payload):
+def select_category(session_id, payload):
+def serve_products(session_id, payload):
+def select_product(session_id, payload):
+def show_product_details(session_id, payload):
+def add_to_cart(session_id, payload):
+def view_cart(session_id, payload):
+def remove_from_cart(session_id, payload):
+def clear_cart(session_id, payload):
+```
+
+**`handlers/public_mode/registration.py`**:
+```python
+def start_registration(session_id, payload):
+def choose_user_type(session_id, payload):
+def affiliate_flow(session_id, payload):
+def msme_flow(session_id, payload):
+# ... registration flow functions
+```
+
+**`handlers/public_mode/order.py`**:
+```python
+def confirm_cart(session_id, payload):
+def validate_items(session_id, payload):
+def check_stock(session_id, payload):
+def calculate_total(session_id, payload):
+def select_delivery_option(session_id, payload):
+def choose_location(session_id, payload):
+def choose_method(session_id, payload):
+def provide_contact_info(session_id, payload):
+def enter_phone_number(session_id, payload):
+def enter_name(session_id, payload):
+def review_order(session_id, payload):
+def select_payment_method(session_id, payload):
+def choose_zamtel_money(session_id, payload):
+def choose_mtn_money(session_id, payload):
+def choose_airtel_money(session_id, payload):
+def trigger_payment(session_id, payload):
+def initiate_mobile_money_transaction(session_id, payload):
+def verify_mobile_money_status(session_id, payload):
+def place_order(session_id, payload):
+def generate_order_id(session_id, payload):
+def log_order(session_id, payload):
+def notify_user(session_id, payload):
+```
+
+#### **Step 7: Registered Mode Handlers**
+
+**`handlers/registered_mode/msme/product_management.py`**:
+```python
+def add_product(session_id, payload):
+def edit_product(session_id, payload):
+def remove_product(session_id, payload):
+def view_product_list(session_id, payload):
+# ... MSME product management functions
+```
+
+**`handlers/registered_mode/affiliate/catalog_browse.py`**:
+```python
+def browse_catalogue(session_id, payload):
+def generate_referral_links(session_id, payload):
+# ... affiliate-specific catalog functions
+```
+
+### **Phase 4: Event Management**
+
+#### **Step 8: Event System**
+- **`events/event_emitter.py`**:
+  - Emit `node_activated` events
+  - Emit `action_performed` events
+  - Include metadata: `session_id`, `event_id`, `node`, `intent`, `timestamp`
+
+### **Phase 5: API Integration**
+
+#### **Step 9: External Service APIs**
+- **`api/auth_service.py`**: Resolve user identity and role
+- **`api/session_service.py`**: Create or enrich session
+- **`api/event_service.py`**: Emit events
+- **`api/notification_service.py`**: Send outbound messages
+
+### **Phase 6: Configuration & Routing**
+
+#### **Step 10: Configuration**
+- **`config/bot_config.py`**:
+  - Tree mappings for each mode/role
+  - TTLs for sessions
+  - Node rules and validation
+  - Reply templates
+
+#### **Step 11: Controller Implementation**
+- **`controllers/default_bot_controller.py`**:
+  - Entry point for resolved payloads
+  - Validate payload structure
+  - Call tree progression and node execution
+  - Publish to event and reply queues
+
+### **Phase 7: Deployment**
+
+#### **Step 12: Service Bootstrap**
+- **`main.py`**: Register routes, initialize consumers, start the app
+- **`Dockerfile`**: Container definition
+- **Queue consumers**: Consume from `default_queue`
+
+#### **Step 13: Testing & Validation**
+- Unit tests for each handler
+- Integration tests for tree progression
+- End-to-end tests for complete user journeys
+
+## 🎯 **Key Implementation Logic**
+
+The core routing logic will be:
+```python
+def route_to_handler(session_mode, user_role, node_name):
+    if session_mode == "public":
+        return f"handlers.public_mode.{node_name}"
+    elif session_mode == "registered":
+        if user_role == "msme":
+            return f"handlers.registered_mode.msme.{node_name}"
+        elif user_role == "affiliate":
+            return f"handlers.registered_mode.affiliate.{node_name}"
+```
+
+This implementation will create a fully functional Default Bot Service that can handle all the tree structures and user journeys you've defined!

@@ -1,0 +1,9 @@
+{
+  "forward_targets": {
+    "inbound_message": "http://localhost:8000/webhooks/whatsapp_confirm"
+  },
+  "simulate_delay_ms": 0,
+  "next_notify_delivered": true,
+  "payment_webhook_delay_ms": 500,
+  "next_payment_outcome": "paid"
+}

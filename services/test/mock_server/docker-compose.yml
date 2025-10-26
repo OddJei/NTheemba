@@ -1,0 +1,11 @@
+version: "3.8"
+services:
+  mock-server:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./logs:/app/logs
+      - ./config.json:/app/config.json
+    environment:
+      - MOCK_SERVER_PORT=5000

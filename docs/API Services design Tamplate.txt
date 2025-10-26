@@ -1,0 +1,58 @@
+API SERVICE DESIGN TEMPLATE
+
+1. Description:
+- Brief summary of the service’s purpose and role in the system.
+- Include its domain (e.g., identity, messaging, contributor logic) and why it matters.
+
+2. Features:
+- List of key capabilities the service provides.
+- Include CRUD operations, validations, triggers, and any business logic.
+
+3. Schema:
+- Define core database tables and relationships.
+- Include field names, types, constraints, and foreign keys.
+- Mention links to other services if relevant.
+
+4. Routes:
+- List all RESTful endpoints.
+- Format: Method | Path | Description
+- Optional: note auth requirements or rate limits.
+
+5
+6. Background Work:
+- Detail any scheduled jobs, async tasks, or queue-based operations.
+- Include cron jobs, retry logic, cleanup routines, or reward calculations.
+- Be specific to the service’s domain.
+
+7. Folder Structure (Layered Scaffolding):
+- Use a clean, layered architecture for each service.
+- Example:
+  └── affiliate-activity-service/
+      ├── alembic/              # Alembic migration scripts
+      ├── alembic.ini           # Alembic config file
+      ├── controllers/          # Route handlers
+      ├── services/             # Business logic
+      ├── models/               # SQLAlchemy models
+      ├── routes/               # Route declarations
+      ├── jobs/                 # Background workers or cron logic
+      ├── events/               # Redis/pub-sub listeners and emitters
+      ├── utils/                # Shared helpers and validators
+      ├── config/               # Service-specific config (e.g., TTLs, limits)
+      ├── Dockerfile            # Container definition
+      └── main.py               # Entry point for service registration
+
+8. Alembic Migrations:
+- Use Alembic for version-controlled schema evolution.
+- Key commands:
+  - `alembic init alembic` → Initialize migration folder
+  - `alembic revision --autogenerate -m "init"` → Create migration
+  - `alembic upgrade head` → Apply latest migration
+- Store migration history in `alembic/versions/`
+
+9. Dockerfile:
+- Define how the service is containerized.
+- optimized for light wieght images
+
+10.Mermaid Flowchart Reference:
+
+	This section must be used to update service-relationships.mmd

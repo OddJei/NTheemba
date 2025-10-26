@@ -1,0 +1,120 @@
+API SERVICE DESIGN: SUBSCRIPTION SERVICE
+
+1. Description:
+Manages subscription plans, lifecycle states, expiry logic, and enforcement triggers for MSMEs. It centralizes plan definitions, tracks active and expired subscriptions, and emits events to disable bot instances and hide product catalogs when plans lapse. Integrates with Payment Service for activation and renewal, and with Business Service for MSME linkage.
+
+2. Features:
+- Define and manage subscription plans
+- Track active, expired, and pending subscriptions
+- Enforce expiry logic (disable bots, hide products)
+- Emit `subscription_expired`, `subscription_activated`, `subscription_renewed` events
+- Listen for `payment_success` and `payment_failed` events
+- Support grace periods and auto-renewal flags
+- Sync with Business Service for MSME metadata
+- Trigger enforcement via BotInstanceService and ProductCatalogService
+
+3. Schema:
+Table: subscription_service.plans
+- id: UUID (PK)
+- name: TEXT
+- duration_days: INTEGER
+- price: DECIMAL(12,2)
+- features: JSONB
+- created_at: TIMESTAMP
+
+Table: subscription_service.subscriptions
+- id: UUID (PK)
+- business_id: UUID (FK → business_service.businesses.id)
+- plan_id: UUID (FK → subscription_service.plans.id)
+- start_date: TIMESTAMP
+- end_date: TIMESTAMP
+- status: ENUM('active', 'expired', 'pending', 'cancelled')
+- auto_renew: BOOLEAN
+- grace_period_days: INTEGER
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+4. Routes:
+POST   /subscription/activate              → Activate subscription (after payment)
+POST   /subscription/renew                → Renew subscription
+GET    /subscription/{business_id}        → Get current subscription status
+POST   /subscription/expire               → Manually expire a subscription
+POST   /subscription/enforce              → Trigger enforcement actions
+GET    /plans                             → List available plans
+POST   /plans                             → Create or update a plan
+
+5. External Outreach:
+- Listens for `payment_success` from Payment Service
+- Emits `subscription_activated`, `subscription_expired`, `subscription_renewed`
+- Triggers enforcement via:
+  - BotInstanceService → disable bot
+  - ProductCatalogService → hide products
+  - PublicModeService → restrict anonymous access
+- Syncs with Business Service for MSME linkage
+- Sends notifications via Notification Service
+
+6. Background Work:
+- Daily expiry checks
+- Grace period enforcement
+- Auto-renewal triggers
+- Cleanup of stale or cancelled subscriptions
+- Audit sync for lifecycle events
+
+7. Scaling Readiness:
+- **Current Target (1–500 MSMEs):**
+  - Indexed queries on `business_id`, `status`
+  - Basic expiry and enforcement jobs
+
+- **Ready for 1,000 MSMEs:**
+  - Redis pub/sub for event triggers
+  - Partitioned expiry checks
+  - Horizontal scaling with Docker + Kubernetes
+
+- **Path to 10,000+ MSMEs:**
+  - Sharded `subscriptions` table (by region or business_id)
+  - Event-driven enforcement via Kafka/RabbitMQ
+  - Read replicas for analytics queries
+  - Autoscaling enforcement jobs
+  - Observability stack (Prometheus + Grafana)
+
+8. Folder Structure (Layered Scaffolding):
+└── subscription-service/
+    ├── alembic/
+    ├── alembic.ini
+    ├── controllers/          # Route handlers (e.g., activate, expire)
+    ├── services/             # Subscription logic (e.g., expiry, enforcement)
+    ├── models/               # SQLAlchemy models for plans and subscriptions
+    ├── routes/               # Route declarations
+    ├── jobs/                 # Background workers (e.g., expiry checks)
+    ├── events/               # Redis/pub-sub emitters (e.g., subscription_expired)
+    ├── utils/                # Date helpers, plan validators
+    ├── config/               # Plan definitions, TTLs
+    ├── Dockerfile
+    └── main.py
+
+9. Alembic Migrations:
+- alembic init alembic
+- alembic revision --autogenerate -m "init subscription schema"
+- alembic upgrade head
+
+10. Dockerfile:
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+11. Mermaid Flowchart Reference:
+- SubscriptionService → BusinessService
+- SubscriptionService → PaymentService
+- SubscriptionService → NotificationService
+- SubscriptionService → BotInstanceService
+- SubscriptionService → ProductCatalogService
+- SubscriptionService → PublicModeService

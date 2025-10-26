@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>NTheemba 3D Mascot Testbed</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="css/mascot-style.css" />
+</head>
+<body>
+  <div class="wrap">
+  <h1>NTheemba 3D-ready Mascot</h1>
+    <p class="note">Front, back, and side views with modular parts, behavior hooks, and pivot-aware animations.</p>
+
+    <div class="stage">
+      <div class="viewer">
+        <div id="stage"></div>
+        <div class="controls">
+          <button id="btn-front">Front</button>
+          <button id="btn-back">Back</button>
+          <button id="btn-left">Left</button>
+          <button id="btn-right">Right</button>
+
+          <button id="btn-wave">Wave (R)</button>
+          <button id="btn-wave-left">Wave (L)</button>
+          <button id="btn-nod">Nod</button>
+          <button id="btn-look-left">Look ◀</button>
+          <button id="btn-look-right">Look ▶</button>
+
+          <button id="btn-smile">Smile</button>
+          <button id="btn-talk">Talk</button>
+          <button id="btn-neutral">Neutral</button>
+
+          <button id="btn-pivots">Show Pivots</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">To integrate your high-fidelity paths, replace the simple shapes in each SVG under <code>/assets/</code> while preserving IDs and transforms.</p>
+  </div>
+
+  <script src="js/mascot-animator.js"></script>
+</body>
+</html>

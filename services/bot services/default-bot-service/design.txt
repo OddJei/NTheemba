@@ -1,0 +1,131 @@
+---
+
+## 🎯 Core Purpose of the Bot Service
+
+The **Bot Service** (default or custom) is responsible for:
+
+- **Consuming resolved payloads** from the Intent Service
+- **Validating and progressing** the user’s position in the intent tree
+- **Executing node-specific logic** based on session mode and current node
+- **Emitting structured events** to the User-Bot Event Service
+- **Publishing enriched payloads** to the Reply Service for final message generation
+
+It acts as the **execution engine** for tree-based user journeys, ensuring that each node transition is valid, meaningful, and traceable.
+
+---
+
+## 🧱 Layer-by-Layer Explanation
+
+### 1. **controllers/**
+Handles incoming payloads from the queue and orchestrates the processing flow.
+
+- `default_bot_controller.py` sssssss
+  - Entry point for each resolved payload
+  - Validates payload
+  - Calls tree progression and node execution
+  - Publishes to event and reply queues
+
+---
+
+### 2. **services/**
+Contains core logic for tree progression and node execution.
+
+- `tree_progression.py`
+  - Validates current node and determines if `next_node` is allowed
+  - Updates Redis with new `current_node`
+  - Ensures session continuity
+
+- `node_executor.py`
+  - Routes execution to the correct handler based on `session_mode` and `node_name`
+  - Calls domain-specific logic (e.g., serve products, place order)
+
+---
+
+### 3. **handlers/**
+Contains actual business logic for each node, organized by session mode.
+
+- `public_handler/`, `registered_handler/`, `affiliate_handler/`, `customer_handler/`, `staff_handler/`, `msme_handler/`
+  - Each subfolder contains modules like `catalogue.py`, `cart.py`, `order.py`, etc.
+  - Each function performs the logic tied to a specific node (e.g., `serve_products`, `add_to_cart`, `generate_referral_links`)
+
+---
+
+### 4. **events/**
+Handles event emission to the User-Bot Event Service.
+
+- `event_emitter.py`
+  - Emits structured events like `node_activated`, `action_performed`
+  - Includes metadata: `session_id`, `event_id`, `node`, `intent`, `timestamp`
+
+---
+
+### 5. **models/**
+Defines data structures used throughout the service.
+
+- `node.py`: Tree node metadata
+- `session_context.py`: Session state and enrichment
+- `payload.py`: Incoming payload schema
+
+---
+
+### 6. **utils/**
+Provides reusable utilities and helpers.
+
+- `redis_client.py`: Redis connection and access
+- `tree_loader.py`: Loads intent tree from Redis or file
+- `node_validator.py`: Validates node transitions
+- `payload_validator.py`: Ensures payload integrity before processing
+
+---
+
+### 7. **api/**
+Centralized outbound service calls.
+
+- `auth_service.py`: Resolve user identity and role
+- `session_service.py`: Create or enrich session
+- `event_service.py`: Emit events
+- `notification_service.py`: Send outbound messages
+
+---
+
+### 8. **config/**
+Stores configuration files and constants.
+
+- `bot_config.py`: Tree mappings, TTLs, node rules, reply templates
+
+---
+
+### 9. **routes/**
+Optional: exposes internal APIs for debugging or admin tools.
+
+- `default_bot_routes.py` or `custom_bot_routes.py`
+
+---
+
+### 10. **Dockerfile**
+Defines how the service is containerized for deployment.
+
+---
+
+### 11. **main.py**
+Service entry point. Registers routes, initializes consumers, and starts the app.
+
+---
+
+## ✅ Summary
+
+| Layer         | Role |
+|---------------|------|
+| `controllers/` | Entry point for payloads |
+| `services/`    | Tree progression + node execution |
+| `handlers/`    | Actual business logic per node |
+| `events/`      | Emits structured events |
+| `models/`      | Data schemas |
+| `utils/`       | Redis, validation, helpers |
+| `api/`         | Outbound service calls |
+| `config/`      | Tree mappings, TTLs, templates |
+| `routes/`      | Optional API exposure |
+| `main.py`      | Service bootstrap |
+| `Dockerfile`   | Container definition |
+
+---
