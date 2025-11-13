@@ -1,0 +1,183 @@
+AUDIT SERVICE DESIGN
+
+1. Description:
+The Audit Service provides a centralized, append-only event store for audit trails produced by platform services (Auth, Affiliate, Payment, Business, Notification, etc.). It accepts audit events, stores them immutably, and exposes query and export APIs for compliance, investigations, and operations.
+
+2. Purpose and scope:
+- Capture authoritative records of security-sensitive and business-critical events (logins, approvals, suspensions, payments, code generation, administrative changes).
+- Provide searchable, tamper-evident storage and controlled export capabilities.
+- Support retention, archival, and integrity checks.
+- Not intended to replace analytics or real-time monitoring systems; it is the source-of-truth for audit records.
+
+3. Key features:
+- Simple ingest API (HTTP POST) and message-bus subscriber for high-throughput producers
+- Append-only JSON storage with searchable indexes for common query patterns
+- Query endpoints with pagination and filtering (by service, actor, entity, type, date range)
+- Export jobs producing NDJSON/CSV stored in object storage with signed download links
+- Retention and archival policies (configurable per deployment)
+- Integrity checking (checksums, periodic verification)
+- Alerts to NotificationService for high-severity or anomalous events
+
+4. Canonical event schema (recommended):
+All events are stored as JSON with the following canonical fields; services may include additional payload fields.
+
+Example event (JSON):
+{
+  "id": "uuid-v4",
+  "occurred_at": "2025-11-05T12:34:56Z",
+  "service": "affiliate-service",
+  "event_type": "affiliate_registered",
+  "actor_id": "uuid-or-null",
+  "entity_type": "affiliate",
+  "entity_id": "uuid-or-null",
+  "severity": "info",
+  "payload": { /* service-specific details */ },
+  "metadata": { "request_id": "abc", "ip": "1.2.3.4", "user_agent": "..." }
+}
+
+5. Database schema (Postgres example):
+Table: audit_service.audit_logs
+- id: UUID PRIMARY KEY
+- occurred_at: TIMESTAMP WITH TIME ZONE NOT NULL
+- service: TEXT NOT NULL
+- event_type: TEXT NOT NULL
+- actor_id: UUID NULL
+- entity_type: TEXT NULL
+- entity_id: UUID NULL
+- severity: ENUM('info','notice','warning','high','critical') NOT NULL DEFAULT 'info'
+- payload: JSONB NOT NULL
+- metadata: JSONB NULL
+- checksum: TEXT NULL    -- optional SHA256 of the stored payload for integrity
+- archived: BOOLEAN NOT NULL DEFAULT false
+- created_at: TIMESTAMP WITH TIME ZONE DEFAULT now()
+
+Indexes:
+- idx_audit_occurred_at (occurred_at)
+- idx_audit_service_event (service, event_type)
+- idx_audit_entity (entity_type, entity_id)
+
+Partitioning (optional):
+- Time-based partitioning (monthly) for large volumes to improve query and maintenance.
+
+6. Ingest patterns & API:
+- HTTP ingest (primary, simple to adopt):
+  POST /audit/log
+    - Accepts either a single event or an array of events
+    - Validates presence of required fields (service, event_type, payload)
+    - Returns 202 Accepted for async writes and 201 Created with IDs when synchronous
+
+- Message-bus ingest (high throughput):
+  - Services publish to an internal topic (e.g., "audit.events") on Redis/Kafka
+  - Audit Service subscribes and performs batched writes
+
+- Idempotency and deduplication:
+  - Accept optional client-supplied idempotency key or event id to deduplicate retries
+
+7. Query and admin API:
+- GET /audit/{id} — fetch a single audit record
+- GET /audit — query with filters: service, event_type, actor_id, entity_type, entity_id, date range, severity; supports page & size
+- POST /audit/export — submit export job (filters + format), returns job_id
+- GET /audit/export/{job_id} — check export status and download link
+- POST /audit/reindex — re-publish events (subset) to Index/Search Service
+- POST /audit/alert — (internal) trigger an alert delivery to NotificationService for suspicious events
+
+8. Background jobs:
+- Retention & archival job:
+  - Moves records older than retention_window to object storage (S3/MinIO) in NDJSON/Parquet and marks archived=true
+  - Optionally purge archived buckets older than configured retention
+
+- Integrity job:
+  - Calculate and store checksums for batches (if not calculated at write time)
+  - Periodically verify checksums for tamper detection and report anomalies
+
+- Export job processor:
+  - Executes long-running export tasks and writes output to object storage; provides signed download links
+
+- Reindex job:
+  - Re-publishes selected audit events to Index/Search Service (Elasticsearch) for fast query UX
+
+9. Security & governance:
+- Append-only principle: records are not mutated; a 'supersedes' relation may be recorded as a new event when corrections are necessary
+- RBAC on query/export: only authorized auditor/operator roles can access raw exports
+- Encryption at rest for payloads and exported archives
+- TLS for all ingress/egress
+- Rate limiting on ingest endpoints to protect the service from noisy producers
+
+10. Integrations & outreach:
+- Incoming producers: AffiliateService, AuthService, PaymentService, BusinessService, NotificationService, etc.
+- Outgoing consumers:
+  - NotificationService — immediate alerts for high severity events
+  - Index/Search Service — optional forward for near-real-time searchability
+  - Object Storage — archive and export storage
+
+11. Metrics & observability:
+- Metrics (Prometheus):
+  - audit_ingested_total (labels: service, event_type)
+  - audit_ingest_errors_total
+  - audit_export_jobs_total
+  - audit_export_job_duration_seconds
+
+- Tracing: accept and store trace_id and include it in metadata to correlate with distributed traces
+- Structured logs: include request_id, service, event_type on ingest
+
+12. Scaling strategy:
+- Small deployments (dev/small): single Postgres + JSONB, direct HTTP ingest
+- Medium (growing): batch writes, partitioned tables, background subscribers for bus ingestion
+- Large: Kafka-first ingestion, write-optimized storage (Parquet archives / ClickHouse), hot index (Elasticsearch) for queries
+
+13. Folder structure (recommended):
+audit-service/
+├── alembic/
+├── alembic.ini
+├── controllers/
+├── services/
+├── models/
+├── routes/
+├── jobs/
+├── events/
+├── adapters/        # s3/minio, elasticsearch, notification
+├── utils/
+├── config/
+├── Dockerfile
+└── main.py
+
+14. Migrations / DB notes:
+- Initial migration to create `audit_logs` (with JSONB payload)
+- Add partitioning migrations when scaling
+
+15. Example event types (naming convention):
+- affiliate_registered
+- affiliate_updated
+- affiliate_suspended
+- user.login
+- user.logout
+- user.password_reset
+- order.created
+- payment.refunded
+
+16. Developer tooling & SDKs:
+- Small client library for other services (python/js) to standardize audit event shape and provide retry/idempotency utilities
+
+17. Retention defaults (sensible starting values):
+- Hot (DB) retention: 90 days
+- Warm (object storage): 2 years
+- Cold purge: configurable; default 7 years for compliance-sensitive environments
+
+18. Next steps (implementation plan):
+1. Draft SQLAlchemy model and create Alembic migration
+2. Implement lightweight HTTP ingest endpoint with validation
+3. Add message-bus subscriber for batched ingestion
+4. Implement export job and archive integration with object storage
+5. Implement RBAC and encryption at rest
+6. Add metrics, tracing and periodic integrity checks
+
+Mermaid (overview):
+
+graph LR
+  AffiliateService -->|publish| AuditService
+  AuthService -->|publish| AuditService
+  PaymentService -->|publish| AuditService
+  AuditService -->|archive| ObjectStorage
+  AuditService -->|alerts| NotificationService
+
+-- end

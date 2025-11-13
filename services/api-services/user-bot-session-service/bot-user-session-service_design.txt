@@ -12,9 +12,10 @@ Manages user-bot session lifecycles. Each session represents a scoped interactio
 - Resolve session mode based on bot type and user role  
 - Track session context (object state, last event ID)  
 - Return session metadata for payload enrichment  
-- Enforce one active session per user-bot-platform combination (optional)  
+- Enforce single session per (user_phone, bot_id, platform) via composite UNIQUE constraint  
 - Support both default and custom bots  
 - Support platform-aware session resolution and analytics  
+ - Activation lifecycle: toggle session status via `status` ENUM('active','inactive') instead of creating multiple records  
 
 ---
 
@@ -29,15 +30,43 @@ Table: `user_bot_session_service.sessions`
 - `bot_type`: ENUM('default', 'custom')  
 - `session_mode`: ENUM('public', 'registered', 'customer', 'staff')  
 - `platform`: TEXT (e.g., 'wa', 'sms', 'web')  
+- `current_node`: TEXT
 - `last_event_id`: UUID (nullable)  
 - `object_context`: JSONB (nullable)  
+- `status`: ENUM('active','inactive') NOT NULL DEFAULT 'active'  
 - `created_at`: TIMESTAMP  
 - `updated_at`: TIMESTAMP  
 
 **Indexes & Constraints**  
 - Composite index on `(user_id, bot_id, platform)`  
 - Index on `user_phone`, `platform`  
-- Optional uniqueness constraint on `(user_phone, bot_id, platform)`  
+- REQUIRED composite unique constraint on `(user_phone, bot_id, platform)` to guarantee one session per user-bot-platform.  
+ - Optional index on `status`, `updated_at` for housekeeping jobs (cleanup/inactivity scans)  
+
+Example DDL (PostgreSQL):
+```sql
+ALTER TABLE user_bot_session_service.sessions
+  ADD CONSTRAINT uq_sessions_user_phone_bot_platform
+  UNIQUE (user_phone, bot_id, platform);
+```
+
+Example DDL (SQLite):
+```sql
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sessions_user_phone_bot_platform
+  ON sessions (user_phone, bot_id, platform);
+```
+
+Example ORM (SQLAlchemy):
+```python
+from sqlalchemy import UniqueConstraint, Index
+
+__table_args__ = (
+    UniqueConstraint('user_phone', 'bot_id', 'platform', name='uq_sessions_user_phone_bot_platform'),
+    Index('ix_sessions_user_bot_platform', 'user_id', 'bot_id', 'platform'),
+    Index('ix_sessions_user_phone', 'user_phone'),
+    Index('ix_sessions_platform', 'platform'),
+)
+```
 
 ---
 
@@ -66,9 +95,27 @@ Flow:
   - Call Auth Service with `phone_number` and `msme_id`  
   - If `user.role == "staff"` → `session_mode = "staff"`  
   - Else → `session_mode = "customer"`  
-- Create session with resolved mode and platform  
+- Create session with resolved mode and platform; set `status = 'active'`  
 - Return:  
-  - `session_id`, `session_mode`, `last_event_id = null`, `object_context = null`  
+  - `session_id`, `session_mode`, `status`, `last_event_id = null`, `object_context = null`, `reactivated` (bool)  
+
+Uniqueness & Upsert (to enforce single session):  
+- Use a transactional upsert keyed by `(user_phone, bot_id, platform)` so concurrent requests do not create duplicates.  
+- PostgreSQL example:  
+  ```sql
+  INSERT INTO sessions (user_phone, bot_id, platform, session_mode, created_at, updated_at)
+  VALUES (:user_phone, :bot_id, :platform, :session_mode, NOW(), NOW())
+  ON CONFLICT (user_phone, bot_id, platform)
+  DO UPDATE SET status = 'active', updated_at = EXCLUDED.updated_at
+  RETURNING *;
+  ```
+- SQLite (3.24+) example:  
+  ```sql
+  INSERT INTO sessions (user_phone, bot_id, platform, session_mode, created_at, updated_at)
+  VALUES (:user_phone, :bot_id, :platform, :session_mode, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  ON CONFLICT(user_phone, bot_id, platform)
+  DO UPDATE SET status = 'active', updated_at = CURRENT_TIMESTAMP;
+  ```
 
 ---
 
@@ -102,6 +149,32 @@ user-bot-session-service/
 ```bash
 alembic revision --autogenerate -m "add platform to sessions"  
 alembic upgrade head  
+```
+
+Migration snippet to add the composite unique constraint:
+```python
+from alembic import op
+import sqlalchemy as sa
+
+op.create_unique_constraint(
+  'uq_sessions_user_phone_bot_platform',
+  'sessions',
+  ['user_phone', 'bot_id', 'platform']
+)
+```
+
+Migration snippet to add the `status` enum column with default:
+```python
+status_enum = sa.Enum('active', 'inactive', name='session_status')
+status_enum.create(op.get_bind(), checkfirst=True)
+
+op.add_column(
+  'sessions',
+  sa.Column('status', status_enum, nullable=False, server_default='active')
+)
+
+# Optional: later, if you want to drop the server_default
+# op.alter_column('sessions', 'status', server_default=None)
 ```
 
 ---

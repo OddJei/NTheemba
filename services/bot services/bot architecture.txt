@@ -26,10 +26,10 @@ Bot session details
 
 Tree state from event_session_manager
 
-Publishes: to resolved_payload queue
+Publishes: to resolved_payload_default (bot_type=default) or resolved_payload_custom (bot_type=custom)
 
 2. Bot Intent Service
-Consumes: resolved_payload queue
+Consumes: resolved_payload_default (default lane) and resolved_payload_custom (custom lane)
 
 Validates: enriched payload
 
@@ -56,15 +56,19 @@ Updates current_node:{session_id}
 
 Stores tree in intent_tree:{session_id}
 
-Publishes: to reply_queue
+Publishes: to reply_default_queue
 
 4. Custom Bot Service
 Same as default, but scoped to MSME/staff logic
 
 Uses MSME-specific tree and handlers
 
+Consumes: custom_queue
+
+Publishes: to reply_custom_queue
+
 5. Bot Reply Service
-Consumes: reply_queue
+Consumes: reply_default_queue and reply_custom_queue
 
 Validates: reply payload
 

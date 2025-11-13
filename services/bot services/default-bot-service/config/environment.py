@@ -11,12 +11,17 @@ class EnvironmentConfig:
     
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from environment variables"""
+        debug_flag = os.getenv("DEBUG", "true").lower() == "true"
+        catalog_default_url = os.getenv("CATALOG_SERVICE_URL") or (
+            "http://127.0.0.1:9101" if debug_flag else "http://localhost:8104"
+        )
+
         return {
             # Service Configuration
             "SERVICE_NAME": os.getenv("SERVICE_NAME", "default-bot-service"),
             "SERVICE_VERSION": os.getenv("SERVICE_VERSION", "1.0.0"),
             "SERVICE_PORT": int(os.getenv("SERVICE_PORT", "8000")),
-            "DEBUG": os.getenv("DEBUG", "true").lower() == "true",
+            "DEBUG": debug_flag,
             "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO"),
             
             # Redis Configuration
@@ -31,7 +36,10 @@ class EnvironmentConfig:
             "SESSION_SERVICE_URL": os.getenv("SESSION_SERVICE_URL", "http://localhost:8101"),
             "EVENT_SERVICE_URL": os.getenv("EVENT_SERVICE_URL", "http://localhost:8102"),
             "NOTIFICATION_SERVICE_URL": os.getenv("NOTIFICATION_SERVICE_URL", "http://localhost:8103"),
-            "CATALOG_SERVICE_URL": os.getenv("CATALOG_SERVICE_URL", "http://localhost:8104"),
+            "CATALOG_SERVICE_URL": catalog_default_url,
+            "CATALOG_SERVICE_CATEGORIES_PATH": os.getenv("CATALOG_SERVICE_CATEGORIES_PATH", "/categories"),
+            "CATALOG_SERVICE_CATEGORIES_ALL_PATH": os.getenv("CATALOG_SERVICE_CATEGORIES_ALL_PATH", "/categories/all"),
+            "CATALOG_SERVICE_USE_CATEGORIES_ALL": os.getenv("CATALOG_SERVICE_USE_CATEGORIES_ALL"),
             "ORDER_SERVICE_URL": os.getenv("ORDER_SERVICE_URL", "http://localhost:8105"),
             "PAYMENT_SERVICE_URL": os.getenv("PAYMENT_SERVICE_URL", "http://localhost:8106"),
             "INVENTORY_SERVICE_URL": os.getenv("INVENTORY_SERVICE_URL", "http://localhost:8107"),

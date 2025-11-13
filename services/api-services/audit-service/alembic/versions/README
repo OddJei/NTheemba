@@ -1,0 +1,1 @@
+Create revision files here using alembic revision --autogenerate -m "init audit_logs"

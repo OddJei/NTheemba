@@ -4,18 +4,64 @@ import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
+from utils.api_client import CatalogApiClient, CatalogApiError
+
 logger = logging.getLogger(__name__)
+
+catalog_client = CatalogApiClient()
+
+DEFAULT_CATEGORIES = [
+    {
+        "id": "electronics",
+        "name": "Electronics",
+        "description": "Electronic devices and gadgets",
+    },
+    {
+        "id": "clothing",
+        "name": "Clothing",
+        "description": "Fashion and apparel",
+    },
+    {
+        "id": "home",
+        "name": "Home & Garden",
+        "description": "Home improvement and garden supplies",
+    },
+    {
+        "id": "books",
+        "name": "Books",
+        "description": "Books and educational materials",
+    },
+]
 
 def serve_categories(session_id: str, payload: Dict[str, Any], **kwargs) -> Dict[str, Any]:
     """Serve product categories to user"""
     try:
-        # Mock categories data - in real implementation, this would come from catalog service
-        categories = [
-            {"id": "electronics", "name": "Electronics", "description": "Electronic devices and gadgets"},
-            {"id": "clothing", "name": "Clothing", "description": "Fashion and apparel"},
-            {"id": "home", "name": "Home & Garden", "description": "Home improvement and garden supplies"},
-            {"id": "books", "name": "Books", "description": "Books and educational materials"}
-        ]
+        payload_data = payload.get("data", {})
+
+        try:
+            categories = catalog_client.fetch_categories(
+                filters=payload_data.get("filters") or payload_data,
+                include_inactive=payload_data.get("include_inactive", False),
+            )
+        except CatalogApiError as api_error:
+            logger.warning(
+                "Falling back to default categories after catalog API error",
+                exc_info=api_error,
+            )
+            categories = DEFAULT_CATEGORIES.copy()
+
+        preferred_categories: Optional[List[str]] = payload_data.get("preferred_categories")
+        if preferred_categories:
+            prioritized = [
+                category
+                for category in categories
+                if category.get("id") in preferred_categories
+            ]
+            categories = prioritized or categories
+
+        limit = payload_data.get("limit")
+        if isinstance(limit, int) and limit > 0:
+            categories = categories[:limit]
         
         response = {
             "message": "Here are our product categories:",

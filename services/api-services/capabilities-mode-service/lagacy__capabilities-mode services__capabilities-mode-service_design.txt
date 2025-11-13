@@ -47,6 +47,10 @@ Table: capability_service.modes
 - created_at: TIMESTAMP
 - updated_at: TIMESTAMP
 
+Indexes & Constraints (modes)
+- UNIQUE(name) — mode names must be unique to support by-name lookups
+- Optional index on name for faster reads: `CREATE INDEX ix_modes_name ON modes(name)`
+
 Table: capability_service.capabilities
 - id: UUID (PK)
 - mode_id: UUID (FK → capability_service.modes.id)
@@ -62,10 +66,23 @@ Table: capability_service.mode_assignments
 
 4. Routes:
 GET    /mode/{user_id}                 → Get current mode for user
+GET    /mode/by-name/{name}            → Get a mode by name (e.g., name=public)
 POST   /mode/assign                    → Assign mode to user
 GET    /capabilities/{mode_id}         → List capabilities for a mode
+GET    /capabilities/by-mode-name/{name} → List capabilities for a mode by its name (e.g., public)
 POST   /capabilities/check             → Check if user can perform action
 GET    /modes                          → List all available modes
+
+Example — GET /capabilities/by-mode-name/public
+Response:
+{
+  "mode": { "id": "mode_public", "name": "public", "requires_auth": false, "description": "Public mode" },
+  "capabilities": [
+    { "action": "browse_products", "target": "product" },
+    { "action": "place_orders", "target": "order" },
+    { "action": "track_orders", "target": "order" }
+  ]
+}
 
 5. External Outreach:
 - Validates user identity via Auth Service
@@ -75,6 +92,7 @@ GET    /modes                          → List all available modes
 - Routes payments to Payment Service
 - Routes ratings to Rating Service (future)
 - Routes link generation to Affiliate Service
+ - Provides by-name capability lookups to Bot Ingress / Default Bot
 
 6. Background Work:
 - Mode assignment sync on registration
@@ -85,6 +103,7 @@ GET    /modes                          → List all available modes
 - **Current Target (1–500 users):**
   - Single instance deployment
   - Indexed queries on `user_id`, `mode_id`
+  - Indexed queries on `modes.name` (by-name lookups)
   - Basic mode assignment and capability checks
 
 - **Ready for 1,000 users:**
@@ -120,6 +139,28 @@ GET    /modes                          → List all available modes
 - `alembic revision --autogenerate -m "init capability schema"`
 - `alembic upgrade head`
 - Migration history stored in `alembic/versions/`
+
+Add unique constraint on mode name (examples)
+- PostgreSQL (DDL):
+```sql
+ALTER TABLE capability_service.modes
+  ADD CONSTRAINT uq_modes_name UNIQUE (name);
+```
+- SQLite (DDL):
+```sql
+CREATE UNIQUE INDEX IF NOT EXISTS uq_modes_name
+  ON modes (name);
+```
+- Alembic snippet (PostgreSQL):
+```python
+from alembic import op
+
+op.create_unique_constraint(
+    "uq_modes_name",
+    "modes",
+    ["name"],
+)
+```
 
 10. Dockerfile:
 FROM python:3.11-slim
