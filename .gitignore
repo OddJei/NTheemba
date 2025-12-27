@@ -1,1 +1,36 @@
 .config/
+
+# Environment files (do not commit secrets)
+.env
+**/.env
+.env.*
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local test artifacts
+.pytest_cache/
+**/.pytest_cache/
+.pytest_out.txt
+
+# Editor
+.vscode/
+**/.vscode/
+
+# Logs
+*.log
+*.out
+*.err
+uvicorn.out.log
+uvicorn.err.log
