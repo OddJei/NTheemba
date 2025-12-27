@@ -32,28 +32,68 @@ You can let the app create tables on startup (dev convenience) or run Alembic mi
 
 To create tables automatically (dev):
 
+# Audit Service — Run Instructions
+
+This document explains how to run the `audit-service` in development on port `8290`.
+
+**Prerequisites:**
+- **Python:** 3.10+ installed
+- **Postgres:** reachable database for `PG_*` env vars
+
+**1. Change to service folder:**
+
 ```powershell
-# with venv activated
-python -c "from core.database import init_db; init_db(); print('db initialized')"
+cd "C:\Users\SMART PC\Documents\NTheemba\services\api-services\audit-service"
 ```
 
-To apply Alembic migrations (recommended for production):
+**2. Create and activate virtual environment, install deps:**
 
 ```powershell
-# ensure PG_* env vars are set in your shell (or export them), then:
+python -m venv .venv
+. .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+**3. Configure environment variables (Postgres + optional PORT):**
+
+Create or edit `config/.env` (or set env vars in your shell). Example values:
+
+```
+PG_USER=postgres
+PG_PASSWORD=your_password_here
+PG_DB=Ntheemba
+PG_HOST=localhost
+PORT=8290
+```
+
+**4. Initialize DB (dev convenience):**
+
+You can let the app create tables on startup (development) or run Alembic migrations for production.
+
+```powershell
+# quick create tables (with venv active)
+python -c "from core.database import init_db; init_db(); print('db initialized')"
+
+# or run Alembic (recommended for production)
 .\.venv\Scripts\python.exe -m alembic upgrade head
 ```
 
-4. Start the app (runs on port 8290 by default):
+**5. Start the service (runs on port 8290):**
+
+Option A — run Uvicorn explicitly with the port:
 
 ```powershell
-uvicorn main:app --reload
+uvicorn main:app --reload --port 8290
 ```
 
-Files of interest:
-- `main.py` - FastAPI entrypoint
-- `core/database.py` - SQLAlchemy engine and Base
-- `models/audit.py` - AuditLog model
-- `routes/audit_routes.py` - API routes
-- `controllers/audit_controller.py` - request handling
-- `services/audit_service.py` - ingestion logic
+Option B — use the included PowerShell wrapper which activates the venv and starts Uvicorn:
+
+```powershell
+./run.ps1
+```
+
+**Notes:**
+- The `main.py` module's `if __name__ == '__main__'` block also uses `PORT=8290` by default (via `settings`), but the Uvicorn CLI only uses the port you pass; using `--port 8290` or the wrapper ensures the server listens on the intended port.
+- If you want the `payment-service` or other folders ignored by Git, add paths to `.gitignore`.
+
+**Files of interest:** `main.py`, `core/database.py`, `routes/audit_routes.py`, `models/audit.py`

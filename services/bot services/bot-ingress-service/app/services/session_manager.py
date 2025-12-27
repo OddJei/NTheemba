@@ -3,6 +3,9 @@ from datetime import datetime, timezone
 from typing import Tuple
 from redis.asyncio import Redis
 from ..core.config import Settings
+import logging
+
+LOG = logging.getLogger("bot-ingress.session")
 
 SESSION_KEY_TEMPLATE = "session:{}"
 SESSION_LOOKUP_KEY_TEMPLATE = "session_id_by_key:{}"
@@ -14,7 +17,12 @@ class SessionManager:
         self._settings = settings
 
     async def ensure_first_processing(self, request_id: str) -> bool:
-        key = f"idempotency:{request_id}"
+        key = f"idempotency:request:{request_id}"
+        # In read-only mode we cannot write idempotency keys; assume processing is allowed.
+        if getattr(self._settings, "redis_kv_read_only", False):
+            LOG.debug("redis_kv_read_only enabled — skipping idempotency set for %s", request_id)
+            return True
+
         inserted = await self._redis.set(key, "1", ex=self._settings.idempotency_ttl_seconds, nx=True)
         return bool(inserted)
 
@@ -43,14 +51,25 @@ class SessionManager:
 
                 elapsed = (now - last_active_dt).total_seconds()
                 if status != "active" or elapsed > self._settings.session_timeout_seconds:
+                    if getattr(self._settings, "redis_kv_read_only", False):
+                        LOG.debug("redis_kv_read_only enabled — would have reactivated session %s", session_id)
+                        return session_id, True
                     await self._redis.hset(session_key, mapping={"status": "active", "last_active_at": now_iso})
                     return session_id, True
 
-                await self._redis.hset(session_key, mapping={"last_active_at": now_iso})
+                if getattr(self._settings, "redis_kv_read_only", False):
+                    LOG.debug("redis_kv_read_only enabled — skipping last_active_at update for %s", session_id)
+                else:
+                    await self._redis.hset(session_key, mapping={"last_active_at": now_iso})
                 return session_id, False
 
         session_id = f"sess_{user_phone}_{bot_id}_{int(now.timestamp())}"
         session_key = SESSION_KEY_TEMPLATE.format(session_id)
+        # In read-only mode we will not persist session metadata; return a generated session id.
+        if getattr(self._settings, "redis_kv_read_only", False):
+            LOG.debug("redis_kv_read_only enabled — generated ephemeral session_id=%s", session_id)
+            return session_id, False
+
         await self._redis.hset(session_key, mapping={
             "status": "active",
             "started_at": now_iso,

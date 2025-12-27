@@ -13,7 +13,15 @@ from ..models.messages import (
     SessionEventIngress,
 )
 from ..clients import bot_service, auth_service, capability_service
+from ..clients.ice_service import preload_session_context
 from ..services.session_manager import SessionManager
+from ..services.cache import (
+    Cache,
+    cache_key_bot,
+    cache_key_user,
+    cache_key_capabilities,
+    cache_key_session_context,
+)
 
 LOG = logging.getLogger("bot-ingress.enricher")
 
@@ -39,9 +47,15 @@ async def enrich_inbound(
     session upsert/reactivate, and building the enriched payload structure.
     """
     settings = settings or get_settings()
+    cache = Cache(redis, enabled=bool(redis) and settings.cache_enabled, read_only=getattr(settings, "redis_kv_read_only", False))
 
-    # 1) Resolve bot
-    bot_info = await bot_service.get_bot_by_phone(http_client, settings, inbound.to)
+    # 1) Resolve bot (cache-first)
+    bot_cache_key = cache_key_bot(inbound.to)
+    bot_info = await cache.get_json(bot_cache_key)
+    if bot_info is None:
+        bot_info = await bot_service.get_bot_by_phone(http_client, settings, inbound.to)
+        if bot_info is not None:
+            await cache.set_json(bot_cache_key, bot_info, ttl_seconds=settings.bot_cache_ttl_seconds)
     if not bot_info:
         # Treat missing as default bot with minimal details
         bot_type = "default"
@@ -54,10 +68,15 @@ async def enrich_inbound(
         business_details = bot_info.get("business_details", {})
         owner_details = bot_info.get("owner_details", {})
 
-    # 2) Resolve user and session_mode
+    # 2) Resolve user and session_mode (cache-first)
     if bot_type == "custom":
         business_id = business_details.get("id")
-        user_info = await auth_service.lookup_user(http_client, settings, inbound.from_, business_id)
+        user_cache_key = cache_key_user(inbound.from_, business_id)
+        user_info = await cache.get_json(user_cache_key)
+        if user_info is None:
+            user_info = await auth_service.lookup_user(http_client, settings, inbound.from_, business_id)
+            if user_info is not None:
+                await cache.set_json(user_cache_key, user_info, ttl_seconds=settings.user_cache_ttl_seconds)
         roles = user_info.get("roles", []) if user_info else []
         session_mode = "staff" if "staff" in roles else "customer"
         user_ctx = UserContext(
@@ -69,7 +88,12 @@ async def enrich_inbound(
             locale=(user_info.get("locale") if user_info else "en"),
         )
     else:
-        user_info = await auth_service.lookup_user(http_client, settings, inbound.from_)
+        user_cache_key = cache_key_user(inbound.from_, None)
+        user_info = await cache.get_json(user_cache_key)
+        if user_info is None:
+            user_info = await auth_service.lookup_user(http_client, settings, inbound.from_)
+            if user_info is not None:
+                await cache.set_json(user_cache_key, user_info, ttl_seconds=settings.user_cache_ttl_seconds)
         roles = user_info.get("roles", []) if user_info else []
         session_mode = "registered" if set(roles).intersection({"msme", "affiliate"}) else "public"
         user_ctx = UserContext(
@@ -81,10 +105,14 @@ async def enrich_inbound(
             locale=(user_info.get("locale") if user_info else "en"),
         )
 
-    # 3) Capabilities
+    # 3) Capabilities (cache-first)
     mode_name = MODE_NAME_MAP.get(session_mode, "public")
     try:
-        caps_resp = await capability_service.fetch_capabilities(http_client, settings, mode_name)
+        caps_cache_key = cache_key_capabilities(mode_name)
+        caps_resp = await cache.get_json(caps_cache_key)
+        if caps_resp is None:
+            caps_resp = await capability_service.fetch_capabilities(http_client, settings, mode_name)
+            await cache.set_json(caps_cache_key, caps_resp, ttl_seconds=settings.capabilities_cache_ttl_seconds)
     except Exception:
         LOG.exception("failed to fetch capabilities for mode %s", mode_name)
         caps_resp = {"capabilities": [], "mode": {"id": f"mode_{mode_name}"}}
@@ -94,6 +122,26 @@ async def enrich_inbound(
     # 4) Session (get or create)
     bot_id = bot_details.get("id", "default_bot")
     session_id, reactivated = await session_manager.get_or_create_session(inbound.from_, bot_id, inbound.meta.platform)
+
+    # 4b) Session context preload (cache-first, ICE on miss)
+    session_context_key = cache_key_session_context(session_id)
+    session_context = await cache.get_json(session_context_key)
+    if session_context is None:
+        # Optional ICE preload on cache miss or on first create/reactivation
+        preloaded = await preload_session_context(
+            http_client,
+            settings,
+            event_id=inbound.request_id,
+            session_id=session_id,
+            user_phone=inbound.from_,
+            bot_id=bot_id,
+            platform=inbound.meta.platform,
+            bot_type=bot_type,
+            business_id=(business_details.get("id") if bot_type == "custom" else None),
+        )
+        if preloaded is not None:
+            session_context = preloaded
+            await cache.set_json(session_context_key, session_context, ttl_seconds=settings.session_context_ttl_seconds)
 
     now = datetime.now(timezone.utc)
 
@@ -141,6 +189,7 @@ async def enrich_inbound(
             },
             "user": user_ctx,
             "session": session_ctx,
+            "session_context": session_context or {},
             "previous_events": [],
             "session_event": {
                 "event_id": None,

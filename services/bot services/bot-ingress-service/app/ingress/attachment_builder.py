@@ -25,12 +25,14 @@ async def build_attachment_pack(redis, attachments: List[Any], session_id: str, 
         aid = sha256(raw.encode()).hexdigest()[:16]
         key = f"attachment:{session_id}:{aid}"
         # store small metadata so other services can fetch if needed
-        try:
-            await redis.hset(key, mapping={"meta": raw, "created_at": now})
-            await redis.expire(key, DEFAULT_TTL)
-        except Exception:
-            # best-effort: if redis unavailable, continue and include raw payload
-            pass
+        # (skip in KV read-only mode)
+        if not getattr(settings, "redis_kv_read_only", False):
+            try:
+                await redis.hset(key, mapping={"meta": raw, "created_at": now})
+                await redis.expire(key, DEFAULT_TTL)
+            except Exception:
+                # best-effort: if redis unavailable, continue and include raw payload
+                pass
 
         pack.append({"id": aid, "meta": att})
 

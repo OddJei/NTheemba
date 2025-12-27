@@ -1,0 +1,25 @@
+digraph OrderProcess {
+  rankdir=LR;
+  node [shape=box];
+  start -> serve_categories;
+  serve_categories -> select_category;
+  select_category -> serve_products;
+  serve_products -> inspect_cart_item;
+  inspect_cart_item -> confirm_add;
+  confirm_add -> view_cart;
+  view_cart -> edit_item;
+  view_cart -> checkout;
+  checkout -> select_fulfillment;
+  select_fulfillment -> delivery;
+  select_fulfillment -> pickup;
+  delivery -> select_payment_method;
+  pickup -> select_payment_method;
+  select_payment_method -> payment_confirmation;
+  payment_confirmation -> confirm_order;
+  confirm_order -> complete;
+  serve_products -> browse_more [style=dashed];
+  start -> fallback [style=dotted];
+  fallback -> ask_clarify;
+  fallback -> ask_correction;
+  fallback -> human_review;
+}

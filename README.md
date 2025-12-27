@@ -1,5 +1,9 @@
 # NTheemba Project
 
+## Architecture
+
+- [docs/bot-layer-architecture.md](docs/bot-layer-architecture.md)
+
 ## For Contributors
 
 ### Getting Started
@@ -147,8 +151,7 @@ If you need assistance or have questions:
 2. Review related services' design documents for integration points
 
 3. Contact the project maintainers
-
-4. Open an issue on GitHub for technical questions
+If you want this distributed as a single `PORT_ASSIGNMENTS.md` in the repo or want the assignments added to each service README, tell me and I will add them automatically.
 
 ### Repository Structure
 

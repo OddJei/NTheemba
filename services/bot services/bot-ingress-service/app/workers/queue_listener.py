@@ -55,6 +55,17 @@ async def start_listener(redis=None, settings=None):
                         async with AsyncClient(timeout=None) as client:
                             enriched = await enrich_inbound(inbound, client, redis, session_manager, settings)
 
+                        # Assign a stable event_id for downstream correlation.
+                        # Use request_id as the default stable identifier.
+                        enriched.event_id = inbound.request_id
+                        try:
+                            if isinstance(enriched.meta, dict) and "session_event" in enriched.meta:
+                                se = enriched.meta.get("session_event")
+                                if isinstance(se, dict):
+                                    se["event_id"] = inbound.request_id
+                        except Exception:
+                            pass
+
                         await publish_enriched(redis, enriched, settings)
                         duration = perf_counter() - start
                         metrics.observe_processed(duration)
@@ -62,7 +73,7 @@ async def start_listener(redis=None, settings=None):
                     except Exception as exc:
                         LOG.exception("failed processing incoming message: %s", exc)
                         metrics.observe_dlq()
-                        await push_to_dlq(redis, raw_payload, exc, settings)
+                        await push_to_dlq(redis, raw_payload, exc, settings, attempts=1)
 
         except asyncio.CancelledError:
             LOG.info("listener cancelled")

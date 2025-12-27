@@ -1,15 +1,18 @@
 import asyncio
 import json
+import os
 import redis.asyncio as aioredis
 
 STREAMS = [
-    "resolved_payload_default",
-    "resolved_payload_custom",
-    "ingress_dlq",
+    "ingress:resolved_payload",
+    "bot:lane:default",
+    "bot:lane:custom",
+    "ingress:dlq",
 ]
 
 async def main():
-    r = aioredis.from_url("redis://localhost", decode_responses=True)
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    r = aioredis.from_url(redis_url, decode_responses=True)
     for s in STREAMS:
         print("\n==== Stream:", s)
         try:
@@ -27,7 +30,7 @@ async def main():
             except Exception:
                 parsed = payload
             print(entry_id, "->", parsed)
-    await r.close()
+    await r.aclose()
 
 if __name__ == '__main__':
     asyncio.run(main())

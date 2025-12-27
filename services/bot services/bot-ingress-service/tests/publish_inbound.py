@@ -1,14 +1,16 @@
 import asyncio
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 import redis.asyncio as aioredis
 
-INCOMING_STREAM = "incoming_messages"
+INCOMING_STREAM = "ingress:incoming"
 
 
 async def main():
-    r = aioredis.from_url("redis://localhost", decode_responses=True)
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    r = aioredis.from_url(redis_url, decode_responses=True)
 
     payload = {
         "request_id": f"req_{uuid.uuid4().hex[:8]}",
@@ -21,7 +23,7 @@ async def main():
 
     entry_id = await r.xadd(INCOMING_STREAM, {"payload": json.dumps(payload)})
     print("Published to stream", INCOMING_STREAM, "id=", entry_id)
-    await r.close()
+    await r.aclose()
 
 
 if __name__ == '__main__':

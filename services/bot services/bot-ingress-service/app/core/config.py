@@ -7,21 +7,46 @@ from functools import lru_cache
 class Settings:
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     redis_decode_responses: bool = os.getenv("REDIS_DECODE_RESPONSES", "True") == "True"
-    incoming_stream: str = os.getenv("INCOMING_STREAM", "incoming_messages")
+    # Streams / lanes
+    incoming_stream: str = os.getenv("INCOMING_STREAM", "ingress:incoming")
+    bot_lane_prefix: str = os.getenv("BOT_LANE_PREFIX", "bot:lane:")
+    resolved_payload_stream: str = os.getenv("INGRESS_RESOLVED_STREAM", "ingress:resolved_payload")
     consumer_group: str = os.getenv("INGRESS_CONSUMER_GROUP", "ingress-workers")
     poll_count: int = int(os.getenv("INGRESS_POLL_COUNT", "10"))
     poll_block_ms: int = int(os.getenv("INGRESS_POLL_BLOCK_MS", "1000"))
-    resolved_stream_default: str = os.getenv("RESOLVED_STREAM_DEFAULT", "resolved_payload_default")
-    resolved_stream_custom: str = os.getenv("RESOLVED_STREAM_CUSTOM", "resolved_payload_custom")
-    dlq_stream: str = os.getenv("INGRESS_DLQ_STREAM", "ingress_dlq")
+    dlq_stream: str = os.getenv("INGRESS_DLQ_STREAM", "ingress:dlq")
     idempotency_ttl_seconds: int = int(os.getenv("INGRESS_IDEMPOTENCY_TTL", "3600"))
     session_timeout_seconds: int = int(os.getenv("INGRESS_SESSION_TIMEOUT_SECONDS", "1800"))
+
+    # Cache-first enrichment
+    cache_enabled: bool = os.getenv("INGRESS_CACHE_ENABLED", "True") == "True"
+    bot_cache_ttl_seconds: int = int(os.getenv("INGRESS_BOT_CACHE_TTL", "3600"))
+    user_cache_ttl_seconds: int = int(os.getenv("INGRESS_USER_CACHE_TTL", "900"))
+    capabilities_cache_ttl_seconds: int = int(os.getenv("INGRESS_CAPABILITIES_CACHE_TTL", "3600"))
+    session_context_ttl_seconds: int = int(os.getenv("INGRESS_SESSION_CONTEXT_TTL", "1800"))
     http_timeout_seconds: float = float(os.getenv("HTTP_TIMEOUT_SECONDS", "10.0"))
     bot_service_url: str = os.getenv("BOT_SERVICE_URL", "http://localhost:8000")
     auth_service_url: str = os.getenv("AUTH_SERVICE_URL", "http://localhost:8001")
     capability_service_url: str = os.getenv("CAPABILITY_SERVICE_URL", "http://localhost:8002")
     # Session service (used by session lookups/creation)
     session_service_url: str = os.getenv("SESSION_SERVICE_URL", "http://localhost:8003")
+
+    # Write controls
+    #
+    # We split Redis writes into:
+    # - KV/cache writes (SET/HSET/EXPIRE, etc.) used for caching + session/idempotency.
+    # - Stream publishing (XADD) used to publish envelopes to bot lanes/audit/DLQ.
+    #
+    # Backward-compat: REDIS_READ_ONLY maps to KV read-only.
+    redis_kv_read_only: bool = (
+        os.getenv("REDIS_KV_READ_ONLY", os.getenv("REDIS_READ_ONLY", "False")) == "True"
+    )
+    redis_stream_publish_enabled: bool = os.getenv("REDIS_STREAM_PUBLISH_ENABLED", "True") == "True"
+
+    # Optional ICE integration (used to preload and cache session context)
+    ice_service_url: str = os.getenv("ICE_SERVICE_URL", "").strip()
+    # Bot-layer contract: ICE hydrate endpoint (sync)
+    ice_preload_path: str = os.getenv("ICE_PRELOAD_PATH", "/api/v1/hydrate/session")
 
 
 @lru_cache()

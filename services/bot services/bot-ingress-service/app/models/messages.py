@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -29,7 +30,7 @@ class UserContext(BaseModel):
     roles: List[str]
     authenticated: bool
     business_id: Optional[str] = None
-    locale: str = "en"
+    locale: Optional[str] = "en"
 
 
 class SessionContext(BaseModel):
@@ -79,4 +80,36 @@ class EnrichedPayload(BaseModel):
         allow_population_by_field_name = True
 
     def as_stream_dict(self) -> Dict[str, str]:
-        return {"payload": self.json(by_alias=True)}
+        meta = self.meta or {}
+
+        session_val = meta.get("session") or {}
+        if hasattr(session_val, "dict"):
+            session = session_val.dict()
+        else:
+            session = session_val
+
+        user_val = meta.get("user") or {}
+        if hasattr(user_val, "dict"):
+            user = user_val.dict()
+        else:
+            user = user_val
+
+        bot_val = meta.get("bot") or {}
+        bot_details = bot_val.get("bot_details") or {}
+        if hasattr(bot_details, "dict"):
+            bot_details = bot_details.dict()
+
+        routing_hints = meta.get("routing_hints") or {}
+
+        return {
+            # Canonical JSON for replay/debugging.
+            "payload": self.json(by_alias=True),
+            # Indexed fields to match the architecture contract and enable quick routing/inspection.
+            "event_id": str(self.event_id or ""),
+            "request_id": str(self.request_id or ""),
+            "session_id": str(session.get("session_id") or ""),
+            "bot_type": str(session.get("bot_type") or ""),
+            "bot_id": str(bot_details.get("id") or ""),
+            "user_id": str(user.get("id") or ""),
+            "routing_hints": json.dumps(routing_hints, ensure_ascii=False, default=str),
+        }

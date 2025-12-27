@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 
 from redis.asyncio import Redis
 
-from .config import settings
+from .config import get_settings
 
 
 class RedisClient:
@@ -15,7 +15,8 @@ class RedisClient:
     @classmethod
     async def get_client(cls) -> Redis:
         if cls._client is None:
-            cls._client = Redis.from_url(settings.redis.url, decode_responses=True)
+            settings = get_settings()
+            cls._client = Redis.from_url(settings.redis.url, decode_responses=settings.redis.decode_responses)
         return cls._client
 
     @classmethod
