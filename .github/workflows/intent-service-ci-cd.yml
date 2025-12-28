@@ -1,0 +1,135 @@
+name: Intent Service CI/CD
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  test:
+    name: Test (unit)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.10]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies and run tests
+        run: |
+          set -e
+          SERVICE_DIR="services/bot services/bot-intent-service"
+          cd "$SERVICE_DIR"
+          if [ -f requirements.txt ]; then
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+          else
+            python -m pip install --upgrade pip
+            pip install pytest redis httpx pydantic
+          fi
+          pytest -q
+
+      - name: Upload test results (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intent-test-results
+          path: |
+            services/bot services/bot-intent-service/.pytest_cache
+            services/bot services/bot-intent-service/.pytest_out.txt
+
+  build_and_push:
+    name: Build and Push (optional)
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Check for Dockerfile
+        id: check
+        run: |
+          if [ -f "services/bot services/bot-intent-service/Dockerfile" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Login to GitHub Container Registry
+        if: steps.check.outputs.exists == 'true'
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        if: steps.check.outputs.exists == 'true'
+        uses: docker/build-push-action@v4
+        with:
+          context: "services/bot services/bot-intent-service"
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/nTheemba-bot-intent:${{ github.sha }}
+      - name: Smoke test built image
+        if: always()
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/nTheemba-bot-intent:${{ github.sha }}
+        run: |
+          echo "Smoke test image: $IMAGE"
+          set -e
+          docker pull "$IMAGE" || true
+          docker run -d --name intent-smoke -p 8012:8012 "$IMAGE" || docker run -d --name intent-smoke "$IMAGE"
+          ok=1
+          for i in $(seq 1 30); do
+            if curl -sS --max-time 2 http://localhost:8012/healthz >/dev/null 2>&1; then
+              echo "healthz OK"
+              ok=0
+              break
+            fi
+            sleep 1
+          done
+          echo "=== Container logs ==="
+          docker logs intent-smoke || true
+          if [ "$ok" -ne 0 ]; then
+            echo "Smoke test failed: /healthz not reachable"
+            docker rm -f intent-smoke || true
+            exit 1
+          fi
+          docker rm -f intent-smoke || true
+
+      - name: Upload smoke test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intent-smoke-logs
+          path: |
+            .
