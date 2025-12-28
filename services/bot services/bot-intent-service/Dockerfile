@@ -12,6 +12,6 @@ RUN sh -c "if [ -f requirements.txt ]; then pip install --no-cache-dir -r requir
 # Copy service code
 COPY . /app
 
-EXPOSE 8012
+EXPOSE 5530
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8012"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5530"]

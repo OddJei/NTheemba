@@ -112,10 +112,10 @@ jobs:
           echo "Smoke test image: $IMAGE"
           set -e
           docker pull "$IMAGE" || true
-          docker run -d --name intent-smoke -p 8012:8012 "$IMAGE" || docker run -d --name intent-smoke "$IMAGE"
+          docker run -d --name intent-smoke -p 5530:5530 "$IMAGE" || docker run -d --name intent-smoke "$IMAGE"
           ok=1
           for i in $(seq 1 30); do
-            if curl -sS --max-time 2 http://localhost:8012/healthz >/dev/null 2>&1; then
+            if curl -sS --max-time 2 http://localhost:5530/healthz >/dev/null 2>&1; then
               echo "healthz OK"
               ok=0
               break
