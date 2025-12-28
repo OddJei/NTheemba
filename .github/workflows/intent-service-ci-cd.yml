@@ -98,11 +98,11 @@ jobs:
         with:
           context: "services/bot services/bot-intent-service"
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/nTheemba-bot-intent:${{ github.sha }}
+          tags: ghcr.io/${{ github.repository_owner.toLowerCase() }}/ntheemba-bot-intent:${{ github.sha }}
       - name: Smoke test built image
         if: always()
         env:
-          IMAGE: ghcr.io/${{ github.repository_owner }}/nTheemba-bot-intent:${{ github.sha }}
+          IMAGE: ghcr.io/${{ github.repository_owner.toLowerCase() }}/ntheemba-bot-intent:${{ github.sha }}
         run: |
           echo "Smoke test image: $IMAGE"
           set -e
