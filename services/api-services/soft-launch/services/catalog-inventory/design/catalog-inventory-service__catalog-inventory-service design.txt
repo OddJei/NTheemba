@@ -1,0 +1,157 @@
+API SERVICE DESIGN: CATALOG + INVENTORY SERVICE (FUSED)
+
+1. Description:
+Manages product catalogs, categories, variants, and inventory levels for MSMEs.
+The service allows businesses to create/update products, organize them into categories,
+track stock levels (in/out/reserved), and emit events when catalog or inventory changes.
+It integrates with Business/MSME engine for ownership/authorization, Payment+Revenue for stock deductions
+(where applicable), Notification for low-stock alerts, and Index/Search for discovery.
+
+Soft-launch intent:
+- Keep the service runnable as a single FastAPI app.
+- Default storage can be SQLite for local run; Postgres recommended for shared environments.
+- Writes SHOULD be idempotent via `X-Idempotency-Key`.
+- All inbound/outbound calls SHOULD propagate `X-Correlation-Id`.
+
+2. Features:
+- Create and manage product listings (name, description, price, category, images)
+- Group products into categories (hierarchical or flat)
+- Support product variants (sku, option name, price overrides)
+- Track inventory levels per variant (stock level, reserved, threshold)
+- Emit events on stock changes (low stock, out of stock, restock)
+- Emit product/category lifecycle events to Index/Search Service
+- Provide catalog APIs for storefronts and bot-driven browsing
+- Provide reindex endpoint for recovery (bulk republish)
+
+3. Schema:
+Table: catalog_inventory.categories
+- id: UUID (PK)
+- business_id: UUID (nullable; optional for global categories)
+- name: TEXT
+- description: TEXT
+- parent_id: UUID (nullable; FK → catalog_inventory.categories.id)
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Table: catalog_inventory.products
+- id: UUID (PK)
+- business_id: UUID (FK → business identity)
+- category_id: UUID (nullable; FK → catalog_inventory.categories.id)
+- name: TEXT
+- description: TEXT
+- price: DECIMAL(12,2)
+- currency: TEXT
+- image_url: TEXT (optional)
+- tags: TEXT[] (optional)
+- is_active: BOOLEAN
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Table: catalog_inventory.product_variants
+- id: UUID (PK)
+- product_id: UUID (FK → catalog_inventory.products.id)
+- name: TEXT (e.g., "Size M", "Red")
+- sku: TEXT (unique, indexed)
+- price_override: DECIMAL(12,2) (optional)
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Table: catalog_inventory.inventory
+- id: UUID (PK)
+- variant_id: UUID (FK → catalog_inventory.product_variants.id)
+- stock_level: INTEGER
+- reserved: INTEGER (default 0)
+- threshold: INTEGER (low-stock trigger)
+- updated_at: TIMESTAMP
+
+Table: catalog_inventory.inventory_events (optional, recommended for soft-launch)
+- id: UUID (PK)
+- event_type: TEXT (e.g., stock_low, stock_out, stock_restocked, product_created)
+- business_id: UUID (nullable)
+- product_id: UUID (nullable)
+- variant_id: UUID (nullable)
+- correlation_id: TEXT (nullable)
+- meta: JSONB
+- created_at: TIMESTAMP
+
+4. Routes:
+Catalog (Categories)
+POST   /catalog/category               → Create new category
+GET    /catalog/category/{id}          → Get category details
+GET    /catalog/categories             → List categories (optionally by business)
+PUT    /catalog/category/{id}          → Update category
+DELETE /catalog/category/{id}          → Archive category
+
+Catalog (Products)
+POST   /catalog/product                → Create new product
+GET    /catalog/product/{id}           → Get product details
+PUT    /catalog/product/{id}           → Update product details
+DELETE /catalog/product/{id}           → Archive product
+POST   /catalog/product/{id}/variant   → Add product variant
+GET    /catalog/business/{id}          → List products for a business
+
+Inventory
+POST   /inventory/update               → Update stock levels (in/out/reserve)
+GET    /inventory/{variant_id}         → Get inventory status
+
+Recovery
+POST   /catalog/reindex/{business_id}  → Re-publish all products/categories for a business to Index/Search
+
+5. External Outreach:
+- Validates business ownership via MSME Engine (business identity) where required.
+- Publishes product/category lifecycle events (product_created/product_updated/category_created/etc.) to Index/Search.
+- Emits `stock_low`, `stock_out`, `stock_restocked` events to Notification.
+- Listens for Payment+Revenue `payment_success` (or order fulfillment events) to deduct stock.
+- Publishes changes to Audit Service (optional for soft-launch; recommended).
+
+6. Background Work:
+- Scheduled low-stock checks
+- Cleanup of inactive/archived products/categories
+- Reconciliation jobs for reserved vs actual
+- Reindex jobs (periodic or on-demand)
+
+7. Scaling Readiness:
+- Current Target (1–500 MSMEs):
+  - Single instance deployment with indexed lookups on business_id/category_id/sku
+  - Basic low-stock checks and alerts
+
+- Ready for 1,000 MSMEs:
+  - Stateless service design with Redis for pub/sub events
+  - Horizontal scaling + connection pooling
+  - Circuit breakers for Notification/Payment/Index/Search calls
+
+- Path to 10,000+ MSMEs:
+  - Sharding/partitioning by business_id/region
+  - Event-driven architecture (Kafka/RabbitMQ)
+  - Read replicas for browsing/search-heavy queries
+
+8. Folder Structure (Layered Scaffolding):
+└── catalog-inventory/
+    ├── design/
+    ├── src/
+    │   └── app/
+    │       ├── main.py
+    │       ├── models.py
+    │       ├── schemas.py
+    │       ├── db.py
+    │       └── idempotency.py
+    ├── tests/
+    ├── requirements.txt
+    └── README.md
+
+9. Alembic Migrations:
+- Optional for soft-launch local runs (SQLite create_all acceptable).
+- Recommended for shared envs:
+  - alembic init alembic
+  - alembic revision --autogenerate -m "init catalog_inventory schema"
+  - alembic upgrade head
+
+10. Dockerfile:
+- Follows standard FastAPI uvicorn container pattern.
+
+11. Mermaid Flowchart Reference:
+- CatalogInventoryService → MSME Engine (business identity)
+- CatalogInventoryService → Payment+Revenue Service
+- CatalogInventoryService → Notification Service
+- CatalogInventoryService → Index/Search Service
+- CatalogInventoryService → Audit Service

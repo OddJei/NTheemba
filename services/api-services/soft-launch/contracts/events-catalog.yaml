@@ -1,0 +1,36 @@
+﻿version: 0.1
+namespace: soft_launch
+events:
+  - name: bot_payload_received
+    producer: bot-session
+    keys: [session_id, user_phone, bot_id, platform]
+  - name: cart_created
+    producer: cart
+    keys: [cart_id, session_id, business_id, user_phone]
+  - name: cart_updated
+    producer: cart
+    keys: [cart_id, session_id]
+  - name: cart_checked_out
+    producer: cart
+    keys: [cart_id, session_id, business_id]
+  - name: order_created
+    producer: order
+    keys: [order_id, business_id, user_phone]
+  - name: payment_initiated
+    producer: payment-revenue
+    keys: [payment_id, order_id, business_id]
+  - name: payment_success
+    producer: payment-revenue
+    keys: [payment_id, order_id, business_id]
+  - name: payment_failed
+    producer: payment-revenue
+    keys: [payment_id, order_id, business_id]
+  - name: delivery_code_generated
+    producer: delivery
+    keys: [delivery_id, order_id, business_id]
+  - name: delivery_confirmed
+    producer: delivery
+    keys: [delivery_id, order_id, business_id]
+  - name: payout_ready
+    producer: payment-revenue
+    keys: [order_id, business_id]

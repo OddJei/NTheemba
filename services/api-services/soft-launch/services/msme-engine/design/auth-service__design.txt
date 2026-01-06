@@ -1,0 +1,84 @@
+AUTH SERVICE — FINAL DESIGN OVERVIEW
+
+Purpose:
+Manages authentication, token issuance, and access control across the platform. It secures all API endpoints and ensures MSMEs, affiliates, staff, and bots operate within their assigned roles. It also serves as the identity backbone for chat-based flows, where phone number is the primary identifier.
+
+Core Features:
+- User registration and login
+- JWT token generation and refresh
+- Role-based access control: msme, affiliate, staff, default
+- Password hashing and validation
+- Session invalidation and logout
+- Multi-device login support
+- Email/SMS-based verification (optional)
+- Phone-based user lookup for chat flows
+- User linkage to business or affiliate profiles
+- Update and delete user details (full CRUD support)
+
+Chat-Based Identity Flow:
+- Incoming WhatsApp/SMS payload includes only: from, to, message
+- Auth Service resolves `from` → user profile using GET /auth/phone/{user_phone}
+- Response includes:
+  {
+    user_id: UUID,
+    role: msme | affiliate | staff | default,
+    business_id: UUID or null,
+    affiliate_id: UUID or null,
+    is_active: true
+  }
+- Enables bot orchestration, contributor routing, and milestone tracking
+
+Web-Based Identity Flow:
+- User logs in via /auth/login and receives JWT token
+- Auth Service uses token to resolve user identity via /auth/me
+- Token contains user_id, role, and optionally business_id or affiliate_id
+- Enables secure access to dashboards, milestone trackers, and payout history
+
+Shared Identity Logic:
+Auth Service shares full user details with other services—not just roles. This includes:
+- user_id
+- role
+- business_id (if linked)
+- affiliate_id (if linked)
+- is_active status
+
+Supports:
+- BusinessService onboarding
+- AffiliateService validation
+- MessagingService personalization
+- Bot orchestration and fallback logic
+
+Schema Additions:
+auth_service.users:
+  business_id UUID  -- FK → business_service.businesses.id
+  affiliate_id UUID -- FK → affiliate_service.affiliates.id
+
+Indexes:
+- phone (for fast lookup)
+- role_id (for access control)
+
+Routes:
+POST   /auth/register               → Register new user
+POST   /auth/login                  → Authenticate and issue token
+POST   /auth/logout                 → Invalidate session
+POST   /auth/refresh                → Refresh JWT token
+GET    /auth/me                     → Get current user profile (via token)
+GET    /auth/verify/{token}         → Verify email/SMS token
+GET    /auth/phone/{user_phone}     → 🔥 Lookup user by phone (for chat flows)
+PUT    /auth/user/{user_id}         → Update user details
+DELETE /auth/user/{user_id}         → Delete user (soft or hard)
+
+Integration Hooks:
+- Sends login/logout events to AuditService
+- Sends verification messages via NotificationService
+- Shares full user details with AffiliateService, BusinessService, MessagingService
+- Triggers onboarding flows via BusinessService
+- Supports bot orchestration via /auth/me and /auth/phone/{user_phone}
+
+Contributor Sprint Milestones:
+Week 1 → Scaffold folders, define models and routes
+Week 2 → Implement /auth/register and /auth/login
+Week 3 → Add session logic and /auth/me
+Week 4 → Add /auth/logout, /auth/refresh, and verification flow
+Week 5 → Add /auth/phone/{user_phone} and user linkage fields
+Week 6 → Add update/delete endpoints and integrate with NotificationService and AuditService

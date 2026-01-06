@@ -1,0 +1,217 @@
+---
+
+**API SERVICE DESIGN: USER-BOT SESSION SERVICE (Updated with Platform Support)**
+
+1. **Description**  
+Manages user-bot session lifecycles. Each session represents a scoped interaction between a user and a bot. This service creates new sessions, tracks session context, and returns session metadata for routing and enrichment. Session mode is resolved dynamically based on bot type and user role retrieved from Auth Service. Now includes `platform` (e.g., `wa`, `sms`, `web`) to support multi-channel session resolution.
+
+---
+
+2. **Features**  
+- Create a new session for a user-bot interaction  
+- Resolve session mode based on bot type and user role  
+- Track session context (object state, last event ID)  
+- Return session metadata for payload enrichment  
+- Enforce single session per (user_phone, bot_id, platform) via composite UNIQUE constraint  
+- Support both default and custom bots  
+- Support platform-aware session resolution and analytics  
+ - Activation lifecycle: toggle session status via `status` ENUM('active','inactive') instead of creating multiple records  
+
+---
+
+3. **Schema**  
+Table: `user_bot_session_service.sessions`
+
+- `id`: UUID (PK)  
+- `user_id`: UUID  
+- `user_phone`: TEXT (indexed)  
+- `bot_id`: UUID  
+- `msme_id`: UUID (nullable)  
+- `bot_type`: ENUM('default', 'custom')  
+- `session_mode`: ENUM('public', 'registered', 'customer', 'staff')  
+- `platform`: TEXT (e.g., 'wa', 'sms', 'web')  
+- `current_node`: TEXT
+- `last_event_id`: UUID (nullable)  
+- `object_context`: JSONB (nullable)  
+- `status`: ENUM('active','inactive') NOT NULL DEFAULT 'active'  
+- `created_at`: TIMESTAMP  
+- `updated_at`: TIMESTAMP  
+
+**Indexes & Constraints**  
+- Composite index on `(user_id, bot_id, platform)`  
+- Index on `user_phone`, `platform`  
+- REQUIRED composite unique constraint on `(user_phone, bot_id, platform)` to guarantee one session per user-bot-platform.  
+ - Optional index on `status`, `updated_at` for housekeeping jobs (cleanup/inactivity scans)  
+
+Example DDL (PostgreSQL):
+```sql
+ALTER TABLE user_bot_session_service.sessions
+  ADD CONSTRAINT uq_sessions_user_phone_bot_platform
+  UNIQUE (user_phone, bot_id, platform);
+```
+
+Example DDL (SQLite):
+```sql
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sessions_user_phone_bot_platform
+  ON sessions (user_phone, bot_id, platform);
+```
+
+Example ORM (SQLAlchemy):
+```python
+from sqlalchemy import UniqueConstraint, Index
+
+__table_args__ = (
+    UniqueConstraint('user_phone', 'bot_id', 'platform', name='uq_sessions_user_phone_bot_platform'),
+    Index('ix_sessions_user_bot_platform', 'user_id', 'bot_id', 'platform'),
+    Index('ix_sessions_user_phone', 'user_phone'),
+    Index('ix_sessions_platform', 'platform'),
+)
+```
+
+---
+
+4. **Routes**
+
+- `POST /session/create`  
+- `GET /session/{session_id}`  
+- `GET /session/by-user/{user_id}`  
+- `GET /session/resolve?user_phone=...&bot_id=...&platform=...`  
+- `GET /session/by-phone-platform/{user_phone}/{platform}`  
+- `GET /session/by-bot-platform/{bot_id}/{platform}`  
+
+---
+
+5. **Session Creation Logic**
+
+Input:  
+- `phone_number`, `bot_id`, `bot_type`, `msme_id`, `platform`
+
+Flow:  
+- If `bot_type == "default"`:  
+  - Call Auth Service with `phone_number`  
+  - If `user.role == "msme"` → `session_mode = "registered"`  
+  - Else → `session_mode = "public"`  
+- If `bot_type == "custom"`:  
+  - Call Auth Service with `phone_number` and `msme_id`  
+  - If `user.role == "staff"` → `session_mode = "staff"`  
+  - Else → `session_mode = "customer"`  
+- Create session with resolved mode and platform; set `status = 'active'`  
+- Return:  
+  - `session_id`, `session_mode`, `status`, `last_event_id = null`, `object_context = null`, `reactivated` (bool)  
+
+Uniqueness & Upsert (to enforce single session):  
+- Use a transactional upsert keyed by `(user_phone, bot_id, platform)` so concurrent requests do not create duplicates.  
+- PostgreSQL example:  
+  ```sql
+  INSERT INTO sessions (user_phone, bot_id, platform, session_mode, created_at, updated_at)
+  VALUES (:user_phone, :bot_id, :platform, :session_mode, NOW(), NOW())
+  ON CONFLICT (user_phone, bot_id, platform)
+  DO UPDATE SET status = 'active', updated_at = EXCLUDED.updated_at
+  RETURNING *;
+  ```
+- SQLite (3.24+) example:  
+  ```sql
+  INSERT INTO sessions (user_phone, bot_id, platform, session_mode, created_at, updated_at)
+  VALUES (:user_phone, :bot_id, :platform, :session_mode, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  ON CONFLICT(user_phone, bot_id, platform)
+  DO UPDATE SET status = 'active', updated_at = CURRENT_TIMESTAMP;
+  ```
+
+---
+
+6. **External Outreach**  
+- Calls Auth Service to resolve user identity and role  
+- Used by Bot Router to resolve or create session  
+- Referenced by Bot Intent Service to track session continuity  
+
+---
+
+7. **Folder Structure**
+
+```
+user-bot-session-service/
+├── alembic/              # Alembic migration scripts  
+├── alembic.ini           # Alembic config file  
+├── controllers/          # Route handlers (e.g., create, resolve)  
+├── services/             # Session creation and lookup logic  
+├── models/               # SQLAlchemy models for sessions  
+├── routes/               # Route declarations  
+├── utils/                # ID generators, validators  
+├── config/               # TTLs, session rules  
+├── Dockerfile            # Container definition  
+└── main.py               # Entry point for service registration  
+```
+
+---
+
+8. **Alembic Migrations**
+
+```bash
+alembic revision --autogenerate -m "add platform to sessions"  
+alembic upgrade head  
+```
+
+Migration snippet to add the composite unique constraint:
+```python
+from alembic import op
+import sqlalchemy as sa
+
+op.create_unique_constraint(
+  'uq_sessions_user_phone_bot_platform',
+  'sessions',
+  ['user_phone', 'bot_id', 'platform']
+)
+```
+
+Migration snippet to add the `status` enum column with default:
+```python
+status_enum = sa.Enum('active', 'inactive', name='session_status')
+status_enum.create(op.get_bind(), checkfirst=True)
+
+op.add_column(
+  'sessions',
+  sa.Column('status', status_enum, nullable=False, server_default='active')
+)
+
+# Optional: later, if you want to drop the server_default
+# op.alter_column('sessions', 'status', server_default=None)
+```
+
+---
+
+9. **Dockerfile**
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+---
+
+10. **Scalability Readiness**
+
+**Current Target (1–500 sessions/day):**  
+- Indexed queries on `user_id`, `bot_id`, `user_phone`, `platform`  
+- Stateless API with persistent session store  
+
+**Ready for 1,000+ sessions/day:**  
+- Redis caching for recent session lookups  
+- Horizontal scaling with Docker + Kubernetes  
+
+**Path to 10,000+ sessions/day:**  
+- Session sharding by `msme_id` or `user_id`  
+- Read replicas for analytics  
+- Autoscaling policies based on session volume  
+- Observability stack (Prometheus + Grafana)  
+
+---

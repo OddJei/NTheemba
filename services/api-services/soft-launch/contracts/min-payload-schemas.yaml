@@ -1,0 +1,212 @@
+version: 0.1
+namespace: soft_launch
+notes:
+  - "These are MINIMUM payload schemas for inter-service events and key HTTP calls."
+  - "Services may add extra fields, but MUST NOT remove/rename required fields."
+  - "All payloads MUST include correlation headers/fields for tracing + idempotency where applicable."
+
+common:
+  required:
+    - event_id
+    - event_type
+    - occurred_at
+    - correlation_id
+  fields:
+    event_id: { type: string, format: uuid }
+    event_type: { type: string }
+    occurred_at: { type: string, format: date-time } # ISO8601
+    correlation_id: { type: string }                 # request_id / trace_id
+    causation_id: { type: string, nullable: true }   # previous event_id, optional
+    producer: { type: string }                       # service name
+    schema_version: { type: string, example: "0.1" }
+
+identifiers:
+  fields:
+    session_id: { type: string, format: uuid, nullable: true }
+    user_phone: { type: string, nullable: true }
+    user_id: { type: string, format: uuid, nullable: true }
+    business_id: { type: string, format: uuid }
+    bot_id: { type: string, format: uuid, nullable: true }
+
+events:
+  cart_checked_out:
+    required:
+      - event_id
+      - event_type
+      - occurred_at
+      - correlation_id
+      - producer
+      - cart_id
+      - business_id
+      - items
+      - totals
+    fields:
+      cart_id: { type: string, format: uuid }
+      session_id: { type: string, format: uuid, nullable: true }
+      user_phone: { type: string, nullable: true }
+      business_id: { type: string, format: uuid }
+      affiliate_code: { type: string, nullable: true }
+      items:
+        type: array
+        items:
+          type: object
+          required: [variant_id, quantity, unit_price, subtotal]
+          properties:
+            variant_id: { type: string, format: uuid }
+            quantity: { type: integer, minimum: 1 }
+            unit_price: { type: number }
+            subtotal: { type: number }
+      totals:
+        type: object
+        required: [total_amount, currency]
+        properties:
+          total_amount: { type: number }
+          currency: { type: string, example: "ZMW" }
+      delivery_details:
+        type: object
+        nullable: true
+        properties:
+          delivery_method: { type: string, enum: [pickup, deliver_to_customer] }
+          delivery_location: { type: string }
+
+  order_created:
+    required:
+      - event_id
+      - event_type
+      - occurred_at
+      - correlation_id
+      - producer
+      - order_id
+      - business_id
+      - status
+      - total_amount
+      - currency
+    fields:
+      order_id: { type: string, format: uuid }
+      business_id: { type: string, format: uuid }
+      session_id: { type: string, format: uuid, nullable: true }
+      user_phone: { type: string, nullable: true }
+      user_id: { type: string, format: uuid, nullable: true }
+      status: { type: string, enum: [pending, confirmed, paid, fulfilled, cancelled] }
+      total_amount: { type: number }
+      currency: { type: string }
+      items:
+        type: array
+        nullable: true
+        items:
+          type: object
+          required: [variant_id, quantity, unit_price, subtotal]
+          properties:
+            variant_id: { type: string, format: uuid }
+            quantity: { type: integer }
+            unit_price: { type: number }
+            subtotal: { type: number }
+      affiliate_code: { type: string, nullable: true }
+      metadata: { type: object, nullable: true }
+
+  payment_initiated:
+    required:
+      - event_id
+      - event_type
+      - occurred_at
+      - correlation_id
+      - producer
+      - payment_id
+      - business_id
+      - amount
+      - currency
+      - status
+    fields:
+      payment_id: { type: string, format: uuid }
+      order_id: { type: string, format: uuid, nullable: true }
+      business_id: { type: string, format: uuid }
+      user_id: { type: string, format: uuid, nullable: true }
+      user_phone: { type: string, nullable: true }
+      amount: { type: number }
+      currency: { type: string }
+      gateway: { type: string, example: "pawapay_sandbox" }
+      transaction_ref: { type: string, nullable: true }
+      status: { type: string, enum: [initiated, pending, success, failed] }
+      idempotency_key: { type: string, nullable: true }
+
+  payment_success:
+    required:
+      - event_id
+      - event_type
+      - occurred_at
+      - correlation_id
+      - producer
+      - payment_id
+      - business_id
+      - amount
+      - currency
+      - earnings
+    fields:
+      payment_id: { type: string, format: uuid }
+      order_id: { type: string, format: uuid, nullable: true }
+      business_id: { type: string, format: uuid }
+      user_phone: { type: string, nullable: true }
+      amount: { type: number }
+      currency: { type: string }
+      gateway: { type: string }
+      transaction_ref: { type: string }
+      earnings:
+        type: object
+        required: [msme_amount, affiliate_amount, platform_amount]
+        properties:
+          msme_amount: { type: number }
+          affiliate_amount: { type: number }
+          platform_amount: { type: number }
+          affiliate_id: { type: string, format: uuid, nullable: true }
+          affiliate_code: { type: string, nullable: true }
+
+  delivery_code_generated:
+    required:
+      - event_id
+      - event_type
+      - occurred_at
+      - correlation_id
+      - producer
+      - delivery_id
+      - order_id
+      - business_id
+      - delivery_code
+      - status
+    fields:
+      delivery_id: { type: string, format: uuid }
+      order_id: { type: string, format: uuid }
+      business_id: { type: string, format: uuid }
+      user_phone: { type: string, nullable: true }
+      delivery_code: { type: string }
+      status: { type: string, enum: [pending, code_sent, confirmed] }
+
+  delivery_confirmed:
+    required:
+      - event_id
+      - event_type
+      - occurred_at
+      - correlation_id
+      - producer
+      - delivery_id
+      - order_id
+      - business_id
+      - status
+    fields:
+      delivery_id: { type: string, format: uuid }
+      order_id: { type: string, format: uuid }
+      business_id: { type: string, format: uuid }
+      confirmed_by: { type: string, nullable: true }
+      status: { type: string, enum: [confirmed] }
+
+http_minimums:
+  # Optional but useful: minimum contract for HTTP calls (if you keep it synchronous).
+  headers_required:
+    - X-Correlation-Id
+  headers_recommended:
+    - X-Idempotency-Key
+  error_shape:
+    required: [error, message]
+    fields:
+      error: { type: string }
+      message: { type: string }
+      details: { type: object, nullable: true }

@@ -1,0 +1,114 @@
+API SERVICE DESIGN: PAYMENT SERVICE
+
+1. Description:
+Handles all payment initiation, verification, and transaction lifecycle management across the platform. It integrates with external gateways (e.g., mobile money, card processors) and emits events that other services (like Business Service) consume to activate or extend subscriptions. It ensures traceability, auditability, and secure handling of payment flows. Designed for scaling from 1–500 MSMEs initially, already capable of 1,000, and with a clear path to 10,000+.
+
+2. Features:
+- Initiate payment requests for subscriptions or other charges
+- Integrate with multiple payment gateways (mobile money, card, wallet)
+- Verify payment status (success, failure, pending)
+- Emit `payment_success` and `payment_failed` events
+- Store transaction history for audit and reconciliation
+- Support retries and reconciliation jobs
+- Expose APIs for Business Service and other consumers to initiate payments
+
+3. Schema:
+Table: payment_service.transactions
+- id: UUID (PK)
+- business_id: UUID (FK → business_service.businesses.id)
+- user_id: UUID (FK → auth_service.users.id)
+- amount: DECIMAL(12,2)
+- currency: TEXT
+- plan: TEXT (optional, for subscription context)
+- gateway: TEXT (e.g., 'mtn_momo', 'airtel_money', 'visa')
+- transaction_ref: TEXT (unique, indexed)       -- Gateway reference
+- status: ENUM('initiated', 'pending', 'success', 'failed')
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Table: payment_service.gateway_logs
+- id: UUID (PK)
+- transaction_id: UUID (FK → payment_service.transactions.id)
+- request_payload: JSONB
+- response_payload: JSONB
+- created_at: TIMESTAMP
+
+4. Routes:
+POST   /payment/initiate                → Initiate a new payment (returns payment link or instructions)
+GET    /payment/{id}/status             → Get payment status
+POST   /payment/{id}/verify             → Verify payment with gateway
+GET    /payment/business/{id}           → List transactions for a business
+GET    /payment/user/{id}               → List transactions for a user
+
+5. External Outreach:
+- Calls external payment gateways (mobile money, card processors)
+- Emits `payment_success` and `payment_failed` events to Business Service
+- Publishes transaction logs to Audit Service
+- Sends payment notifications via Notification Service
+
+6. Background Work:
+- Reconciliation jobs to check pending transactions with gateways
+- Retry logic for failed gateway calls
+- Cleanup of stale or expired transactions
+- Audit sync for all payment lifecycle events
+
+7. Scaling Readiness:
+- **Current Target (1–500 MSMEs):**
+  - Single instance deployment with connection pooling
+  - Basic retry and reconciliation jobs
+  - Indexed queries on `transaction_ref`, `business_id`, `user_id`
+
+- **Ready for 1,000 MSMEs:**
+  - Horizontal scaling with container orchestration (Docker + Kubernetes)
+  - Stateless service design with Redis for pub/sub events
+  - Partitioned logs for faster reconciliation
+  - Circuit breakers for gateway integrations
+
+- **Path to 10,000+ MSMEs:**
+  - Sharded transaction tables (by business_id or region)
+  - Event-driven architecture with Kafka or RabbitMQ for high-throughput events
+  - Read replicas for analytics queries
+  - Async processing for verification and reconciliation
+  - Autoscaling policies based on queue depth and transaction volume
+  - Observability stack (Prometheus + Grafana) for proactive scaling
+
+8. Folder Structure (Layered Scaffolding):
+└── payment-service/
+    ├── alembic/
+    ├── alembic.ini
+    ├── controllers/          # Route handlers (e.g., initiate, verify)
+    ├── services/             # Payment logic (e.g., gateway integration)
+    ├── models/               # SQLAlchemy models for transactions, gateway_logs
+    ├── routes/               # Route declarations
+    ├── jobs/                 # Background workers (e.g., reconciliation)
+    ├── events/               # Redis/pub-sub emitters (e.g., payment_success)
+    ├── utils/                # Gateway adapters, validators
+    ├── config/               # Gateway credentials, TTLs
+    ├── Dockerfile
+    └── main.py
+
+9. Alembic Migrations:
+- `alembic init alembic`
+- `alembic revision --autogenerate -m "init payment schema"`
+- `alembic upgrade head`
+- Migration history stored in `alembic/versions/`
+
+10. Dockerfile:
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+11. Mermaid Flowchart Reference:
+- PaymentService → BusinessService
+- PaymentService → AuditService
+- PaymentService → NotificationService
+- PaymentService → ExternalGateways

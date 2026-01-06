@@ -1,0 +1,14 @@
+CATALOG + INVENTORY (FUSED) — SOFT-LAUNCH DESIGN INDEX
+
+This folder contains the soft-launch design for a fused Catalog+Inventory service.
+
+Source template (copied/adapted from main api-services templates):
+- `api-services/catalog-inventory-service/catalog-inventory_design.txt`
+
+Design files:
+- `catalog-inventory-service__catalog-inventory-service design.txt` — full design (routes, schema, events)
+
+Soft-launch integration notes:
+- Service name for transport plugins SHOULD be: `catalog-inventory`
+- Outbound calls MUST propagate `X-Correlation-Id`
+- Retryable writes SHOULD attach `X-Idempotency-Key`

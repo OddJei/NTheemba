@@ -1,0 +1,963 @@
+from __future__ import annotations
+
+import secrets
+import string
+import uuid
+from collections.abc import AsyncGenerator
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.app.config import get_admin_key, get_epoch_days_default, get_pool_pct_default
+from src.app.db import Base, engine, get_db_session
+from src.app.idempotency import idempotent_execute, scope_for
+from src.app.models import (
+    Affiliate,
+    AffiliateAttribution,
+    AffiliateClick,
+    AffiliateEarning,
+    AffiliateEvent,
+    AffiliateLink,
+    AffiliateTier,
+    AffiliateTierAssignment,
+    CommissionSettings,
+    PoolAllocation,
+    PoolEpoch,
+)
+from src.app.pool import (
+    close_epoch_and_allocate,
+    compute_metrics_for_epoch,
+    compute_payouts,
+    compute_weighted_scores,
+    ensure_default_tiers,
+    get_or_create_settings,
+    get_or_open_epoch,
+    get_open_epoch,
+)
+from src.app.schemas import (
+    AffiliateCreate,
+    AffiliateOut,
+    AttributionCreate,
+    AttributionOut,
+    ClickCreate,
+    ClickOut,
+    EarningOut,
+    EarningsByDay,
+    EarningsSummary,
+    AffiliateDashboard,
+    LinkCreate,
+    LinkOut,
+    PaymentSuccessEvent,
+    CommissionSettingsOut,
+    CommissionSettingsUpdate,
+    EpochOut,
+    EpochSetGrossRevenue,
+    TierOut,
+    TierAssign,
+    PoolStanding,
+    PoolStandingsOut,
+    PoolAllocationOut,
+    AffiliateEventOut,
+)
+from src.app.events import OrderCreatedEvent
+
+app = FastAPI(title="Affiliate Engine (Soft Launch)")
+
+
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    correlation_id = request.headers.get("X-Correlation-Id") or str(uuid.uuid4())
+    request.state.correlation_id = correlation_id
+    response = await call_next(request)
+    response.headers["X-Correlation-Id"] = correlation_id
+    return response
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # Ensure default pool config exists.
+    async with get_db_session() as db:
+        settings = await get_or_create_settings(
+            db,
+            pool_pct_default=get_pool_pct_default(),
+            epoch_days_default=get_epoch_days_default(),
+        )
+        await ensure_default_tiers(db)
+        await get_or_open_epoch(db, pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days))
+
+
+def _require_admin(x_admin_key: Optional[str]) -> None:
+    if not x_admin_key or x_admin_key != get_admin_key():
+        raise HTTPException(status_code=401, detail="admin_unauthorized")
+
+
+def _epoch_out(epoch: PoolEpoch) -> EpochOut:
+    return EpochOut(
+        id=epoch.id,
+        starts_at=epoch.starts_at,
+        ends_at=epoch.ends_at,
+        status=epoch.status,
+        gross_revenue_zmw=float(epoch.gross_revenue_zmw),
+        pool_pct=float(epoch.pool_pct),
+        pool_amount_zmw=float(epoch.pool_amount_zmw),
+    )
+
+
+def _settings_out(settings: CommissionSettings) -> CommissionSettingsOut:
+    return CommissionSettingsOut(pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days), weights=settings.weights)
+
+
+def _generate_code(length: int = 10) -> str:
+    alphabet = string.ascii_lowercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+async def _record_event(db: AsyncSession, event: AffiliateEvent) -> None:
+    # Use a nested transaction so a duplicate event_id doesn't roll back the caller's work.
+    try:
+        async with db.begin_nested():
+            db.add(event)
+            await db.flush()
+    except IntegrityError:
+        return
+
+
+async def db_session() -> AsyncGenerator[AsyncSession, None]:
+    async with get_db_session() as session:
+        yield session
+
+
+@app.post("/affiliates", response_model=AffiliateOut)
+async def create_affiliate(
+    request: Request,
+    payload: AffiliateCreate,
+    db: AsyncSession = Depends(db_session),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> AffiliateOut:
+    async def _run():
+        affiliate = Affiliate(name=payload.name, phone=payload.phone)
+        db.add(affiliate)
+        await db.commit()
+        await db.refresh(affiliate)
+        return 200, AffiliateOut(**affiliate.__dict__)
+
+    status_code, body = await idempotent_execute(
+        db=db,
+        scope=scope_for("POST", request.url.path),
+        key=x_idempotency_key,
+        run=_run,
+    )
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail="unexpected_status")
+    return AffiliateOut(**body)
+
+
+@app.get("/affiliates/{affiliate_id}", response_model=AffiliateOut)
+async def get_affiliate(affiliate_id: str, db: AsyncSession = Depends(db_session)) -> AffiliateOut:
+    res = await db.execute(select(Affiliate).where(Affiliate.id == affiliate_id))
+    affiliate = res.scalar_one_or_none()
+    if not affiliate:
+        raise HTTPException(status_code=404, detail="affiliate_not_found")
+    return AffiliateOut(**affiliate.__dict__)
+
+
+@app.get("/affiliates", response_model=list[AffiliateOut])
+async def list_affiliates(limit: int = 50, offset: int = 0, db: AsyncSession = Depends(db_session)) -> list[AffiliateOut]:
+    res = await db.execute(select(Affiliate).order_by(Affiliate.created_at.desc()).limit(limit).offset(offset))
+    items = res.scalars().all()
+    return [AffiliateOut(**a.__dict__) for a in items]
+
+
+@app.post("/affiliates/{affiliate_id}/links", response_model=LinkOut)
+async def create_link(
+    request: Request,
+    affiliate_id: str,
+    payload: LinkCreate,
+    db: AsyncSession = Depends(db_session),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> LinkOut:
+    res = await db.execute(select(Affiliate).where(Affiliate.id == affiliate_id))
+    affiliate = res.scalar_one_or_none()
+    if not affiliate:
+        raise HTTPException(status_code=404, detail="affiliate_not_found")
+
+    async def _run():
+        code = payload.code or _generate_code()
+        link = AffiliateLink(affiliate_id=affiliate_id, code=code, campaign=payload.campaign)
+        db.add(link)
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail="affiliate_code_conflict")
+
+        await db.refresh(link)
+        return 200, LinkOut(**link.__dict__)
+
+    status_code, body = await idempotent_execute(
+        db=db,
+        scope=scope_for("POST", request.url.path),
+        key=x_idempotency_key,
+        run=_run,
+    )
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail="unexpected_status")
+    return LinkOut(**body)
+
+
+@app.get("/affiliates/{affiliate_id}/links", response_model=list[LinkOut])
+async def list_links(affiliate_id: str, db: AsyncSession = Depends(db_session)) -> list[LinkOut]:
+    res = await db.execute(
+        select(AffiliateLink).where(AffiliateLink.affiliate_id == affiliate_id).order_by(AffiliateLink.created_at.desc())
+    )
+    items = res.scalars().all()
+    return [LinkOut(**l.__dict__) for l in items]
+
+
+@app.post("/track/click", response_model=ClickOut)
+async def track_click(
+    request: Request,
+    payload: ClickCreate,
+    db: AsyncSession = Depends(db_session),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> ClickOut:
+    async def _run():
+        res = await db.execute(select(AffiliateLink).where(AffiliateLink.code == payload.affiliate_code))
+        link = res.scalar_one_or_none()
+        if not link:
+            raise HTTPException(status_code=404, detail="affiliate_link_not_found")
+
+        correlation_id = payload.correlation_id or getattr(request.state, "correlation_id", None)
+        click = AffiliateClick(
+            link_id=link.id,
+            correlation_id=correlation_id,
+            session_id=payload.session_id,
+            user_phone=payload.user_phone,
+            meta=payload.meta,
+        )
+        db.add(click)
+
+        await _record_event(
+            db,
+            AffiliateEvent(
+                event_id=payload.event_id,
+                affiliate_id=link.affiliate_id,
+                event_type="campaign_click",
+                occurred_at=click.occurred_at,
+                source="track_click",
+                correlation_id=correlation_id,
+                buyer_phone=payload.user_phone,
+                session_id=payload.session_id,
+                order_id=None,
+                business_id=None,
+                amount_zmw=None,
+                meta={
+                    "affiliate_code": payload.affiliate_code,
+                    "link_id": link.id,
+                    "meta": payload.meta,
+                },
+            ),
+        )
+
+        await db.commit()
+        await db.refresh(click)
+        return 200, ClickOut(id=click.id, link_id=click.link_id, occurred_at=click.occurred_at)
+
+    status_code, body = await idempotent_execute(
+        db=db,
+        scope=scope_for("POST", request.url.path),
+        key=x_idempotency_key or payload.event_id,
+        run=_run,
+    )
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail="unexpected_status")
+    return ClickOut(**body)
+
+
+@app.post("/attribute/order", response_model=AttributionOut)
+async def attribute_order(
+    request: Request,
+    payload: AttributionCreate,
+    db: AsyncSession = Depends(db_session),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> AttributionOut:
+    async def _run():
+        affiliate_id = payload.affiliate_id
+        link_id = None
+
+        if not affiliate_id and payload.affiliate_code:
+            res = await db.execute(select(AffiliateLink).where(AffiliateLink.code == payload.affiliate_code))
+            link = res.scalar_one_or_none()
+            if not link:
+                raise HTTPException(status_code=404, detail="affiliate_link_not_found")
+            affiliate_id = link.affiliate_id
+            link_id = link.id
+
+        if not affiliate_id:
+            raise HTTPException(status_code=400, detail="affiliate_id_or_code_required")
+
+        click_id = payload.click_id
+
+        # If click_id isn't provided, try infer latest click by session/user_phone (soft-launch convenience).
+        if not click_id and (payload.session_id or payload.user_phone):
+            click_q = (
+                select(AffiliateClick)
+                .join(AffiliateLink, AffiliateLink.id == AffiliateClick.link_id)
+                .where(AffiliateLink.affiliate_id == affiliate_id)
+                .order_by(AffiliateClick.occurred_at.desc())
+                .limit(1)
+            )
+            if payload.session_id and payload.user_phone:
+                click_q = click_q.where(
+                    (AffiliateClick.session_id == payload.session_id) | (AffiliateClick.user_phone == payload.user_phone)
+                )
+            elif payload.session_id:
+                click_q = click_q.where(AffiliateClick.session_id == payload.session_id)
+            else:
+                click_q = click_q.where(AffiliateClick.user_phone == payload.user_phone)
+
+            inferred = (await db.execute(click_q)).scalar_one_or_none()
+            if inferred:
+                click_id = inferred.id
+                if not link_id:
+                    link_id = inferred.link_id
+
+        # Idempotency by order_id unique constraint.
+        attribution = AffiliateAttribution(
+            affiliate_id=affiliate_id,
+            link_id=link_id,
+            order_id=payload.order_id,
+            business_id=payload.business_id,
+            click_id=click_id,
+            session_id=payload.session_id,
+            user_phone=payload.user_phone,
+        )
+        db.add(attribution)
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            # return existing attribution if already present
+            res = await db.execute(select(AffiliateAttribution).where(AffiliateAttribution.order_id == payload.order_id))
+            existing = res.scalar_one_or_none()
+            if existing:
+                return 200, AttributionOut(
+                    id=existing.id,
+                    affiliate_id=existing.affiliate_id,
+                    order_id=existing.order_id,
+                    business_id=existing.business_id,
+                    status=existing.status,
+                    created_at=existing.created_at,
+                )
+            raise
+
+        await db.refresh(attribution)
+
+        await _record_event(
+            db,
+            AffiliateEvent(
+                event_id=payload.event_id,
+                affiliate_id=attribution.affiliate_id,
+                event_type="conversion",
+                occurred_at=attribution.created_at,
+                source="attribute_order",
+                correlation_id=payload.correlation_id or getattr(request.state, "correlation_id", None),
+                buyer_phone=payload.user_phone,
+                session_id=payload.session_id,
+                order_id=payload.order_id,
+                business_id=payload.business_id,
+                amount_zmw=None,
+                meta={
+                    "affiliate_code": payload.affiliate_code,
+                    "click_id": attribution.click_id,
+                    "link_id": attribution.link_id,
+                },
+            ),
+        )
+
+        return 200, AttributionOut(
+            id=attribution.id,
+            affiliate_id=attribution.affiliate_id,
+            order_id=attribution.order_id,
+            business_id=attribution.business_id,
+            status=attribution.status,
+            created_at=attribution.created_at,
+        )
+
+    status_code, body = await idempotent_execute(
+        db=db,
+        scope=scope_for("POST", request.url.path),
+        key=x_idempotency_key or payload.event_id,
+        run=_run,
+    )
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail="unexpected_status")
+    return AttributionOut(**body)
+
+
+@app.get("/affiliates/{affiliate_id}/clicks", response_model=list[ClickOut])
+async def list_clicks(
+    affiliate_id: str, limit: int = 50, offset: int = 0, db: AsyncSession = Depends(db_session)
+) -> list[ClickOut]:
+    res = await db.execute(
+        select(AffiliateClick)
+        .join(AffiliateLink, AffiliateLink.id == AffiliateClick.link_id)
+        .where(AffiliateLink.affiliate_id == affiliate_id)
+        .order_by(AffiliateClick.occurred_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    items = res.scalars().all()
+    return [ClickOut(id=c.id, link_id=c.link_id, occurred_at=c.occurred_at) for c in items]
+
+
+@app.get("/affiliates/{affiliate_id}/attributions", response_model=list[AttributionOut])
+async def list_attributions(affiliate_id: str, limit: int = 50, offset: int = 0, db: AsyncSession = Depends(db_session)) -> list[AttributionOut]:
+    res = await db.execute(
+        select(AffiliateAttribution)
+        .where(AffiliateAttribution.affiliate_id == affiliate_id)
+        .order_by(AffiliateAttribution.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    items = res.scalars().all()
+    return [
+        AttributionOut(
+            id=a.id,
+            affiliate_id=a.affiliate_id,
+            order_id=a.order_id,
+            business_id=a.business_id,
+            status=a.status,
+            created_at=a.created_at,
+        )
+        for a in items
+    ]
+
+
+@app.get("/events/affiliate/{affiliate_id}", response_model=list[AffiliateEventOut])
+async def list_affiliate_events(
+    affiliate_id: str, limit: int = 100, offset: int = 0, db: AsyncSession = Depends(db_session)
+) -> list[AffiliateEventOut]:
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=400, detail="limit_out_of_range")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="offset_must_be_non_negative")
+
+    res = await db.execute(
+        select(AffiliateEvent)
+        .where(AffiliateEvent.affiliate_id == affiliate_id)
+        .order_by(AffiliateEvent.occurred_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    items = res.scalars().all()
+    return [
+        AffiliateEventOut(
+            event_id=e.event_id,
+            affiliate_id=e.affiliate_id,
+            event_type=e.event_type,
+            occurred_at=e.occurred_at,
+            source=e.source,
+            correlation_id=e.correlation_id,
+            buyer_phone=e.buyer_phone,
+            session_id=e.session_id,
+            order_id=e.order_id,
+            business_id=e.business_id,
+            amount_zmw=float(e.amount_zmw) if e.amount_zmw is not None else None,
+            meta=e.meta,
+            created_at=e.created_at,
+        )
+        for e in items
+    ]
+
+
+@app.post("/events/payment-success")
+async def ingest_payment_success(
+    request: Request,
+    payload: PaymentSuccessEvent,
+    db: AsyncSession = Depends(db_session),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> dict:
+    async def _run():
+        order_id = payload.order_id
+        if not order_id:
+            raise HTTPException(status_code=400, detail="order_id_required")
+
+        # Prefer explicit affiliate_id from payload earnings; else infer from attribution.
+        affiliate_id = payload.earnings.affiliate_id
+        affiliate_amount = payload.earnings.affiliate_amount
+
+        if affiliate_amount is None:
+            raise HTTPException(status_code=400, detail="earnings.affiliate_amount_required")
+
+        if not affiliate_id:
+            res = await db.execute(select(AffiliateAttribution).where(AffiliateAttribution.order_id == order_id))
+            attr = res.scalar_one_or_none()
+            if not attr:
+                raise HTTPException(status_code=404, detail="attribution_not_found_for_order")
+            affiliate_id = attr.affiliate_id
+            attr.status = "paid"
+
+        earning = AffiliateEarning(
+            affiliate_id=str(affiliate_id),
+            order_id=order_id,
+            payment_id=payload.payment_id,
+            amount=float(affiliate_amount),
+            currency=payload.currency,
+            status="ready",  # soft launch: ready once payment verified
+        )
+
+        db.add(earning)
+
+        await _record_event(
+            db,
+            AffiliateEvent(
+                event_id=payload.event_id,
+                affiliate_id=str(affiliate_id),
+                event_type="sale",
+                occurred_at=payload.occurred_at,
+                source=payload.producer,
+                correlation_id=payload.correlation_id,
+                buyer_phone=payload.user_phone,
+                session_id=None,
+                order_id=order_id,
+                business_id=payload.business_id,
+                amount_zmw=float(affiliate_amount),
+                meta={
+                    "payment_id": payload.payment_id,
+                    "amount": float(payload.amount),
+                    "currency": payload.currency,
+                    "earnings": payload.earnings.model_dump(mode="json"),
+                },
+            ),
+        )
+
+        await db.commit()
+        return 200, {"status": "ok", "affiliate_id": str(affiliate_id), "order_id": order_id}
+
+    status_code, body = await idempotent_execute(
+        db=db,
+        scope=scope_for("POST", request.url.path),
+        key=x_idempotency_key or payload.event_id,
+        run=_run,
+    )
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail="unexpected_status")
+    return body
+
+
+@app.post("/events/order-created")
+async def ingest_order_created(
+    request: Request,
+    payload: OrderCreatedEvent,
+    db: AsyncSession = Depends(db_session),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> dict:
+    # If there's no affiliate_code, nothing to do.
+    if not payload.affiliate_code:
+        return {"status": "ignored", "reason": "no_affiliate_code"}
+
+    attribution_payload = AttributionCreate(
+        event_id=payload.event_id,
+        affiliate_code=payload.affiliate_code,
+        order_id=payload.order_id,
+        business_id=payload.business_id,
+        correlation_id=payload.correlation_id,
+        session_id=payload.session_id,
+        user_phone=payload.user_phone,
+    )
+
+    async def _run():
+        result = await attribute_order(
+            request=request,
+            payload=attribution_payload,
+            db=db,
+            x_idempotency_key=None,
+        )
+        return 200, {"status": "ok", "attribution": result.model_dump()}
+
+    status_code, body = await idempotent_execute(
+        db=db,
+        scope=scope_for("POST", request.url.path),
+        key=x_idempotency_key or payload.event_id,
+        run=_run,
+    )
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail="unexpected_status")
+    return body
+
+
+@app.get("/affiliates/{affiliate_id}/earnings", response_model=EarningsSummary)
+async def get_earnings(affiliate_id: str, db: AsyncSession = Depends(db_session)) -> EarningsSummary:
+    total_q = select(func.coalesce(func.sum(AffiliateEarning.amount), 0.0)).where(
+        AffiliateEarning.affiliate_id == affiliate_id
+    )
+    pending_q = select(func.coalesce(func.sum(AffiliateEarning.amount), 0.0)).where(
+        AffiliateEarning.affiliate_id == affiliate_id,
+        AffiliateEarning.status == "pending",
+    )
+    ready_q = select(func.coalesce(func.sum(AffiliateEarning.amount), 0.0)).where(
+        AffiliateEarning.affiliate_id == affiliate_id,
+        AffiliateEarning.status == "ready",
+    )
+
+    total = (await db.execute(total_q)).scalar_one()
+    pending = (await db.execute(pending_q)).scalar_one()
+    ready = (await db.execute(ready_q)).scalar_one()
+
+    # Currency is per-row today; soft-launch: return ZMW by default.
+    return EarningsSummary(
+        affiliate_id=affiliate_id,
+        currency="ZMW",
+        total_amount=float(total),
+        pending_amount=float(pending),
+        ready_amount=float(ready),
+    )
+
+
+@app.get("/affiliates/{affiliate_id}/earnings/records", response_model=list[EarningOut])
+async def list_earnings_records(
+    affiliate_id: str, limit: int = 50, offset: int = 0, db: AsyncSession = Depends(db_session)
+) -> list[EarningOut]:
+    res = await db.execute(
+        select(AffiliateEarning)
+        .where(AffiliateEarning.affiliate_id == affiliate_id)
+        .order_by(AffiliateEarning.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    items = res.scalars().all()
+    return [
+        EarningOut(
+            id=e.id,
+            affiliate_id=e.affiliate_id,
+            order_id=e.order_id,
+            payment_id=e.payment_id,
+            amount=float(e.amount),
+            currency=e.currency,
+            status=e.status,
+            created_at=e.created_at,
+        )
+        for e in items
+    ]
+
+
+@app.get("/affiliates/{affiliate_id}/dashboard", response_model=AffiliateDashboard)
+async def affiliate_dashboard(affiliate_id: str, days: int = 30, db: AsyncSession = Depends(db_session)) -> AffiliateDashboard:
+    if days < 1:
+        raise HTTPException(status_code=400, detail="days_must_be_positive")
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    clicks_q = (
+        select(func.count(func.distinct(AffiliateClick.user_phone)))
+        .select_from(AffiliateClick)
+        .join(AffiliateLink, AffiliateLink.id == AffiliateClick.link_id)
+        .where(
+            AffiliateLink.affiliate_id == affiliate_id,
+            AffiliateClick.occurred_at >= since,
+            AffiliateClick.user_phone.is_not(None),
+        )
+    )
+    attributions_q = select(func.count()).select_from(AffiliateAttribution).where(
+        AffiliateAttribution.affiliate_id == affiliate_id,
+        AffiliateAttribution.created_at >= since,
+    )
+    conversions_q = select(func.count()).select_from(AffiliateAttribution).where(
+        AffiliateAttribution.affiliate_id == affiliate_id,
+        AffiliateAttribution.created_at >= since,
+        AffiliateAttribution.click_id.is_not(None),
+    )
+
+    last_click_q = (
+        select(func.max(AffiliateClick.occurred_at))
+        .select_from(AffiliateClick)
+        .join(AffiliateLink, AffiliateLink.id == AffiliateClick.link_id)
+        .where(AffiliateLink.affiliate_id == affiliate_id)
+    )
+    last_attr_q = select(func.max(AffiliateAttribution.created_at)).where(AffiliateAttribution.affiliate_id == affiliate_id)
+
+    total_earnings_q = select(func.coalesce(func.sum(AffiliateEarning.amount), 0.0)).where(
+        AffiliateEarning.affiliate_id == affiliate_id,
+        AffiliateEarning.created_at >= since,
+    )
+    pending_earnings_q = select(func.coalesce(func.sum(AffiliateEarning.amount), 0.0)).where(
+        AffiliateEarning.affiliate_id == affiliate_id,
+        AffiliateEarning.created_at >= since,
+        AffiliateEarning.status == "pending",
+    )
+    ready_earnings_q = select(func.coalesce(func.sum(AffiliateEarning.amount), 0.0)).where(
+        AffiliateEarning.affiliate_id == affiliate_id,
+        AffiliateEarning.created_at >= since,
+        AffiliateEarning.status == "ready",
+    )
+
+    clicks = int((await db.execute(clicks_q)).scalar_one())
+    attributions = int((await db.execute(attributions_q)).scalar_one())
+    conversions = int((await db.execute(conversions_q)).scalar_one())
+
+    last_click_at = (await db.execute(last_click_q)).scalar_one()
+    last_attribution_at = (await db.execute(last_attr_q)).scalar_one()
+
+    total_earnings = float((await db.execute(total_earnings_q)).scalar_one())
+    pending_earnings = float((await db.execute(pending_earnings_q)).scalar_one())
+    ready_earnings = float((await db.execute(ready_earnings_q)).scalar_one())
+
+    conversion_rate = (conversions / clicks) if clicks else 0.0
+
+    # SQLite-friendly day bucket.
+    day_bucket = func.strftime("%Y-%m-%d", AffiliateEarning.created_at)
+    series_q = (
+        select(day_bucket.label("day"), func.coalesce(func.sum(AffiliateEarning.amount), 0.0).label("amount"))
+        .where(AffiliateEarning.affiliate_id == affiliate_id, AffiliateEarning.created_at >= since)
+        .group_by(day_bucket)
+        .order_by(day_bucket.asc())
+    )
+    series_rows = (await db.execute(series_q)).all()
+    earnings_by_day = [EarningsByDay(day=str(r.day), amount=float(r.amount)) for r in series_rows]
+
+    return AffiliateDashboard(
+        affiliate_id=affiliate_id,
+        window_days=days,
+        clicks=clicks,
+        attributions=attributions,
+        conversions=conversions,
+        conversion_rate=float(conversion_rate),
+        total_earnings=total_earnings,
+        pending_earnings=pending_earnings,
+        ready_earnings=ready_earnings,
+        currency="ZMW",
+        last_click_at=last_click_at,
+        last_attribution_at=last_attribution_at,
+        earnings_by_day=earnings_by_day,
+    )
+
+
+@app.get("/pool/standings", response_model=PoolStandingsOut)
+async def pool_standings(db: AsyncSession = Depends(db_session)) -> PoolStandingsOut:
+    settings = (await db.execute(select(CommissionSettings).where(CommissionSettings.id == 1))).scalar_one_or_none()
+    if not settings:
+        settings = await get_or_create_settings(
+            db,
+            pool_pct_default=get_pool_pct_default(),
+            epoch_days_default=get_epoch_days_default(),
+        )
+
+    epoch = await get_or_open_epoch(db, pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days))
+    metrics = await compute_metrics_for_epoch(db, epoch)
+    scores = compute_weighted_scores(metrics, settings.weights)
+
+    pool_amount = float(epoch.gross_revenue_zmw) * float(settings.pool_pct)
+    payouts = compute_payouts(scores, pool_amount)
+
+    standings = [
+        PoolStanding(
+            affiliate_id=m.affiliate_id,
+            tier_name=m.tier_name,
+            tier_multiplier=float(m.tier_multiplier),
+            sales_volume=float(m.sales_volume),
+            unique_buyers=int(m.unique_buyers),
+            msme_referrals=int(m.msme_referrals),
+            clicks=int(m.clicks),
+            attributions=int(m.attributions),
+            paid_attributions=int(m.paid_attributions),
+            weighted_score=float(scores.get(m.affiliate_id, 0.0)),
+            projected_payout_zmw=float(payouts.get(m.affiliate_id, 0.0)),
+        )
+        for m in metrics
+    ]
+    standings.sort(key=lambda s: s.projected_payout_zmw, reverse=True)
+
+    return PoolStandingsOut(
+        epoch=_epoch_out(epoch),
+        settings=_settings_out(settings),
+        pool_amount_zmw=float(pool_amount),
+        standings=standings,
+    )
+
+
+@app.get("/pool/standings/stream")
+async def pool_standings_stream(db: AsyncSession = Depends(db_session)) -> StreamingResponse:
+    # Simple Server-Sent Events (SSE) stream for realtime dashboards.
+    async def event_gen():
+        while True:
+            payload = await pool_standings(db)
+            yield f"data: {payload.model_dump_json()}\n\n"
+            await asyncio.sleep(2)
+
+    import asyncio
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+# ------------------- Admin endpoints -------------------
+
+
+@app.get("/admin/commission-settings", response_model=CommissionSettingsOut)
+async def admin_get_settings(
+    db: AsyncSession = Depends(db_session), x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key")
+) -> CommissionSettingsOut:
+    _require_admin(x_admin_key)
+    settings = await get_or_create_settings(
+        db,
+        pool_pct_default=get_pool_pct_default(),
+        epoch_days_default=get_epoch_days_default(),
+    )
+    return _settings_out(settings)
+
+
+@app.put("/admin/commission-settings", response_model=CommissionSettingsOut)
+async def admin_update_settings(
+    payload: CommissionSettingsUpdate,
+    db: AsyncSession = Depends(db_session),
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+) -> CommissionSettingsOut:
+    _require_admin(x_admin_key)
+    settings = await get_or_create_settings(
+        db,
+        pool_pct_default=get_pool_pct_default(),
+        epoch_days_default=get_epoch_days_default(),
+    )
+
+    if payload.pool_pct is not None:
+        settings.pool_pct = float(payload.pool_pct)
+    if payload.epoch_days is not None:
+        settings.epoch_days = int(payload.epoch_days)
+    if payload.weights is not None:
+        settings.weights = payload.weights
+
+    await db.commit()
+    return _settings_out(settings)
+
+
+@app.get("/admin/tiers", response_model=list[TierOut])
+async def admin_list_tiers(
+    db: AsyncSession = Depends(db_session), x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key")
+) -> list[TierOut]:
+    _require_admin(x_admin_key)
+    tiers = (await db.execute(select(AffiliateTier).order_by(AffiliateTier.name.asc()))).scalars().all()
+    return [TierOut(name=t.name, multiplier=float(t.multiplier), price_zmw=float(t.price_zmw), active=bool(t.active)) for t in tiers]
+
+
+@app.put("/admin/affiliates/{affiliate_id}/tier")
+async def admin_assign_tier(
+    affiliate_id: str,
+    payload: TierAssign,
+    db: AsyncSession = Depends(db_session),
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+) -> dict:
+    _require_admin(x_admin_key)
+    tier = (await db.execute(select(AffiliateTier).where(AffiliateTier.name == payload.tier_name))).scalar_one_or_none()
+    if not tier:
+        raise HTTPException(status_code=404, detail="tier_not_found")
+
+    assignment = AffiliateTierAssignment(affiliate_id=affiliate_id, tier_name=payload.tier_name, ends_at=payload.ends_at)
+    db.add(assignment)
+    await db.commit()
+    return {"status": "ok", "affiliate_id": affiliate_id, "tier": payload.tier_name}
+
+
+@app.get("/admin/epochs", response_model=list[EpochOut])
+async def admin_list_epochs(
+    db: AsyncSession = Depends(db_session), x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key")
+) -> list[EpochOut]:
+    _require_admin(x_admin_key)
+    epochs = (await db.execute(select(PoolEpoch).order_by(PoolEpoch.starts_at.desc()))).scalars().all()
+    return [_epoch_out(e) for e in epochs]
+
+
+@app.post("/admin/epochs/open", response_model=EpochOut)
+async def admin_open_epoch(
+    db: AsyncSession = Depends(db_session), x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key")
+) -> EpochOut:
+    _require_admin(x_admin_key)
+    settings = await get_or_create_settings(
+        db,
+        pool_pct_default=get_pool_pct_default(),
+        epoch_days_default=get_epoch_days_default(),
+    )
+    epoch = await get_or_open_epoch(db, pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days))
+    return _epoch_out(epoch)
+
+
+@app.put("/admin/epochs/{epoch_id}/gross-revenue", response_model=EpochOut)
+async def admin_set_epoch_gross_revenue(
+    epoch_id: str,
+    payload: EpochSetGrossRevenue,
+    db: AsyncSession = Depends(db_session),
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+) -> EpochOut:
+    _require_admin(x_admin_key)
+    epoch = (await db.execute(select(PoolEpoch).where(PoolEpoch.id == epoch_id))).scalar_one_or_none()
+    if not epoch:
+        raise HTTPException(status_code=404, detail="epoch_not_found")
+    epoch.gross_revenue_zmw = float(payload.gross_revenue_zmw)
+    await db.commit()
+    return _epoch_out(epoch)
+
+
+@app.post("/admin/epochs/{epoch_id}/close", response_model=list[PoolAllocationOut])
+async def admin_close_epoch(
+    epoch_id: str,
+    db: AsyncSession = Depends(db_session),
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+) -> list[PoolAllocationOut]:
+    _require_admin(x_admin_key)
+    epoch = (await db.execute(select(PoolEpoch).where(PoolEpoch.id == epoch_id))).scalar_one_or_none()
+    if not epoch:
+        raise HTTPException(status_code=404, detail="epoch_not_found")
+    if epoch.status != "open":
+        raise HTTPException(status_code=409, detail="epoch_not_open")
+
+    settings = await get_or_create_settings(
+        db,
+        pool_pct_default=get_pool_pct_default(),
+        epoch_days_default=get_epoch_days_default(),
+    )
+    allocations = await close_epoch_and_allocate(db, epoch, settings)
+    return [
+        PoolAllocationOut(
+            epoch_id=a.epoch_id,
+            affiliate_id=a.affiliate_id,
+            tier_name=a.tier_name,
+            tier_multiplier=float(a.tier_multiplier),
+            metrics=a.metrics,
+            weighted_score=float(a.weighted_score),
+            payout_zmw=float(a.payout_zmw),
+            created_at=a.created_at,
+        )
+        for a in allocations
+    ]
+
+
+@app.get("/admin/epochs/{epoch_id}/allocations", response_model=list[PoolAllocationOut])
+async def admin_list_allocations(
+    epoch_id: str,
+    db: AsyncSession = Depends(db_session),
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+) -> list[PoolAllocationOut]:
+    _require_admin(x_admin_key)
+    rows = (
+        await db.execute(select(PoolAllocation).where(PoolAllocation.epoch_id == epoch_id).order_by(PoolAllocation.payout_zmw.desc()))
+    ).scalars().all()
+    return [
+        PoolAllocationOut(
+            epoch_id=a.epoch_id,
+            affiliate_id=a.affiliate_id,
+            tier_name=a.tier_name,
+            tier_multiplier=float(a.tier_multiplier),
+            metrics=a.metrics,
+            weighted_score=float(a.weighted_score),
+            payout_zmw=float(a.payout_zmw),
+            created_at=a.created_at,
+        )
+        for a in rows
+    ]

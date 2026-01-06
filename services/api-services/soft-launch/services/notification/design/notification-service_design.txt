@@ -1,0 +1,123 @@
+API SERVICE DESIGN: NOTIFICATION SERVICE
+
+1. Description:
+Handles all outbound communication across the platform. It delivers real-time notifications via SMS, email, and in-app channels. It ensures MSMEs, affiliates, and contributors receive confirmations, alerts, and reminders triggered by other services (e.g., Business, Payment, Auth). Designed for reliability, traceability, and scaling from 500 → 10,000+ users.
+
+2. Features:
+- Send SMS, email, and in-app notifications
+- Template-based messaging (transactional, onboarding, reminders)
+- Multi-channel delivery with fallback (e.g., email if SMS fails)
+- Event-driven triggers (e.g., `payment_success`, `msme_onboarded`)
+- Notification logs for audit and troubleshooting
+- Configurable user preferences (opt-in/out, channel priority)
+
+3. Schema:
+Table: notification_service.notifications
+- id: UUID (PK)
+- user_id: UUID (FK → auth_service.users.id, optional)
+- business_id: UUID (FK → business_service.businesses.id, optional)
+- channel: ENUM('sms', 'email', 'in_app')
+- template: TEXT
+- payload: JSONB
+- status: ENUM('pending', 'sent', 'failed')
+- error_message: TEXT (optional)
+- created_at: TIMESTAMP
+- sent_at: TIMESTAMP (optional)
+
+Table: notification_service.templates
+- id: UUID (PK)
+- name: TEXT (unique)
+- channel: ENUM('sms', 'email', 'in_app')
+- content: TEXT
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Table: notification_service.user_preferences
+- id: UUID (PK)
+- user_id: UUID (FK → auth_service.users.id)
+- preferred_channel: ENUM('sms', 'email', 'in_app')
+- opt_in: BOOLEAN
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+4. Routes:
+POST   /notification/send              → Send a notification (direct call)
+GET    /notification/{id}              → Get notification status
+GET    /notification/user/{id}         → List notifications for a user
+POST   /notification/template          → Create/update a template
+GET    /notification/template/{name}   → Fetch template details
+PUT    /notification/preferences/{id}  → Update user preferences
+
+5. External Outreach:
+- Consumes events from Business Service (`msme_onboarded`, subscription updates)
+- Consumes events from Payment Service (`payment_success`, `payment_failed`)
+- Consumes events from Auth Service (verification, login alerts)
+- Publishes delivery logs to Audit Service
+- Integrates with external SMS/email gateways
+
+6. Background Work:
+- Retry queue for failed notifications
+- Scheduled reminders (e.g., subscription expiry)
+- Cleanup of old notification logs
+- Audit sync for delivery events
+
+7. Scaling Readiness:
+- **Current Target (1–500 users):**
+  - Single instance deployment with connection pooling
+  - Indexed queries on `user_id`, `business_id`, `status`
+  - Basic retry queue for failed notifications
+
+- **Ready for 1,000 users:**
+  - Stateless service design with Redis for pub/sub event consumption
+  - Horizontal scaling with Docker + Kubernetes
+  - Partitioned retry queues for faster recovery
+  - Circuit breakers for SMS/email gateway integrations
+
+- **Path to 10,000+ users:**
+  - Event-driven architecture with Kafka/RabbitMQ for high-throughput notifications
+  - Sharded `notifications` table (by user_id or business_id)
+  - Read replicas for analytics queries (delivery rates, failure trends)
+  - Autoscaling policies based on queue depth and event volume
+  - Observability stack (Prometheus + Grafana) for proactive scaling
+
+8. Folder Structure (Layered Scaffolding):
+└── notification-service/
+    ├── alembic/
+    ├── alembic.ini
+    ├── controllers/          # Route handlers (e.g., send, template)
+    ├── services/             # Notification logic (e.g., channel selection)
+    ├── models/               # SQLAlchemy models for notifications, templates, preferences
+    ├── routes/               # Route declarations
+    ├── jobs/                 # Background workers (e.g., retries, reminders)
+    ├── events/               # Redis/pub-sub consumers (e.g., payment_success)
+    ├── utils/                # Gateway adapters, validators
+    ├── config/               # Gateway credentials, retry policies
+    ├── Dockerfile
+    └── main.py
+
+9. Alembic Migrations:
+- `alembic init alembic`
+- `alembic revision --autogenerate -m "init notification schema"`
+- `alembic upgrade head`
+- Migration history stored in `alembic/versions/`
+
+10. Dockerfile:
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+11. Mermaid Flowchart Reference:
+- NotificationService → SMS/Email Gateways
+- NotificationService → AuditService
+- NotificationService → BusinessService
+- NotificationService → PaymentService
+- NotificationService → AuthService

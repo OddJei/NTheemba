@@ -1,0 +1,92 @@
+Affiliate Event Service (AES)
+
+1. Description:
+Tracks all affiliate-related events across the platform to support performance scoring, fraud detection, and reward eligibility. Captures actions like referrals, conversions, sales, and campaign interactions. Emits structured events to AffiliatePoolService, AnalyticsService, and optionally NotificationService. Acts as the single source of truth for affiliate activity history.
+
+2. Features:
+- Record affiliate events (referral, sale, conversion, campaign click)
+- Store event metadata (source, timestamp, context)
+- Emit AffiliateEventRecorded and AffiliatePerformanceUpdated
+- Expose event history per affiliate
+- Feed metrics into AffiliatePoolService for scoring
+- Support event replay for audit or recalculation
+
+3. Schema:
+Table: affiliate_event_service.affiliate_events
+- id: UUID (PK)
+- affiliate_id: UUID (FK → affiliate_service.affiliates.id)
+- event_type: ENUM('referral', 'conversion', 'sale', 'campaign_click')
+- source: TEXT (e.g. 'referral_url', 'bot', 'checkout')
+- metadata: JSONB
+- related_user_id: UUID (nullable)
+- related_order_id: UUID (nullable)
+- created_at: TIMESTAMP
+
+4. Routes:
+POST   /event/record                          → Record new affiliate event
+GET    /event/affiliate/{affiliate_id}        → Get all events for an affiliate
+GET    /event/type/{event_type}               → Get all events of a specific type
+POST   /event/replay                          → Replay events for recalculation
+
+5. External Outreach:
+- Emits AffiliateEventRecorded to AffiliatePoolService
+- Emits AffiliatePerformanceUpdated to AnalyticsService
+- May notify NotificationService on key events (e.g. first sale)
+- Shares event stream with RevenuePartitionService for payout logic
+
+6. Background Work:
+- Event deduplication and validation
+- Scheduled aggregation of event counts per affiliate
+- Replay engine for recalculating scores
+- Optional fraud detection hooks
+
+7. Folder Structure (Layered Scaffolding):
+└── affiliate-event-service/
+    ├── alembic/
+    ├── alembic.ini
+    ├── controllers/
+    ├── services/
+    ├── models/
+    ├── routes/
+    ├── events/
+    ├── jobs/
+    ├── utils/
+    ├── config/
+    ├── Dockerfile
+    └── main.py
+
+8. Alembic Migrations:
+- alembic init alembic
+- alembic revision --autogenerate -m "init affiliate event schema"
+- alembic upgrade head
+
+9. Dockerfile:
+FROM python:3.11-slim  
+WORKDIR /app  
+COPY requirements.txt .  
+RUN pip install --no-cache-dir -r requirements.txt  
+COPY . .  
+ENV PYTHONUNBUFFERED=1  
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+10. Scalability Readiness:
+- Current Target (1–500 affiliates):
+  - Indexed by affiliate_id and event_type
+  - Basic event recording and replay
+
+- Ready for 1,000 affiliates:
+  - Redis stream for real-time event ingestion
+  - Partitioned event table by affiliate_id
+
+- Path to 10,000+ affiliates:
+  - Sharded event store
+  - Kafka-based event pipeline
+  - Read replicas for analytics
+  - Autoscaling event processors
+
+11. Flowchart Reference:
+- ReferralService → AffiliateEventService
+- CheckoutService → AffiliateEventService
+- AffiliateEventService → AffiliatePoolService
+- AffiliateEventService → AnalyticsService
+- AffiliateEventService → NotificationService

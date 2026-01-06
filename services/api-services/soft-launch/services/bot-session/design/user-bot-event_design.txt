@@ -1,0 +1,194 @@
+API SERVICE DESIGN: USER-BOT EVENT SERVICE
+
+1. Description:
+Tracks conversational and transactional events between users and bot instances. Each inbound payload triggers a new event creation. As the payload flows downstream and triggers actions, the corresponding event is updated. This enables audit trails, analytics, and replay capabilities for customer interactions via SMS and WhatsApp. Most users are anonymous, so `user_phone` is the core identifier.
+
+2. Features:
+- Create one event per inbound payload
+- Update event as payload triggers downstream actions
+- Store event metadata (timestamps, structured trace, event type, status)
+- Link events to session, bot, and optionally user
+- Enable analytics, audit trails, and replay
+- Provide previous_turns (turn1, turn2, turn3) for LLM context
+- Optional cleanup of stale or irrelevant events
+
+3. Schema:
+Table: user_bot_event_service.events
+- id: UUID (PK)
+- session_id: UUID (FK → user_bot_session_service.sessions.id)
+- user_phone: TEXT (indexed, nullable)         -- Primary user identifier
+- user_id: UUID (FK → auth_service.users.id, nullable)
+- bot_id: UUID (FK → bot_session_service.bots.id)
+- last_event_id: UUID (nullable)               -- Links to previous event
+- message_count: INTEGER                       -- Auto-incremented per session
+- event_type: TEXT                             -- e.g., 'message', 'resolved', 'blocked'
+- payload_events: JSONB                        -- Structured trace of sub-events
+- previous_turns: JSONB (nullable)             -- { turn1, turn2, turn3 } snapshots
+- status: TEXT                                 -- e.g., 'created', 'resolved', 'blocked'
+- updated_fields: JSONB (nullable)             -- Tracks mutations (e.g., mode, reply)
+- created_at: TIMESTAMP
+- updated_at: TIMESTAMP
+
+Constraints:
+- Events must be linked to a valid session
+- `user_phone` used for lookup and analytics
+- `user_id` optional for authenticated users
+
+4. Routes:
+POST   /event/create                          → Create new event from inbound payload  
+PUT    /event/{id}/update                     → Update event with downstream mutations  
+GET    /event/{id}                            → Get event by event ID  
+GET    /event/phone/{user_phone}              → Get all events by user phone  
+GET    /event/session/{session_id}            → Get all events for a session  
+GET    /event/bot/{bot_id}                    → Get all events for a bot  
+GET    /event/bot-user/{bot_id}/{user_phone}  → Get all events for a bot and user phone combination  
+DELETE /event/{id}                            → Remove event  
+
+5. Event Creation Logic:
+- Input: `session_id`, `user_phone`, `bot_id`, `payload_events`, `last_event_id` (nullable)
+- If `last_event_id` is provided:
+  - Fetch that event → assign to `turn1`
+  - From `turn1.last_event_id`, fetch → assign to `turn2`
+  - From `turn2.last_event_id`, fetch → assign to `turn3`
+  - `message_count = turn1.message_count + 1`
+- If no `last_event_id`:
+  - `message_count = 1`
+  - `previous_turns = null`
+- Store:
+  - `previous_turns`: {
+      "turn1": full snapshot of last event,
+      "turn2": previous of last,
+      "turn3": previous of previous
+    }
+
+6. payload_events Structure:
+{
+  "inbound": {
+    "request_id": "req_abc123",
+    "message": "Hi, I need help",
+    "gateway": "wa",
+    "timestamp": "2025-10-18T05:45:00Z"
+  },
+  "session": {
+    "session_id": "sess_xyz789",
+    "mode": "registered",
+    "bot_type": "default",
+    "msme_id": null
+  },
+  "events": [
+    {
+      "type": "bot_resolved",
+      "timestamp": "2025-10-18T05:45:01Z",
+      "details": {
+        "bot_id": "ntb_default",
+        "is_active": true
+      }
+    },
+    {
+      "type": "session_created",
+      "timestamp": "2025-10-18T05:45:02Z",
+      "details": {
+        "session_id": "sess_xyz789",
+        "message_count": 1
+      }
+    },
+    {
+      "type": "intent_resolved",
+      "timestamp": "2025-10-18T05:45:03Z",
+      "details": {
+        "intent": "greeting",
+        "confidence": 0.92
+      }
+    },
+    {
+      "type": "reply_generated",
+      "timestamp": "2025-10-18T05:45:04Z",
+      "details": {
+        "text": "Hello! How can I assist you today?"
+      }
+    }
+  ]
+}
+
+7. External Outreach:
+- Publishes event logs (`event_logged`) to Audit and Analytics Services  
+- May notify Notification Service on specific event types (e.g., 'rating_submitted')  
+- Referenced by Analytics Service for trend analysis  
+- Used by Bot Router for replay or trace enrichment  
+
+8. Background Work:
+- Cleanup of stale or irrelevant events  
+- Audit sync for event lifecycle  
+- Optional streaming to analytics pipeline  
+
+9. Folder Structure (Layered Scaffolding):
+└── user-bot-event-service/  
+    ├── alembic/              # Alembic migration scripts  
+    ├── alembic.ini           # Alembic config file  
+    ├── controllers/          # Route handlers (create, update, query)  
+    ├── services/             # Event creation and mutation logic  
+    ├── models/               # SQLAlchemy models for events  
+    ├── routes/               # Route declarations  
+    ├── jobs/                 # Background cleanup and sync  
+    ├── events/               # Redis emitters (e.g., event_logged)  
+    ├── utils/                # ID generators, validators  
+    ├── config/               # TTLs, event rules  
+    ├── Dockerfile            # Container definition  
+    └── main.py               # Entry point for service registration  
+
+10. Alembic Migrations:
+- `alembic init alembic`  
+- `alembic revision --autogenerate -m "init event schema"`  
+- `alembic upgrade head`  
+- Migration history stored in `alembic/versions/`  
+
+11. Dockerfile:
+FROM python:3.11-slim  
+
+WORKDIR /app  
+
+COPY requirements.txt .  
+RUN pip install --no-cache-dir -r requirements.txt  
+
+COPY . .  
+
+ENV PYTHONUNBUFFERED=1  
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]  
+
+12. Scalability Readiness:
+- **Current Target (1–10,000 events):**
+  - Indexed queries on `user_phone`, `session_id`, `bot_id`
+  - Basic lifecycle events and cleanup routines
+
+- **Ready for 100,000+ events:**
+  - Partitioned event table by bot or session
+  - Redis queue for event ingestion
+  - Horizontal scaling with Docker + Kubernetes
+  - Streaming pipeline to Analytics Service
+
+- **Path to 1M+ events:**
+  - Sharded event table by phone prefix or bot_id
+  - Kafka or Redis Streams for real-time ingestion
+  - Read replicas for analytics queries
+  - Autoscaling policies based on event volume
+  - Observability stack (Prometheus + Grafana)
+
+13. Subscribed Services:
+- **Bot Router** → `payload_routed`, `bot_resolved`, `session_resolved`  
+- **User-Bot Session Service** → `session_created`, `session_updated`, `session_terminated`  
+- **Bot Session Service** → `bot_created`, `bot_updated`, `bot_deactivated`  
+- **Auth Service** → `user_authenticated`, `user_profile_updated`  
+- **Capability & Mode Service** → `mode_assigned`, `mode_updated`  
+- **Notification Service** → `event_logged` (filtered by type)  
+- **Audit Service** → `event_logged`, `event_replayed`  
+- **Analytics Service** → `event_logged`, `event_type_summary`  
+- **PhoneNumberResolver** → `phone_validated`, `phone_normalized`  
+
+14. Mermaid Flowchart Reference:
+RedisQueue → BotRouter  
+→ `POST /event/create` → UserBotEventService  
+→ BotSessionService → `PUT /event/{id}/update`  
+→ BotIntentService → `PUT /event/{id}/update`  
+→ NotificationService → `event_logged`  
+→ AuditService → `event_logged`
