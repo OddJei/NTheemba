@@ -111,3 +111,4 @@ class ReportServiceClient:
             logger.error(f"Error getting available reports: {e}")
             return {"error": f"Available reports error: {str(e)}"}
 
+

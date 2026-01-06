@@ -8,3 +8,5 @@ httpx
 pytest
 pytest-asyncio
 python-multipart
+boto3
+Pillow

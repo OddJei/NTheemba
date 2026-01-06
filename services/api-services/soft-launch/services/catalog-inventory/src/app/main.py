@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +27,7 @@ from src.app.schemas import (
     VariantCreate,
     VariantOut,
 )
+from src.app.uploads import generate_presigned_put_url, generate_presigned_get_url, process_image_and_upload
 
 app = FastAPI(title="Catalog + Inventory (Soft Launch)")
 
@@ -465,6 +466,73 @@ async def catalog_reindex(
     )
     response.status_code = int(status)
     return body
+
+
+# ---- Uploads (presign + complete) ----
+
+
+@app.post("/uploads/presign")
+async def uploads_presign(payload: dict, request: Request):
+    """Return a presigned PUT URL for clients to upload directly to S3/MinIO.
+
+    Expected JSON: {"filename": "name.jpg", "content_type": "image/jpeg"}
+    Returns: {"key": "<object-key>", "url": "<presigned-put-url>"}
+    """
+    filename = payload.get("filename")
+    content_type = payload.get("content_type", "application/octet-stream")
+    if not filename:
+        raise HTTPException(status_code=400, detail="filename_required")
+
+    # Use a UUID-based key to avoid collisions
+    key = f"uploads/{str(uuid.uuid4())}-{filename}"
+    url = generate_presigned_put_url(key=key, content_type=content_type)
+    return {"key": key, "url": url}
+
+
+@app.post("/uploads/complete")
+async def uploads_complete(
+    payload: dict,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Notify service that an upload finished and request post-processing.
+
+    Expected JSON: {"key": "uploads/..", "product_id": "..."}
+    """
+    key = payload.get("key")
+    product_id = payload.get("product_id")
+    if not key:
+        raise HTTPException(status_code=400, detail="key_required")
+
+    # process into a thumbnail and attach to product if provided
+    thumb_key = key + "-thumb.jpg"
+    background.add_task(process_image_and_upload, key, thumb_key, (800, 800))
+
+    if product_id:
+        # update product.image_url after processing by creating a presigned GET URL
+        # we schedule a small background task to update DB after processing (best-effort)
+
+        async def _attach():
+            # wait briefly is not ideal; this assumes processing completes quickly
+            # generate a presigned GET URL for the thumbnail
+            url = generate_presigned_get_url(thumb_key)
+            prod = (await db.execute(select(Product).where(Product.id == product_id))).scalar_one_or_none()
+            if prod:
+                prod.image_url = url
+                await db.commit()
+                add_outbox_event(
+                    db=db,
+                    event_type="catalog.product.image.updated",
+                    business_id=prod.business_id,
+                    entity_type="product",
+                    entity_id=prod.id,
+                    correlation_id=getattr(Request, "state", None),
+                    meta={"image_key": thumb_key},
+                )
+
+        background.add_task(_attach)
+
+    return {"status": "processing", "key": key}
 
 
 # ---- Inventory ----

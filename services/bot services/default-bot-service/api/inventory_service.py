@@ -116,3 +116,4 @@ class InventoryServiceClient:
             logger.error(f"Error getting inventory levels: {e}")
             return {"error": f"Inventory levels error: {str(e)}"}
 
+

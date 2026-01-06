@@ -253,3 +253,4 @@ class CatalogServiceClient:
             logger.error(f"Error getting catalog analytics: {e}")
             return {"error": f"Catalog analytics error: {str(e)}"}
 
+

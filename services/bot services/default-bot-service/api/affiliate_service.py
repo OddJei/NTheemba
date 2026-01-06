@@ -110,3 +110,4 @@ class AffiliateServiceClient:
             logger.error(f"Error getting referral analytics: {e}")
             return {"error": f"Referral analytics error: {str(e)}"}
 
+

@@ -119,3 +119,4 @@ class AnalyticsServiceClient:
             logger.error(f"Error getting custom analytics: {e}")
             return {"error": f"Custom analytics error: {str(e)}"}
 
+

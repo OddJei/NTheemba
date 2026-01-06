@@ -106,3 +106,4 @@ class BusinessServiceClient:
             logger.error(f"Error getting business analytics: {e}")
             return {"error": f"Business analytics error: {str(e)}"}
 
+

@@ -128,3 +128,4 @@ class EnvironmentConfig:
 # Global configuration instance
 config = EnvironmentConfig()
 
+

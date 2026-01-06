@@ -365,3 +365,4 @@ def escalate_to_human(session_id: str, payload: Dict[str, Any], **kwargs) -> Dic
         logger.error(f"Error escalating to human: {e}")
         return {"error": f"Failed to escalate to human: {str(e)}"}
 
+

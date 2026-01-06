@@ -194,3 +194,4 @@ class PaymentServiceClient:
             logger.error(f"Error getting payment analytics: {e}")
             return {"error": f"Payment analytics error: {str(e)}"}
 
+

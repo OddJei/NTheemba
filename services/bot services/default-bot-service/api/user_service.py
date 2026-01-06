@@ -106,3 +106,4 @@ class UserServiceClient:
             logger.error(f"Error updating user preferences: {e}")
             return {"error": f"User preferences update error: {str(e)}"}
 
+
