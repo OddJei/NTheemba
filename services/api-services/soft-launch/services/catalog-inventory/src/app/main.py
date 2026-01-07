@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +34,12 @@ from src.app.uploads import generate_presigned_put_url, generate_presigned_get_u
 
 app = FastAPI(title="Catalog + Inventory (Soft Launch)")
 
+logger = logging.getLogger("catalog_inventory")
+
+_SERVICE = "catalog-inventory"
+_REQ_COUNT = Counter("http_requests_total", "Total HTTP requests", ["service", "method", "route", "status"])
+_REQ_LATENCY = Histogram("http_request_duration_seconds", "HTTP request duration", ["service", "method", "route"])
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -38,10 +47,18 @@ def _utcnow() -> datetime:
 
 @app.middleware("http")
 async def correlation_id_middleware(request: Request, call_next):
+    start = time.perf_counter()
     correlation_id = request.headers.get("X-Correlation-Id") or str(uuid.uuid4())
     request.state.correlation_id = correlation_id
     response = await call_next(request)
     response.headers["X-Correlation-Id"] = correlation_id
+
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", request.url.path)
+    _REQ_COUNT.labels(_SERVICE, request.method, route_path, str(response.status_code)).inc()
+    _REQ_LATENCY.labels(_SERVICE, request.method, route_path).observe(time.perf_counter() - start)
+
+    logger.info("request", extra={"method": request.method, "path": route_path, "status": response.status_code, "correlation_id": correlation_id})
     return response
 
 
@@ -61,6 +78,11 @@ def _correlation_id(request: Request) -> Optional[str]:
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+async def metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 # ---- Categories ----
@@ -561,11 +583,25 @@ async def inventory_update(
             db.add(inv)
             await db.flush()
 
-        inv.stock_level = max(0, int(inv.stock_level) + int(payload.delta))
-
+        current_stock = int(inv.stock_level)
+        current_reserved = int(inv.reserved)
+        delta = int(payload.delta)
         reserved_delta = int(payload.reserved_delta or 0)
-        new_reserved = max(0, int(inv.reserved) + reserved_delta)
-        inv.reserved = min(inv.stock_level, new_reserved)
+
+        new_stock = current_stock + delta
+        new_reserved = current_reserved + reserved_delta
+
+        # Hard constraints (prevent oversell / invalid reservation state)
+        if new_stock < 0:
+            raise HTTPException(status_code=409, detail="insufficient_stock")
+        if new_reserved < 0:
+            raise HTTPException(status_code=409, detail="reserved_underflow")
+        if new_reserved > new_stock:
+            # can't reserve more than available stock (or drop stock below reserved)
+            raise HTTPException(status_code=409, detail="insufficient_stock")
+
+        inv.stock_level = int(new_stock)
+        inv.reserved = int(new_reserved)
 
         if payload.threshold is not None:
             inv.threshold = int(payload.threshold)

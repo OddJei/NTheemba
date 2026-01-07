@@ -5,6 +5,8 @@ aiosqlite
 pydantic
 python-dotenv
 httpx
+alembic
+prometheus-client
 pytest
 pytest-asyncio
 python-multipart

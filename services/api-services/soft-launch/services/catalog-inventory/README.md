@@ -41,3 +41,20 @@ uvicorn src.app.main:app --reload --port 8520 --host 127.0.0.1
 
 ### Events (outbox)
 - `GET /events` (optional debug)
+
+## Migrations (Alembic)
+
+```bash
+# autogenerate new revision
+alembic revision --autogenerate -m "change"
+
+# apply migrations
+alembic upgrade head
+```
+
+## Outbox dispatcher
+
+```bash
+# requires EVENT_SINK_URL
+python -m src.app.outbox_dispatcher
+```

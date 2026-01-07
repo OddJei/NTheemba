@@ -100,4 +100,6 @@ class OutboxEvent(Base):
     correlation_id: Mapped[str | None] = mapped_column(String, nullable=True)
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    processed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)

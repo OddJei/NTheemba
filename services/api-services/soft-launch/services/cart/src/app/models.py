@@ -46,6 +46,7 @@ class CartItem(Base):
     cart_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
     variant_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    reserved_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     unit_price: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     subtotal: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)

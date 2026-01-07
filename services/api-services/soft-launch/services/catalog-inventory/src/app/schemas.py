@@ -141,4 +141,5 @@ class OutboxEventOut(BaseModel):
     source: str | None
     correlation_id: str | None
     meta: dict[str, Any] | None
+    processed: bool
     created_at: datetime

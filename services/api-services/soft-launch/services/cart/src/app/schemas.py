@@ -38,6 +38,7 @@ class CartItemOut(BaseModel):
     cart_id: str
     variant_id: str
     quantity: int
+    reserved_quantity: int
     unit_price: float
     subtotal: float
     created_at: datetime

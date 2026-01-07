@@ -22,3 +22,20 @@ Headers
 
 - `X-Correlation-Id` optional, echoed back
 - `X-Idempotency-Key` optional for write operations
+
+Migrations (Alembic)
+
+```bash
+# autogenerate new revision
+alembic revision --autogenerate -m "change"
+
+# apply migrations
+alembic upgrade head
+```
+
+Outbox dispatcher
+
+```bash
+# requires EVENT_SINK_URL
+python -m src.app.outbox_dispatcher
+```
