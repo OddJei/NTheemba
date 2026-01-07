@@ -5,6 +5,8 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
+import httpx
+import asyncio
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
@@ -250,6 +252,42 @@ async def product_create(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     async def _run():
+        # Validate MSME (business) exists
+        from src.app.config import get_msme_base_url
+
+        msme_url = get_msme_base_url()
+        # Validate MSME exists with a small retry/backoff strategy to be resilient
+        # to transient network errors. Treat 404 as not found and 5xx as upstream errors.
+        msme_ok = False
+        retries = 3
+        backoff = 0.1
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            for attempt in range(retries):
+                try:
+                    r = await client.get(f"{msme_url}/business/{payload.business_id}")
+                except httpx.RequestError:
+                    if attempt < retries - 1:
+                        await asyncio.sleep(backoff * (2 ** attempt))
+                        continue
+                    raise HTTPException(status_code=502, detail="msme_unreachable")
+
+                if r.status_code == 200:
+                    msme_ok = True
+                    break
+                if r.status_code == 404:
+                    # Business does not exist
+                    raise HTTPException(status_code=404, detail="business_not_found")
+                if 500 <= r.status_code < 600:
+                    if attempt < retries - 1:
+                        await asyncio.sleep(backoff * (2 ** attempt))
+                        continue
+                    raise HTTPException(status_code=502, detail="msme_error")
+                # Any other unexpected status considered an upstream error
+                raise HTTPException(status_code=502, detail="msme_error")
+
+        if not msme_ok:
+            raise HTTPException(status_code=502, detail="msme_unreachable")
+
         prod = Product(
             business_id=payload.business_id,
             category_id=payload.category_id,

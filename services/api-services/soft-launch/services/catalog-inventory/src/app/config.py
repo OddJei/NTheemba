@@ -30,3 +30,11 @@ def get_s3_settings() -> dict:
         "region": os.getenv("S3_REGION", "us-east-1"),
         "use_ssl": os.getenv("S3_USE_SSL", "0") in ("1", "true", "True"),
     }
+
+
+def get_msme_base_url() -> str:
+    """Return the MSME engine base URL for validating businesses.
+
+    Default matches the local port used by the msme-engine in the soft-launch.
+    """
+    return os.getenv("MSME_BASE_URL", "http://127.0.0.1:8500")

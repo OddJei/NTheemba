@@ -8,12 +8,17 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
+import logging
+import time
+import uuid
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.config import get_admin_key, get_epoch_days_default, get_pool_pct_default
+from src.app.config import get_admin_key, get_epoch_days_default, get_pool_pct_default, get_catalog_base_url, get_msme_base_url
+import httpx
 from src.app.db import Base, engine, get_db_session
 from src.app.idempotency import idempotent_execute, scope_for
 from src.app.models import (
@@ -68,13 +73,27 @@ from src.app.events import OrderCreatedEvent
 
 app = FastAPI(title="Affiliate Engine (Soft Launch)")
 
+logger = logging.getLogger("affiliate_engine")
+
+_SERVICE = "affiliate-engine"
+_REQ_COUNT = Counter("http_requests_total", "Total HTTP requests", ["service", "method", "route", "status"])
+_REQ_LATENCY = Histogram("http_request_duration_seconds", "HTTP request duration", ["service", "method", "route"])
+
 
 @app.middleware("http")
 async def correlation_id_middleware(request: Request, call_next):
+    start = time.perf_counter()
     correlation_id = request.headers.get("X-Correlation-Id") or str(uuid.uuid4())
     request.state.correlation_id = correlation_id
     response = await call_next(request)
     response.headers["X-Correlation-Id"] = correlation_id
+
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", request.url.path)
+    _REQ_COUNT.labels(_SERVICE, request.method, route_path, str(response.status_code)).inc()
+    _REQ_LATENCY.labels(_SERVICE, request.method, route_path).observe(time.perf_counter() - start)
+
+    logger.info("request", extra={"method": request.method, "path": route_path, "status": response.status_code, "correlation_id": correlation_id})
     return response
 
 
@@ -92,6 +111,16 @@ async def startup() -> None:
         )
         await ensure_default_tiers(db)
         await get_or_open_epoch(db, pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days))
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.get("/metrics")
+async def metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 def _require_admin(x_admin_key: Optional[str]) -> None:
@@ -190,8 +219,27 @@ async def create_link(
         raise HTTPException(status_code=404, detail="affiliate_not_found")
 
     async def _run():
+        # Enforce that links reference an existing MSME and product.
+        if not payload.product_id or not payload.business_id:
+            raise HTTPException(status_code=400, detail="product_id_and_business_id_required")
+
+        msme_url = get_msme_base_url()
+        catalog_url = get_catalog_base_url()
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{msme_url}/business/{payload.business_id}")
+            if r.status_code != 200:
+                raise HTTPException(status_code=404, detail="business_not_found")
+
+            r = await client.get(f"{catalog_url}/catalog/product/{payload.product_id}")
+            if r.status_code != 200:
+                raise HTTPException(status_code=404, detail="product_not_found")
+            prod = r.json()
+            prod_business = prod.get("business_id") if isinstance(prod, dict) else None
+            if prod_business and str(prod_business) != str(payload.business_id):
+                raise HTTPException(status_code=400, detail="product_business_mismatch")
+
         code = payload.code or _generate_code()
-        link = AffiliateLink(affiliate_id=affiliate_id, code=code, campaign=payload.campaign)
+        link = AffiliateLink(affiliate_id=affiliate_id, code=code, campaign=payload.campaign, product_id=payload.product_id, business_id=payload.business_id)
         db.add(link)
         try:
             await db.commit()

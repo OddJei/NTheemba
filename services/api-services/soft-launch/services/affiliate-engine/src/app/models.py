@@ -36,6 +36,8 @@ class AffiliateLink(Base):
     affiliate_id: Mapped[str] = mapped_column(String(36), ForeignKey("affiliates.id"), index=True)
     code: Mapped[str] = mapped_column(String(80), index=True)
     campaign: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    product_id: Mapped[str] = mapped_column(String(36), index=True)
+    business_id: Mapped[str] = mapped_column(String(36), index=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     affiliate: Mapped[Affiliate] = relationship(back_populates="links")
