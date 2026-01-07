@@ -23,6 +23,8 @@ class AffiliateOut(BaseModel):
 class LinkCreate(BaseModel):
     campaign: Optional[str] = None
     code: Optional[str] = Field(default=None, description="Optional custom code; if omitted, server generates")
+    product_id: str
+    business_id: str
 
 
 class LinkOut(BaseModel):
@@ -30,6 +32,8 @@ class LinkOut(BaseModel):
     affiliate_id: str
     code: str
     campaign: Optional[str]
+    product_id: str
+    business_id: str
     created_at: datetime
 
 

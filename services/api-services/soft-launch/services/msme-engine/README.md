@@ -6,7 +6,7 @@ Implements the fused **Auth Service** + **Business Service** soft-launch design.
 
 ```bash
 pip install -r requirements.txt
-uvicorn src.app.main:app --reload --port 8501
+uvicorn src.app.main:app --reload --port 8500 --host 127.0.0.1
 ```
 
 ## Headers

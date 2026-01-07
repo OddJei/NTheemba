@@ -11,7 +11,7 @@ Set-Location api-services/soft-launch/services/affiliate-engine
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn src.app.main:app --reload --port 8500
+uvicorn src.app.main:app --reload --port 8510 --host 127.0.0.1
 ```
 
 ## Environment

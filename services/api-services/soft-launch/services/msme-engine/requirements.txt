@@ -4,3 +4,5 @@ SQLAlchemy==2.0.36
 aiosqlite==0.20.0
 pydantic==2.8.2
 pytest==8.3.4
+prometheus-client==0.16.0
+httpx==0.24.1
