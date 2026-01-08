@@ -1,0 +1,6 @@
+node_modules/
+.env
+*.log
+dev_notifications.json
+tests/tmp_db_*.json
+!.env.example

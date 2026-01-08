@@ -6,11 +6,13 @@ on:
     paths:
       - services/api-services/soft-launch/services/bot-session/**
       - services/api-services/soft-launch/services/order-delivery/**
+      - services/api-services/soft-launch/services/notification/**
       - .github/workflows/soft-launch-docker.yml
   pull_request:
     paths:
       - services/api-services/soft-launch/services/bot-session/**
       - services/api-services/soft-launch/services/order-delivery/**
+      - services/api-services/soft-launch/services/notification/**
       - .github/workflows/soft-launch-docker.yml
   workflow_dispatch:
 
@@ -31,6 +33,9 @@ jobs:
           - name: order-delivery
             path: services/api-services/soft-launch/services/order-delivery
             image: softlaunch-order-delivery
+          - name: notification
+            path: services/api-services/soft-launch/services/notification
+            image: softlaunch-notification
 
     steps:
       - uses: actions/checkout@v4
