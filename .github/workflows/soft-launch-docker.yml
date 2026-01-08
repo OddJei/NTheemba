@@ -1,0 +1,65 @@
+﻿name: soft-launch-docker
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - services/api-services/soft-launch/services/bot-session/**
+      - services/api-services/soft-launch/services/order-delivery/**
+      - .github/workflows/soft-launch-docker.yml
+  pull_request:
+    paths:
+      - services/api-services/soft-launch/services/bot-session/**
+      - services/api-services/soft-launch/services/order-delivery/**
+      - .github/workflows/soft-launch-docker.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: bot-session
+            path: services/api-services/soft-launch/services/bot-session
+            image: softlaunch-bot-session
+          - name: order-delivery
+            path: services/api-services/soft-launch/services/order-delivery
+            image: softlaunch-order-delivery
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.service.image }}
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build (and push on main)
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.path }}
+          file: ${{ matrix.service.path }}/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
