@@ -25,13 +25,13 @@ def test_business_register_lookup_and_payment_success(client):
     assert by_phone.status_code == 200
     assert by_phone.json()["id"] == business_id
 
-    sub = client.post(f"/business/{business_id}/subscribe", json={"plan": "basic"})
+    sub = client.post(f"/business/{business_id}/subscribe", json={"plan": "paid"})
     assert sub.status_code == 201
 
     paid_until = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
     evt = client.post(
         "/events/payment_success",
-        json={"event_id": "evt-1", "business_id": business_id, "plan": "basic", "paid_until": paid_until},
+        json={"event_id": "evt-1", "business_id": business_id, "plan": "paid", "paid_until": paid_until},
     )
     assert evt.status_code == 200
 

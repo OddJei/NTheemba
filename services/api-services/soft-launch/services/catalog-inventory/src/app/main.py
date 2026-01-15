@@ -15,9 +15,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.db import Base, engine, get_db_session
+from src.app.config import get_notification_base_url, get_notification_timeout_seconds, skip_msme_validation
 from src.app.events import add_outbox_event
 from src.app.idempotency import idempotent_execute, scope_for
 from src.app.models import Category, Inventory, OutboxEvent, Product, ProductVariant
+from src.app import audit_client
 from src.app.schemas import (
     BusinessCatalogOut,
     CategoryCreate,
@@ -41,6 +43,35 @@ logger = logging.getLogger("catalog_inventory")
 _SERVICE = "catalog-inventory"
 _REQ_COUNT = Counter("http_requests_total", "Total HTTP requests", ["service", "method", "route", "status"])
 _REQ_LATENCY = Histogram("http_request_duration_seconds", "HTTP request duration", ["service", "method", "route"])
+
+# Install Python log forwarding to audit-service (best-effort).
+try:
+    audit_client.install_audit_log_forwarding(service=_SERVICE)
+except Exception:
+    logger.exception("failed_to_install_audit_log_forwarding")
+
+
+async def _notify_in_app(*, business_id: str | None, template: str, payload: dict | None, correlation_id: str | None) -> None:
+    base = get_notification_base_url().rstrip("/")
+    timeout = get_notification_timeout_seconds()
+    headers: dict[str, str] = {}
+    if correlation_id:
+        headers["X-Correlation-Id"] = correlation_id
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            await client.post(
+                f"{base}/notification/send",
+                json={
+                    "channel": "in_app",
+                    "user_id": None,
+                    "business_id": business_id,
+                    "template": template,
+                    "payload": payload or {},
+                },
+                headers=headers,
+            )
+    except httpx.RequestError:
+        logger.info("notification_unreachable", extra={"template": template, "correlation_id": correlation_id})
 
 
 def _utcnow() -> datetime:
@@ -121,6 +152,13 @@ async def category_create(
         )
         await db.commit()
         await db.refresh(cat)
+
+        await _notify_in_app(
+            business_id=payload.business_id,
+            template="catalog_category_created",
+            payload={"category_id": cat.id, "name": cat.name},
+            correlation_id=_correlation_id(request),
+        )
         return 201, cat
 
     status, body = await idempotent_execute(
@@ -189,6 +227,13 @@ async def category_update(
 
         await db.commit()
         await db.refresh(cat)
+
+        await _notify_in_app(
+            business_id=cat.business_id,
+            template="catalog_category_updated",
+            payload={"category_id": cat.id, **payload.model_dump(exclude_none=True)},
+            correlation_id=_correlation_id(request),
+        )
         return 200, cat
 
     status, body = await idempotent_execute(
@@ -228,6 +273,13 @@ async def category_delete(
 
         await db.commit()
         await db.refresh(cat)
+
+        await _notify_in_app(
+            business_id=cat.business_id,
+            template="catalog_category_deleted",
+            payload={"category_id": cat.id, "name": cat.name},
+            correlation_id=_correlation_id(request),
+        )
         return 200, cat
 
     status, body = await idempotent_execute(
@@ -252,41 +304,42 @@ async def product_create(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     async def _run():
-        # Validate MSME (business) exists
-        from src.app.config import get_msme_base_url
+        if not skip_msme_validation():
+            # Validate MSME (business) exists
+            from src.app.config import get_msme_base_url
 
-        msme_url = get_msme_base_url()
-        # Validate MSME exists with a small retry/backoff strategy to be resilient
-        # to transient network errors. Treat 404 as not found and 5xx as upstream errors.
-        msme_ok = False
-        retries = 3
-        backoff = 0.1
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            for attempt in range(retries):
-                try:
-                    r = await client.get(f"{msme_url}/business/{payload.business_id}")
-                except httpx.RequestError:
-                    if attempt < retries - 1:
-                        await asyncio.sleep(backoff * (2 ** attempt))
-                        continue
-                    raise HTTPException(status_code=502, detail="msme_unreachable")
+            msme_url = get_msme_base_url()
+            # Validate MSME exists with a small retry/backoff strategy to be resilient
+            # to transient network errors. Treat 404 as not found and 5xx as upstream errors.
+            msme_ok = False
+            retries = 3
+            backoff = 0.1
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                for attempt in range(retries):
+                    try:
+                        r = await client.get(f"{msme_url}/business/{payload.business_id}")
+                    except httpx.RequestError:
+                        if attempt < retries - 1:
+                            await asyncio.sleep(backoff * (2 ** attempt))
+                            continue
+                        raise HTTPException(status_code=502, detail="msme_unreachable")
 
-                if r.status_code == 200:
-                    msme_ok = True
-                    break
-                if r.status_code == 404:
-                    # Business does not exist
-                    raise HTTPException(status_code=404, detail="business_not_found")
-                if 500 <= r.status_code < 600:
-                    if attempt < retries - 1:
-                        await asyncio.sleep(backoff * (2 ** attempt))
-                        continue
+                    if r.status_code == 200:
+                        msme_ok = True
+                        break
+                    if r.status_code == 404:
+                        # Business does not exist
+                        raise HTTPException(status_code=404, detail="business_not_found")
+                    if 500 <= r.status_code < 600:
+                        if attempt < retries - 1:
+                            await asyncio.sleep(backoff * (2 ** attempt))
+                            continue
+                        raise HTTPException(status_code=502, detail="msme_error")
+                    # Any other unexpected status considered an upstream error
                     raise HTTPException(status_code=502, detail="msme_error")
-                # Any other unexpected status considered an upstream error
-                raise HTTPException(status_code=502, detail="msme_error")
 
-        if not msme_ok:
-            raise HTTPException(status_code=502, detail="msme_unreachable")
+            if not msme_ok:
+                raise HTTPException(status_code=502, detail="msme_unreachable")
 
         prod = Product(
             business_id=payload.business_id,
@@ -316,6 +369,30 @@ async def product_create(
 
         await db.commit()
         await db.refresh(prod)
+
+        await _notify_in_app(
+            business_id=payload.business_id,
+            template="catalog_product_created",
+            payload={"product_id": prod.id, "name": prod.name, "price": float(prod.price), "currency": prod.currency},
+            correlation_id=_correlation_id(request),
+        )
+
+        audit_client.emit_audit_sync(
+            service="catalog-inventory",
+            event_type="product_created",
+            payload={
+                "product_id": prod.id,
+                "business_id": payload.business_id,
+                "category_id": payload.category_id,
+                "name": prod.name,
+                "price": float(prod.price),
+                "currency": prod.currency,
+            },
+            actor_id=None,
+            entity_type="product",
+            entity_id=prod.id,
+            metadata={"correlation_id": _correlation_id(request)},
+        )
         return 201, prod
 
     status, body = await idempotent_execute(
@@ -366,6 +443,13 @@ async def product_update(
 
         await db.commit()
         await db.refresh(prod)
+
+        await _notify_in_app(
+            business_id=prod.business_id,
+            template="catalog_product_updated",
+            payload={"product_id": prod.id, **payload.model_dump(exclude_none=True)},
+            correlation_id=_correlation_id(request),
+        )
         return 200, prod
 
     status, body = await idempotent_execute(
@@ -406,6 +490,13 @@ async def product_delete(
 
         await db.commit()
         await db.refresh(prod)
+
+        await _notify_in_app(
+            business_id=prod.business_id,
+            template="catalog_product_deleted",
+            payload={"product_id": prod.id, "name": prod.name},
+            correlation_id=_correlation_id(request),
+        )
         return 200, prod
 
     status, body = await idempotent_execute(
@@ -703,6 +794,48 @@ async def inventory_update(
 
         await db.commit()
         await db.refresh(inv)
+
+        # Best-effort: attach a business_id if we can resolve it from variant->product.
+        variant = (await db.execute(select(ProductVariant).where(ProductVariant.id == payload.variant_id))).scalar_one_or_none()
+        business_id = None
+        if variant:
+            prod = (await db.execute(select(Product).where(Product.id == variant.product_id))).scalar_one_or_none()
+            business_id = prod.business_id if prod else None
+
+        await _notify_in_app(
+            business_id=business_id,
+            template="inventory_updated",
+            payload={
+                "variant_id": payload.variant_id,
+                "stock_level": int(inv.stock_level),
+                "reserved": int(inv.reserved),
+                "threshold": int(inv.threshold),
+                "reason": payload.reason,
+                "meta": payload.meta,
+            },
+            correlation_id=_correlation_id(request),
+        )
+
+        audit_client.emit_audit_sync(
+            service="catalog-inventory",
+            event_type="inventory_updated",
+            payload={
+                "variant_id": payload.variant_id,
+                "business_id": business_id,
+                "old_stock": int(old_stock),
+                "stock_level": int(inv.stock_level),
+                "reserved": int(inv.reserved),
+                "threshold": int(inv.threshold),
+                "delta": int(payload.delta),
+                "reserved_delta": int(payload.reserved_delta or 0),
+                "reason": payload.reason,
+                "meta": payload.meta,
+            },
+            actor_id=None,
+            entity_type="inventory",
+            entity_id=payload.variant_id,
+            metadata={"correlation_id": _correlation_id(request)},
+        )
         return 200, inv
 
     status, body = await idempotent_execute(

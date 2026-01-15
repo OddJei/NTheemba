@@ -18,6 +18,30 @@ from src.app.models import Cart, CartItem
 from src.app.schemas import CartCreate, CartOut, CartItemCreate, CartItemOut, CheckoutOut
 from src.app import events
 from src.app import config as _config
+from src.app import audit_client
+
+
+async def _notify_in_app(*, user_id: str | None, business_id: str | None, template: str, payload: dict | None, correlation_id: str | None) -> None:
+    base = _config.get_notification_base_url().rstrip("/")
+    timeout = _config.get_notification_timeout_seconds()
+    headers: dict[str, str] = {}
+    if correlation_id:
+        headers["X-Correlation-Id"] = correlation_id
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            await client.post(
+                f"{base}/notification/send",
+                json={
+                    "channel": "in_app",
+                    "user_id": user_id,
+                    "business_id": business_id,
+                    "template": template,
+                    "payload": payload or {},
+                },
+                headers=headers,
+            )
+    except httpx.RequestError:
+        logger.info("notification_unreachable", extra={"template": template, "correlation_id": correlation_id})
 
 app = FastAPI(title="Cart Service (Soft Launch)")
 
@@ -110,6 +134,19 @@ async def cart_create(
         db.add(cart)
         await db.commit()
         await db.refresh(cart)
+        await audit_client.emit_audit(
+            service="cart",
+            event_type="cart_created",
+            payload={
+                "cart_id": cart.id,
+                "session_id": payload.session_id,
+                "business_id": payload.business_id,
+            },
+            actor_id=payload.user_phone,
+            entity_type="cart",
+            entity_id=cart.id,
+            metadata={"session_id": payload.session_id},
+        )
         return 201, cart
 
     status, body = await idempotent_execute(db=db, scope=scope_for("POST", "/cart/create"), key=x_idempotency_key, run=_run)
@@ -297,5 +334,28 @@ async def cart_checkout(cart_id: str, request: Request, db: AsyncSession = Depen
     # enqueue outbox event for downstream processing
     payload = {"cart_id": cart_id, "items": [{"variant_id": i.variant_id, "quantity": i.quantity, "subtotal": float(i.subtotal)} for i in items], "total": total}
     await events.add_outbox_event(db, event_type="cart.checked_out", payload=payload, business_id=cart.business_id, entity_type="cart", entity_id=cart_id, correlation_id=getattr(request.state, "correlation_id", None))
+
+    await _notify_in_app(
+        user_id=cart.user_phone,
+        business_id=cart.business_id,
+        template="cart_checked_out",
+        payload={"cart_id": cart_id, "total": total, "currency": "ZMW"},
+        correlation_id=getattr(request.state, "correlation_id", None),
+    )
+
+    await audit_client.emit_audit(
+        service="cart",
+        event_type="cart_checked_out",
+        payload={
+            "cart_id": cart_id,
+            "business_id": cart.business_id,
+            "total": total,
+            "items": [{"variant_id": i.variant_id, "quantity": int(i.quantity)} for i in items],
+        },
+        actor_id=cart.user_phone,
+        entity_type="cart",
+        entity_id=cart_id,
+        metadata={"correlation_id": getattr(request.state, "correlation_id", None)},
+    )
 
     return CheckoutOut(status="checked_out", cart_id=cart_id, total=total)

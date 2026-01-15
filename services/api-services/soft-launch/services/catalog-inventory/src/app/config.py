@@ -38,3 +38,19 @@ def get_msme_base_url() -> str:
     Default matches the local port used by the msme-engine in the soft-launch.
     """
     return os.getenv("MSME_BASE_URL", "http://127.0.0.1:8500")
+
+
+def get_notification_base_url() -> str:
+    return os.getenv("NOTIFICATION_BASE_URL", "http://127.0.0.1:8570")
+
+
+def get_notification_timeout_seconds() -> float:
+    try:
+        return float(os.getenv("NOTIFICATION_TIMEOUT_SECONDS", "3.0"))
+    except ValueError:
+        return 3.0
+
+
+def skip_msme_validation() -> bool:
+    # Test/dev escape hatch: when enabled, product creation will not call MSME engine.
+    return os.getenv("CATALOG_SKIP_MSME_VALIDATION", "0") in ("1", "true", "True")

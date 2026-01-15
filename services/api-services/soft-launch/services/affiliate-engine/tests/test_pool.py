@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import uuid
 
 
@@ -21,7 +22,7 @@ def _create_link(client, affiliate_id: str, code: str) -> None:
     resp = client.post(
         f"/affiliates/{affiliate_id}/links",
         headers={"X-Idempotency-Key": f"link-{affiliate_id}-{code}", "X-Correlation-Id": f"corr-link-{code}"},
-        json={"code": code, "campaign": "camp"},
+        json={"code": code, "campaign": "camp", "product_id": _uuid(), "business_id": _uuid()},
     )
     assert resp.status_code == 200
 
@@ -80,10 +81,11 @@ def test_affiliate_events_audit_trail(client) -> None:
 
 
 def _payment_success(client, order_id: str, business_id: str, user_phone: str, affiliate_amount: float) -> None:
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     payload = {
         "event_id": _uuid(),
         "event_type": "payment_success",
-        "occurred_at": "2026-01-05T00:00:00Z",
+        "occurred_at": now,
         "correlation_id": _uuid(),
         "producer": "payment-revenue",
         "payment_id": _uuid(),

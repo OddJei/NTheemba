@@ -197,6 +197,13 @@ class PoolStanding(BaseModel):
     attributions: int
     paid_attributions: int
 
+    conversion_quality: float
+
+    op_raw: float
+    op_final: float
+    eligible_for_multiplier: bool
+    effective_multiplier: float
+
     weighted_score: float
     projected_payout_zmw: float
 

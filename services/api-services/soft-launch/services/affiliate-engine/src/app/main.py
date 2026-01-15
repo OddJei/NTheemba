@@ -17,7 +17,17 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.config import get_admin_key, get_epoch_days_default, get_pool_pct_default, get_catalog_base_url, get_msme_base_url
+from src.app.config import get_admin_key, get_epoch_days_default, get_pool_pct_default, get_catalog_base_url, get_msme_base_url, skip_link_target_validation
+from src.app.config import (
+    get_admin_key,
+    get_catalog_base_url,
+    get_epoch_days_default,
+    get_msme_base_url,
+    get_notification_base_url,
+    get_notification_timeout_seconds,
+    get_pool_pct_default,
+    skip_link_target_validation,
+)
 import httpx
 from src.app.db import Base, engine, get_db_session
 from src.app.idempotency import idempotent_execute, scope_for
@@ -39,6 +49,7 @@ from src.app.pool import (
     compute_metrics_for_epoch,
     compute_payouts,
     compute_weighted_scores,
+    compute_op_scores,
     ensure_default_tiers,
     get_or_create_settings,
     get_or_open_epoch,
@@ -70,6 +81,7 @@ from src.app.schemas import (
     AffiliateEventOut,
 )
 from src.app.events import OrderCreatedEvent
+from src.app import audit_client
 
 app = FastAPI(title="Affiliate Engine (Soft Launch)")
 
@@ -78,6 +90,31 @@ logger = logging.getLogger("affiliate_engine")
 _SERVICE = "affiliate-engine"
 _REQ_COUNT = Counter("http_requests_total", "Total HTTP requests", ["service", "method", "route", "status"])
 _REQ_LATENCY = Histogram("http_request_duration_seconds", "HTTP request duration", ["service", "method", "route"])
+
+# Forward important Python logs (WARNING+) to audit-service.
+audit_client.install_audit_log_forwarding(service=_SERVICE)
+
+async def _notify_in_app(*, user_id: str | None, business_id: str | None, template: str, payload: dict | None, correlation_id: str | None) -> None:
+    base = get_notification_base_url().rstrip("/")
+    timeout = get_notification_timeout_seconds()
+    headers: dict[str, str] = {}
+    if correlation_id:
+        headers["X-Correlation-Id"] = correlation_id
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            await client.post(
+                f"{base}/notification/send",
+                json={
+                    "channel": "in_app",
+                    "user_id": user_id,
+                    "business_id": business_id,
+                    "template": template,
+                    "payload": payload or {},
+                },
+                headers=headers,
+            )
+    except httpx.RequestError:
+        logger.info("notification_unreachable", extra={"template": template, "correlation_id": correlation_id})
 
 
 @app.middleware("http")
@@ -176,6 +213,22 @@ async def create_affiliate(
         db.add(affiliate)
         await db.commit()
         await db.refresh(affiliate)
+
+        await _notify_in_app(
+            user_id=str(affiliate.id),
+            business_id=None,
+            template="affiliate_created",
+            payload={"name": affiliate.name},
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )
+        audit_client.emit_audit_sync(
+            service="affiliate-engine",
+            event_type="affiliate_created",
+            payload={"affiliate_id": affiliate.id, "name": affiliate.name, "phone": affiliate.phone},
+            entity_type="affiliate",
+            entity_id=affiliate.id,
+            metadata={"correlation_id": getattr(request.state, "correlation_id", None)},
+        )
         return 200, AffiliateOut(**affiliate.__dict__)
 
     status_code, body = await idempotent_execute(
@@ -219,27 +272,47 @@ async def create_link(
         raise HTTPException(status_code=404, detail="affiliate_not_found")
 
     async def _run():
-        # Enforce that links reference an existing MSME and product.
-        if not payload.product_id or not payload.business_id:
-            raise HTTPException(status_code=400, detail="product_id_and_business_id_required")
+        if not skip_link_target_validation():
+            # Enforce that links reference an existing MSME and product.
+            if not payload.product_id or not payload.business_id:
+                raise HTTPException(status_code=400, detail="product_id_and_business_id_required")
 
-        msme_url = get_msme_base_url()
-        catalog_url = get_catalog_base_url()
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(f"{msme_url}/business/{payload.business_id}")
-            if r.status_code != 200:
-                raise HTTPException(status_code=404, detail="business_not_found")
+            msme_url = get_msme_base_url()
+            catalog_url = get_catalog_base_url()
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                # Validate MSME exists and is entitled to affiliate promo link generation.
+                try:
+                    r = await client.get(f"{msme_url}/business/{payload.business_id}/entitlements")
+                except httpx.RequestError:
+                    raise HTTPException(status_code=502, detail="msme_unreachable")
 
-            r = await client.get(f"{catalog_url}/catalog/product/{payload.product_id}")
-            if r.status_code != 200:
-                raise HTTPException(status_code=404, detail="product_not_found")
-            prod = r.json()
-            prod_business = prod.get("business_id") if isinstance(prod, dict) else None
-            if prod_business and str(prod_business) != str(payload.business_id):
-                raise HTTPException(status_code=400, detail="product_business_mismatch")
+                if r.status_code == 404:
+                    raise HTTPException(status_code=404, detail="business_not_found")
+                if r.status_code != 200:
+                    raise HTTPException(status_code=502, detail="msme_error")
+
+                ent = r.json() if isinstance(r.json(), dict) else {}
+                if not bool(ent.get("is_active", True)):
+                    raise HTTPException(status_code=403, detail="business_inactive")
+                if not bool(ent.get("affiliate_promo_links_enabled", False)):
+                    raise HTTPException(status_code=403, detail="affiliate_links_not_allowed_for_plan")
+
+                r = await client.get(f"{catalog_url}/catalog/product/{payload.product_id}")
+                if r.status_code != 200:
+                    raise HTTPException(status_code=404, detail="product_not_found")
+                prod = r.json()
+                prod_business = prod.get("business_id") if isinstance(prod, dict) else None
+                if prod_business and str(prod_business) != str(payload.business_id):
+                    raise HTTPException(status_code=400, detail="product_business_mismatch")
 
         code = payload.code or _generate_code()
-        link = AffiliateLink(affiliate_id=affiliate_id, code=code, campaign=payload.campaign, product_id=payload.product_id, business_id=payload.business_id)
+        link = AffiliateLink(
+            affiliate_id=affiliate_id,
+            code=code,
+            campaign=payload.campaign,
+            product_id=payload.product_id,
+            business_id=payload.business_id,
+        )
         db.add(link)
         try:
             await db.commit()
@@ -248,6 +321,23 @@ async def create_link(
             raise HTTPException(status_code=409, detail="affiliate_code_conflict")
 
         await db.refresh(link)
+
+        await _notify_in_app(
+            user_id=str(affiliate.id),
+            business_id=payload.business_id,
+            template="affiliate_link_created",
+            payload={"link_id": link.id, "code": link.code, "campaign": link.campaign, "product_id": link.product_id},
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )
+        audit_client.emit_audit_sync(
+            service="affiliate-engine",
+            event_type="link_created",
+            payload={"link_id": link.id, "code": link.code, "campaign": link.campaign, "product_id": link.product_id},
+            actor_id=affiliate_id,
+            entity_type="link",
+            entity_id=link.id,
+            metadata={"correlation_id": getattr(request.state, "correlation_id", None)},
+        )
         return 200, LinkOut(**link.__dict__)
 
     status_code, body = await idempotent_execute(
@@ -317,6 +407,15 @@ async def track_click(
 
         await db.commit()
         await db.refresh(click)
+        audit_client.emit_audit_sync(
+            service="affiliate-engine",
+            event_type="click_tracked",
+            payload={"click_id": click.id, "link_id": click.link_id, "user_phone": payload.user_phone},
+            actor_id=payload.user_phone,
+            entity_type="click",
+            entity_id=click.id,
+            metadata={"correlation_id": correlation_id},
+        )
         return 200, ClickOut(id=click.id, link_id=click.link_id, occurred_at=click.occurred_at)
 
     status_code, body = await idempotent_execute(
@@ -589,6 +688,14 @@ async def ingest_payment_success(
         )
 
         await db.commit()
+
+        await _notify_in_app(
+            user_id=str(affiliate_id),
+            business_id=payload.business_id,
+            template="affiliate_payout_ready",
+            payload={"order_id": order_id, "amount": float(affiliate_amount), "currency": payload.currency},
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )
         return 200, {"status": "ok", "affiliate_id": str(affiliate_id), "order_id": order_id}
 
     status_code, body = await idempotent_execute(
@@ -700,6 +807,10 @@ async def list_earnings_records(
 
 @app.get("/affiliates/{affiliate_id}/dashboard", response_model=AffiliateDashboard)
 async def affiliate_dashboard(affiliate_id: str, days: int = 30, db: AsyncSession = Depends(db_session)) -> AffiliateDashboard:
+    return await _build_affiliate_dashboard(db=db, affiliate_id=affiliate_id, days=days)
+
+
+async def _build_affiliate_dashboard(db: AsyncSession, *, affiliate_id: str, days: int = 30) -> AffiliateDashboard:
     if days < 1:
         raise HTTPException(status_code=400, detail="days_must_be_positive")
 
@@ -789,6 +900,27 @@ async def affiliate_dashboard(affiliate_id: str, days: int = 30, db: AsyncSessio
     )
 
 
+@app.get("/affiliates/{affiliate_id}/dashboard/stream")
+async def affiliate_dashboard_stream(
+    affiliate_id: str, days: int = 30
+) -> StreamingResponse:
+    # Simple Server-Sent Events (SSE) stream for realtime affiliate dashboards.
+    async def event_gen():
+        while True:
+            async with get_db_session() as db:
+                payload = await _build_affiliate_dashboard(db=db, affiliate_id=affiliate_id, days=days)
+            yield f"data: {payload.model_dump_json()}\n\n"
+            await asyncio.sleep(2)
+
+    import asyncio
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/pool/standings", response_model=PoolStandingsOut)
 async def pool_standings(db: AsyncSession = Depends(db_session)) -> PoolStandingsOut:
     settings = (await db.execute(select(CommissionSettings).where(CommissionSettings.id == 1))).scalar_one_or_none()
@@ -801,7 +933,7 @@ async def pool_standings(db: AsyncSession = Depends(db_session)) -> PoolStanding
 
     epoch = await get_or_open_epoch(db, pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days))
     metrics = await compute_metrics_for_epoch(db, epoch)
-    scores = compute_weighted_scores(metrics, settings.weights)
+    scores, details = compute_op_scores(metrics, settings.weights)
 
     pool_amount = float(epoch.gross_revenue_zmw) * float(settings.pool_pct)
     payouts = compute_payouts(scores, pool_amount)
@@ -817,6 +949,11 @@ async def pool_standings(db: AsyncSession = Depends(db_session)) -> PoolStanding
             clicks=int(m.clicks),
             attributions=int(m.attributions),
             paid_attributions=int(m.paid_attributions),
+            conversion_quality=float(details.get(m.affiliate_id, {}).get("conversion_quality", 0.0)),
+            op_raw=float(details.get(m.affiliate_id, {}).get("op_raw", 0.0)),
+            op_final=float(details.get(m.affiliate_id, {}).get("op_final", 0.0)),
+            eligible_for_multiplier=bool(details.get(m.affiliate_id, {}).get("eligible_for_multiplier", False)),
+            effective_multiplier=float(details.get(m.affiliate_id, {}).get("effective_multiplier", 1.0)),
             weighted_score=float(scores.get(m.affiliate_id, 0.0)),
             projected_payout_zmw=float(payouts.get(m.affiliate_id, 0.0)),
         )
@@ -833,11 +970,12 @@ async def pool_standings(db: AsyncSession = Depends(db_session)) -> PoolStanding
 
 
 @app.get("/pool/standings/stream")
-async def pool_standings_stream(db: AsyncSession = Depends(db_session)) -> StreamingResponse:
+async def pool_standings_stream() -> StreamingResponse:
     # Simple Server-Sent Events (SSE) stream for realtime dashboards.
     async def event_gen():
         while True:
-            payload = await pool_standings(db)
+            async with get_db_session() as db:
+                payload = await pool_standings(db)
             yield f"data: {payload.model_dump_json()}\n\n"
             await asyncio.sleep(2)
 

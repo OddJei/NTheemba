@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
+import os
+
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,12 +35,85 @@ class AffiliateMetrics:
     tier_multiplier: float
 
 
+_DEFAULT_OP_WEIGHTS: Dict[str, float] = {
+    "sales_volume": 0.5,
+    "unique_buyers": 0.2,
+    "msme_referrals": 0.2,
+    "conversion_quality": 0.1,
+}
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return int(default)
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return float(default)
+
+
+_OP_MIN_CLICKS = _env_int("AFFILIATE_OP_MIN_CLICKS", 30)
+_OP_MIN_PAID_ATTRIBUTIONS = _env_int("AFFILIATE_OP_MIN_PAID_ATTRIBUTIONS", 3)
+_OP_MIN_UNIQUE_BUYERS = _env_int("AFFILIATE_OP_MIN_UNIQUE_BUYERS", 3)
+_OP_MIN_SALES_VOLUME = _env_float("AFFILIATE_OP_MIN_SALES_VOLUME", 500.0)
+
+
+def _normalize_weights(weights: Optional[Dict[str, float]]) -> Dict[str, float]:
+    if not weights:
+        return dict(_DEFAULT_OP_WEIGHTS)
+
+    # Backwards-compat: older configs used a direct "clicks" weight.
+    # We interpret that as the weight for conversion quality (paid_attributions / clicks).
+    w = dict(weights)
+    if "conversion_quality" not in w and "clicks" in w:
+        w["conversion_quality"] = float(w.get("clicks", 0.0))
+    for k, v in _DEFAULT_OP_WEIGHTS.items():
+        w.setdefault(k, float(v))
+    return w
+
+
+def _norm(value: float, max_value: float) -> float:
+    if max_value <= 0.0:
+        return 0.0
+    if value <= 0.0:
+        return 0.0
+    return float(value) / float(max_value)
+
+
+def _conversion_quality(clicks: int, paid_attributions: int, *, min_clicks: int = _OP_MIN_CLICKS) -> float:
+    # Unique-number-only metric: paid orders per unique clickers.
+    if int(clicks) < int(min_clicks):
+        return 0.0
+    return float(paid_attributions) / float(max(1, int(clicks)))
+
+
+def _eligible_for_multiplier(m: AffiliateMetrics, *, min_clicks: int = _OP_MIN_CLICKS) -> bool:
+    # Applies to both earned and purchased multipliers.
+    return (
+        int(m.clicks) >= int(min_clicks)
+        and int(m.paid_attributions) >= int(_OP_MIN_PAID_ATTRIBUTIONS)
+        and int(m.unique_buyers) >= int(_OP_MIN_UNIQUE_BUYERS)
+        and float(m.sales_volume) >= float(_OP_MIN_SALES_VOLUME)
+    )
+
+
 async def get_or_create_settings(db: AsyncSession, *, pool_pct_default: float, epoch_days_default: int) -> CommissionSettings:
     settings = (await db.execute(select(CommissionSettings).where(CommissionSettings.id == 1))).scalar_one_or_none()
     if settings:
+        # Lightweight upgrade path: ensure new OP weight keys exist without overwriting custom values.
+        normalized = _normalize_weights(settings.weights)
+        if normalized != (settings.weights or {}):
+            settings.weights = normalized
+            await db.commit()
         return settings
 
     settings = CommissionSettings(id=1, pool_pct=pool_pct_default, epoch_days=epoch_days_default)
+    settings.weights = dict(_DEFAULT_OP_WEIGHTS)
     db.add(settings)
     await db.commit()
     return settings
@@ -231,25 +306,75 @@ def _share(value: float, total: float) -> float:
     return float(value) / float(total)
 
 
-def compute_weighted_scores(metrics: List[AffiliateMetrics], weights: Dict[str, float]) -> Dict[str, float]:
-    totals = {
-        "sales_volume": sum(m.sales_volume for m in metrics),
-        "unique_buyers": sum(m.unique_buyers for m in metrics),
-        "msme_referrals": sum(m.msme_referrals for m in metrics),
-        "clicks": sum(m.clicks for m in metrics),
+def compute_op_scores(
+    metrics: List[AffiliateMetrics],
+    weights: Dict[str, float],
+    *,
+    min_clicks: int = _OP_MIN_CLICKS,
+) -> tuple[Dict[str, float], Dict[str, dict]]:
+    """Compute OP_final scores per affiliate.
+
+    Uses max-normalized metrics per season epoch:
+      OP_raw = wSV*(SV/SVmax) + wUB*(UB/UBmax) + wMR*(MR/MRmax) + wCQ*(CQ/CQmax)
+      OP_final = OP_raw * multiplier
+
+    Conversion quality is derived from existing unique-count metrics:
+      CQ = paid_attributions / clicks (only if clicks >= min_clicks)
+    """
+
+    w = _normalize_weights(weights)
+
+    cq_by_aff: Dict[str, float] = {
+        m.affiliate_id: _conversion_quality(m.clicks, m.paid_attributions, min_clicks=min_clicks) for m in metrics
     }
 
-    scores: Dict[str, float] = {}
-    for m in metrics:
-        score = (
-            float(weights.get("sales_volume", 0.0)) * _share(m.sales_volume, totals["sales_volume"])
-            + float(weights.get("unique_buyers", 0.0)) * _share(float(m.unique_buyers), totals["unique_buyers"])
-            + float(weights.get("msme_referrals", 0.0)) * _share(float(m.msme_referrals), totals["msme_referrals"])
-            + float(weights.get("clicks", 0.0)) * _share(float(m.clicks), totals["clicks"])
-        )
-        score *= float(m.tier_multiplier)
-        scores[m.affiliate_id] = float(score)
+    sales_max = max((float(m.sales_volume) for m in metrics), default=0.0)
+    buyers_max = max((float(m.unique_buyers) for m in metrics), default=0.0)
+    referrals_max = max((float(m.msme_referrals) for m in metrics), default=0.0)
+    cq_max = max((float(cq) for cq in cq_by_aff.values()), default=0.0)
 
+    scores: Dict[str, float] = {}
+    details: Dict[str, dict] = {}
+    for m in metrics:
+        cq = float(cq_by_aff.get(m.affiliate_id, 0.0))
+        op_raw = (
+            float(w.get("sales_volume", 0.0)) * _norm(float(m.sales_volume), sales_max)
+            + float(w.get("unique_buyers", 0.0)) * _norm(float(m.unique_buyers), buyers_max)
+            + float(w.get("msme_referrals", 0.0)) * _norm(float(m.msme_referrals), referrals_max)
+            + float(w.get("conversion_quality", 0.0)) * _norm(float(cq), cq_max)
+        )
+
+        eligible = _eligible_for_multiplier(m, min_clicks=min_clicks)
+        effective_multiplier = float(m.tier_multiplier) if eligible else 1.0
+        op_final = float(op_raw) * float(effective_multiplier)
+
+        scores[m.affiliate_id] = float(op_final)
+        details[m.affiliate_id] = {
+            "op_raw": float(op_raw),
+            "op_final": float(op_final),
+            "conversion_quality": float(cq),
+            "eligible_for_multiplier": bool(eligible),
+            "effective_multiplier": float(effective_multiplier),
+            "weights": {
+                "sales_volume": float(w.get("sales_volume", 0.0)),
+                "unique_buyers": float(w.get("unique_buyers", 0.0)),
+                "msme_referrals": float(w.get("msme_referrals", 0.0)),
+                "conversion_quality": float(w.get("conversion_quality", 0.0)),
+            },
+            "maxima": {
+                "sales_volume": float(sales_max),
+                "unique_buyers": float(buyers_max),
+                "msme_referrals": float(referrals_max),
+                "conversion_quality": float(cq_max),
+            },
+        }
+
+    return scores, details
+
+
+def compute_weighted_scores(metrics: List[AffiliateMetrics], weights: Dict[str, float]) -> Dict[str, float]:
+    # Backwards-compatible wrapper: historically this returned "weighted_score".
+    scores, _ = compute_op_scores(metrics, weights)
     return scores
 
 
@@ -269,11 +394,12 @@ async def close_epoch_and_allocate(db: AsyncSession, epoch: PoolEpoch, settings:
     epoch.pool_amount_zmw = float(epoch.gross_revenue_zmw) * float(epoch.pool_pct)
 
     metrics = await compute_metrics_for_epoch(db, epoch)
-    scores = compute_weighted_scores(metrics, settings.weights)
+    scores, details = compute_op_scores(metrics, settings.weights)
     payouts = compute_payouts(scores, epoch.pool_amount_zmw)
 
     allocations: List[PoolAllocation] = []
     for m in metrics:
+        d = details.get(m.affiliate_id, {})
         alloc = PoolAllocation(
             epoch_id=epoch.id,
             affiliate_id=m.affiliate_id,
@@ -286,6 +412,11 @@ async def close_epoch_and_allocate(db: AsyncSession, epoch: PoolEpoch, settings:
                 "clicks": m.clicks,
                 "attributions": m.attributions,
                 "paid_attributions": m.paid_attributions,
+                "conversion_quality": float(d.get("conversion_quality", 0.0)),
+                "op_raw": float(d.get("op_raw", 0.0)),
+                "op_final": float(d.get("op_final", 0.0)),
+                "eligible_for_multiplier": bool(d.get("eligible_for_multiplier", False)),
+                "effective_multiplier": float(d.get("effective_multiplier", 1.0)),
             },
             weighted_score=float(scores.get(m.affiliate_id, 0.0)),
             payout_zmw=float(payouts.get(m.affiliate_id, 0.0)),

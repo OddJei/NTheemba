@@ -1,0 +1,8 @@
+============================= test session starts =============================
+platform win32 -- Python 3.10.11, pytest-8.4.1, pluggy-1.6.0
+rootdir: C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\affiliate-engine
+plugins: anyio-4.9.0, asyncio-1.1.0, cov-6.2.1, mock-3.14.1, typeguard-4.4.4
+asyncio: mode=strict, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 11 items
+
+tests\test_idempotency.py ...

@@ -14,7 +14,7 @@ app.use('/notification', notificationRoutes);
 app.get('/', (req, res) => res.json({ ok: true, service: 'softlaunch-notification' }));
 
 if (require.main === module) {
-  const PORT = process.env.PORT || 8561;
+  const PORT = process.env.PORT || 8570;
   const HOST = process.env.HOST || '127.0.0.1';
   app.listen(PORT, HOST, () => {
     // eslint-disable-next-line no-console

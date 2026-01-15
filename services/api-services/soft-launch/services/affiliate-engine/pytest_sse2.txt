@@ -1,0 +1,433 @@
+============================= test session starts =============================
+platform win32 -- Python 3.10.11, pytest-8.4.1, pluggy-1.6.0 -- C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\affiliate-engine
+plugins: anyio-4.9.0, asyncio-1.1.0, cov-6.2.1, mock-3.14.1, typeguard-4.4.4
+asyncio: mode=strict, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 5 items / 3 deselected / 2 selected
+
+tests/test_idempotency.py::test_dashboard_stream_emits_json[asyncio] FAILED [ 50%]
+tests/test_idempotency.py::test_dashboard_stream_emits_json[trio] FAILED [100%]
+
+================================== FAILURES ===================================
+__________________ test_dashboard_stream_emits_json[asyncio] __________________
+
+self = <sqlalchemy.engine.base.Connection object at 0x0000025609A557B0>
+dialect = <sqlalchemy.dialects.sqlite.aiosqlite.SQLiteDialect_aiosqlite object at 0x00000256096C2080>
+context = <sqlalchemy.dialects.sqlite.aiosqlite.SQLiteExecutionContext_aiosqlite object at 0x0000025609A56E90>
+statement = <sqlalchemy.dialects.sqlite.base.SQLiteCompiler object at 0x0000025609A55E40>
+parameters = [('5188a625-42c0-44f3-bdb2-29b750a6f31e', 'DashStream', '+260900000004', 'active', '2026-01-14 05:48:52.000484', '2026-01-14 05:48:52.000484')]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -> CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+>                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py:1967: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\default.py:941: in do_execute
+    cursor.execute(statement, parameters)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\dialects\sqlite\aiosqlite.py:147: in execute
+    self._adapt_connection._handle_exception(error)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\dialects\sqlite\aiosqlite.py:298: in _handle_exception
+    raise error
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\dialects\sqlite\aiosqlite.py:129: in execute
+    self.await_(_cursor.execute(operation, parameters))
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\aiosqlite\cursor.py:48: in execute
+    await self._execute(self._cursor.execute, sql, parameters)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\aiosqlite\cursor.py:40: in _execute
+    return await self._conn._execute(fn, *args, **kwargs)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\aiosqlite\core.py:132: in _execute
+    return await future
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Connection(Thread-1, stopped daemon 20808)>
+
+    def run(self) -> None:
+        """
+        Execute function calls on a separate thread.
+    
+        :meta private:
+        """
+        while True:
+            # Continues running until all queue items are processed,
+            # even after connection is closed (so we can finalize all
+            # futures)
+    
+            tx_item = self._tx.get()
+            if tx_item is _STOP_RUNNING_SENTINEL:
+                break
+    
+            future, function = tx_item
+    
+            try:
+                LOG.debug("executing %s", function)
+>               result = function()
+E               sqlite3.OperationalError: no such table: affiliates
+
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\aiosqlite\core.py:115: OperationalError
+
+The above exception was the direct cause of the following exception:
+
+    @pytest.mark.anyio
+    async def test_dashboard_stream_emits_json() -> None:
+        import json
+    
+        from src.app.db import get_db_session
+        from src.app.main import affiliate_dashboard_stream
+        from src.app.models import Affiliate
+    
+        async with get_db_session() as db:
+            affiliate = Affiliate(name="DashStream", phone="+260900000004")
+            db.add(affiliate)
+>           await db.commit()
+
+tests\test_idempotency.py:59: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\ext\asyncio\session.py:1009: in commit
+    await greenlet_spawn(self.sync_session.commit)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:203: in greenlet_spawn
+    result = context.switch(value)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\orm\session.py:2028: in commit
+    trans.commit(_to_root=True)
+<string>:2: in commit
+    ???
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\orm\state_changes.py:139: in _go
+    ret_value = fn(self, *arg, **kw)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\orm\session.py:1313: in commit
+    self._prepare_impl()
+<string>:2: in _prepare_impl
+    ???
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\orm\state_changes.py:139: in _go
+    ret_value = fn(self, *arg, **kw)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\orm\session.py:1288: in _prepare_impl
+    self.session.flush()
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\orm\session.py:4352: in flush
+    self._flush(objects)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\orm\session.py:4487: in _flush
+    with util.safe_reraise():
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\util\langhelpers.py:146: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\orm\session.py:4448: in _flush
+    flush_context.execute()
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\orm\unitofwork.py:466: in execute
+    rec.execute(self)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\orm\unitofwork.py:642: in execute
+    util.preloaded.orm_persistence.save_obj(
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\orm\persistence.py:93: in save_obj
+    _emit_insert_statements(
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\orm\persistence.py:1233: in _emit_insert_statements
+    result = connection.execute(
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py:1418: in execute
+    return meth(
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\sql\elements.py:515: in _execute_on_connection
+    return connection._execute_clauseelement(
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py:1640: in _execute_clauseelement
+    ret = self._execute_context(
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py:1846: in _execute_context
+    return self._exec_single_context(
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py:1986: in _exec_single_context
+    self._handle_dbapi_exception(
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py:2355: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\default.py:941: in do_execute
+    cursor.execute(statement, parameters)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\dialects\sqlite\aiosqlite.py:147: in execute
+    self._adapt_connection._handle_exception(error)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\dialects\sqlite\aiosqlite.py:298: in _handle_exception
+    raise error
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\dialects\sqlite\aiosqlite.py:129: in execute
+    self.await_(_cursor.execute(operation, parameters))
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\util\_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\aiosqlite\cursor.py:48: in execute
+    await self._execute(self._cursor.execute, sql, parameters)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\aiosqlite\cursor.py:40: in _execute
+    return await self._conn._execute(fn, *args, **kwargs)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\aiosqlite\core.py:132: in _execute
+    return await future
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Connection(Thread-1, stopped daemon 20808)>
+
+    def run(self) -> None:
+        """
+        Execute function calls on a separate thread.
+    
+        :meta private:
+        """
+        while True:
+            # Continues running until all queue items are processed,
+            # even after connection is closed (so we can finalize all
+            # futures)
+    
+            tx_item = self._tx.get()
+            if tx_item is _STOP_RUNNING_SENTINEL:
+                break
+    
+            future, function = tx_item
+    
+            try:
+                LOG.debug("executing %s", function)
+>               result = function()
+E               sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) no such table: affiliates
+E               [SQL: INSERT INTO affiliates (id, name, phone, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)]
+E               [parameters: ('5188a625-42c0-44f3-bdb2-29b750a6f31e', 'DashStream', '+260900000004', 'active', '2026-01-14 05:48:52.000484', '2026-01-14 05:48:52.000484')]
+E               (Background on this error at: https://sqlalche.me/e/20/e3q8)
+
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\aiosqlite\core.py:115: OperationalError
+___________________ test_dashboard_stream_emits_json[trio] ____________________
+
+asynclib_name = 'trio'
+
+    def get_async_backend(asynclib_name: str | None = None) -> type[AsyncBackend]:
+        if asynclib_name is None:
+            asynclib_name = sniffio.current_async_library()
+    
+        # We use our own dict instead of sys.modules to get the already imported back-end
+        # class because the appropriate modules in sys.modules could potentially be only
+        # partially initialized
+        try:
+>           return loaded_backends[asynclib_name]
+E           KeyError: 'trio'
+
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\anyio\_core\_eventloop.py:162: KeyError
+
+During handling of the above exception, another exception occurred:
+
+pyfuncitem = <Function test_dashboard_stream_emits_json[trio]>
+
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_pyfunc_call(pyfuncitem: Any) -> bool | None:
+        def run_with_hypothesis(**kwargs: Any) -> None:
+            with get_runner(backend_name, backend_options) as runner:
+                runner.run_test(original_func, kwargs)
+    
+        backend = pyfuncitem.funcargs.get("anyio_backend")
+        if backend:
+            backend_name, backend_options = extract_backend_and_options(backend)
+    
+            if hasattr(pyfuncitem.obj, "hypothesis"):
+                # Wrap the inner test function unless it's already wrapped
+                original_func = pyfuncitem.obj.hypothesis.inner_test
+                if original_func.__qualname__ != run_with_hypothesis.__qualname__:
+                    if iscoroutinefunction(original_func):
+                        pyfuncitem.obj.hypothesis.inner_test = run_with_hypothesis
+    
+                return None
+    
+            if iscoroutinefunction(pyfuncitem.obj):
+                funcargs = pyfuncitem.funcargs
+                testargs = {arg: funcargs[arg] for arg in pyfuncitem._fixtureinfo.argnames}
+>               with get_runner(backend_name, backend_options) as runner:
+
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\anyio\pytest_plugin.py:158: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\contextlib.py:135: in __enter__
+    return next(self.gen)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\anyio\pytest_plugin.py:43: in get_runner
+    asynclib = get_async_backend(backend_name)
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\anyio\_core\_eventloop.py:164: in get_async_backend
+    module = import_module(f"anyio._backends._{asynclib_name}")
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\importlib\__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    from __future__ import annotations
+    
+    import array
+    import math
+    import os
+    import socket
+    import sys
+    import types
+    import weakref
+    from collections.abc import (
+        AsyncGenerator,
+        AsyncIterator,
+        Awaitable,
+        Callable,
+        Collection,
+        Coroutine,
+        Iterable,
+        Sequence,
+    )
+    from concurrent.futures import Future
+    from contextlib import AbstractContextManager
+    from dataclasses import dataclass
+    from functools import partial
+    from io import IOBase
+    from os import PathLike
+    from signal import Signals
+    from socket import AddressFamily, SocketKind
+    from types import TracebackType
+    from typing import (
+        IO,
+        TYPE_CHECKING,
+        Any,
+        Generic,
+        NoReturn,
+        TypeVar,
+        cast,
+        overload,
+    )
+    
+>   import trio.from_thread
+E   ModuleNotFoundError: No module named 'trio'
+
+C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\anyio\_backends\_trio.py:40: ModuleNotFoundError
+============================== warnings summary ===============================
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python310\lib\site-packages\starlette\formparsers.py:12
+  C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\starlette\formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+tests/test_idempotency.py::test_dashboard_stream_emits_json[asyncio]
+  C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\affiliate-engine\src\app\main.py:133: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+tests/test_idempotency.py::test_dashboard_stream_emits_json[asyncio]
+  C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\fastapi\applications.py:4495: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_idempotency.py::test_dashboard_stream_emits_json[asyncio] - sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) no such table: affiliates
+[SQL: INSERT INTO affiliates (id, name, phone, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)]
+[parameters: ('5188a625-42c0-44f3-bdb2-29b750a6f31e', 'DashStream', '+260900000004', 'active', '2026-01-14 05:48:52.000484', '2026-01-14 05:48:52.000484')]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+FAILED tests/test_idempotency.py::test_dashboard_stream_emits_json[trio] - ModuleNotFoundError: No module named 'trio'
+================= 2 failed, 3 deselected, 3 warnings in 6.71s =================

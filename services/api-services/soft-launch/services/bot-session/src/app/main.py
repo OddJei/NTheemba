@@ -11,10 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from . import events as event_publisher
 from . import jobs
 from . import models
+from . import audit_client
 from .db import Base, async_engine, get_db_session
 
 
 app = FastAPI(title="Bot-Session Unified Service")
+
+# Forward important Python logs (WARNING+) to audit-service.
+audit_client.install_audit_log_forwarding(service="bot-session")
 
 
 class CreateSessionReq(BaseModel):
@@ -159,6 +163,22 @@ async def create_session(payload: CreateSessionReq, db: AsyncSession = Depends(g
         await db.refresh(session_obj)
         reactivated = False
 
+    await audit_client.emit_audit(
+        service="bot-session",
+        event_type="session_created" if not reactivated else "session_reactivated",
+        payload={
+            "session_id": session_obj.id,
+            "user_phone": payload.user_phone,
+            "bot_id": bot.id,
+            "session_mode": session_obj.session_mode.value,
+            "platform": payload.platform,
+        },
+        actor_id=payload.user_phone,
+        entity_type="session",
+        entity_id=session_obj.id,
+        metadata={"business_id": payload.business_id, "bot_type": bot.type.value},
+    )
+
     return {
         "session_id": session_obj.id,
         "session_mode": session_obj.session_mode.value,
@@ -300,6 +320,22 @@ async def event_create(payload: CreateEventReq, db: AsyncSession = Depends(get_d
     session.last_event_id = ev.id
     db.add(session)
     await db.commit()
+
+    await audit_client.emit_audit(
+        service="bot-session",
+        event_type="event_created",
+        payload={
+            "event_id": ev.id,
+            "session_id": ev.session_id,
+            "event_type": payload.event_type,
+            "message_count": message_count,
+            "user_phone": ev.user_phone,
+        },
+        actor_id=ev.user_phone,
+        entity_type="event",
+        entity_id=ev.id,
+        metadata={"session_id": ev.session_id, "bot_id": payload.bot_id},
+    )
 
     try:
         await event_publisher.publish_business_event(session.business_id or session.bot_id, {"event_id": ev.id, "session_id": session.id})

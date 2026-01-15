@@ -1,0 +1,84 @@
+============================= test session starts =============================
+platform win32 -- Python 3.10.11, pytest-8.4.1, pluggy-1.6.0
+rootdir: C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\order-delivery
+plugins: anyio-4.9.0, asyncio-1.1.0, cov-6.2.1, mock-3.14.1, typeguard-4.4.4
+asyncio: mode=strict, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 2 items
+
+tests\test_affiliate_emission.py F                                       [ 50%]
+tests\test_smoke_flow.py .                                               [100%]
+
+================================== FAILURES ===================================
+__________ test_order_create_emits_order_created_to_affiliate_engine __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001C5D534C1F0>
+
+    @pytest.mark.asyncio
+    async def test_order_create_emits_order_created_to_affiliate_engine(monkeypatch):
+        captured: dict = {}
+    
+        async def _fake_fee(*, business_id: str):
+            return 700, "test"
+    
+        async def _fake_dispatch(*, payload: dict, correlation_id: str) -> bool:
+            captured["payload"] = payload
+            captured["correlation_id"] = correlation_id
+            return True
+    
+        monkeypatch.setattr(od_main, "_get_transaction_fee_bps_for_business", _fake_fee)
+        monkeypatch.setattr(od_main, "_dispatch_to_affiliate_engine_order_created", _fake_dispatch)
+    
+        with TestClient(od_main.app) as client:
+            r = client.post(
+                "/orders/create",
+                headers={"X-Correlation-Id": "corr-aff-1"},
+                json={
+                    "session_id": None,
+                    "user_phone": "+260971000000",
+                    "user_id": None,
+                    "business_id": str(uuid.uuid4()),
+                    "delivery_method": "pickup",
+                    "total_amount": 100,
+                    "currency": "ZMW",
+                    "metadata": {"affiliate_code": "aff-code-123"},
+                },
+            )
+    
+        assert r.status_code in (200, 201)
+        assert captured["correlation_id"] == "corr-aff-1"
+    
+        payload = captured["payload"]
+        assert payload["event_type"] == "order_created"
+        assert payload["producer"] == "order-delivery"
+        assert payload["affiliate_code"] == "aff-code-123"
+>       assert payload["order_id"]
+E       assert None
+
+tests\test_affiliate_emission.py:62: AssertionError
+============================== warnings summary ===============================
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python310\lib\site-packages\starlette\formparsers.py:12
+  C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\starlette\formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+src\app\main.py:254
+  C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\order-delivery\src\app\main.py:254: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python310\lib\site-packages\fastapi\applications.py:4495
+  C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\fastapi\applications.py:4495: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_affiliate_emission.py::test_order_create_emits_order_created_to_affiliate_engine
+================== 1 failed, 1 passed, 3 warnings in 24.22s ===================

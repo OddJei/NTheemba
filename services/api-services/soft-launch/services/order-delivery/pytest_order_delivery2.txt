@@ -1,0 +1,35 @@
+============================= test session starts =============================
+platform win32 -- Python 3.10.11, pytest-8.4.1, pluggy-1.6.0
+rootdir: C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\order-delivery
+plugins: anyio-4.9.0, asyncio-1.1.0, cov-6.2.1, mock-3.14.1, typeguard-4.4.4
+asyncio: mode=strict, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 2 items
+
+tests\test_affiliate_emission.py .                                       [ 50%]
+tests\test_smoke_flow.py .                                               [100%]
+
+============================== warnings summary ===============================
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python310\lib\site-packages\starlette\formparsers.py:12
+  C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\starlette\formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+src\app\main.py:254
+  C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\order-delivery\src\app\main.py:254: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+..\..\..\..\..\..\..\AppData\Local\Programs\Python\Python310\lib\site-packages\fastapi\applications.py:4495
+  C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\site-packages\fastapi\applications.py:4495: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 2 passed, 3 warnings in 18.64s ========================

@@ -2,6 +2,20 @@
 
 This folder packages the **soft launch** workflow as multiple services aligned to the "Automated Pipeline Architecture (Soft Launch Version)".
 
+## Local ports (canonical)
+
+Use these ports for local development (override via each service's `PORT` / `*_BASE_URL` env vars as needed):
+
+| Service | Port | Base URL |
+|---|---:|---|
+| MSME Engine | 8500 | http://127.0.0.1:8500 |
+| Affiliate Engine | 8510 | http://127.0.0.1:8510 |
+| Catalog + Inventory | 8520 | http://127.0.0.1:8520 |
+| Cart | 8530 | http://127.0.0.1:8530 |
+| Order + Delivery | 8560 | http://127.0.0.1:8560 |
+| Notification | 8570 | http://127.0.0.1:8570 |
+| Payment + Revenue | 8590 | http://127.0.0.1:8590 |
+
 ## Folder layout
 
 - `api-services/soft-launch/services/*` — service stubs with `design/` and `src/` placeholders.

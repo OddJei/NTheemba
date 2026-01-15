@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from src.app.db import SessionLocal
 from src.app.models import AffiliateEvent
+from src.app.models import utcnow
 
 
 def _sink_url() -> str:
@@ -24,12 +25,17 @@ async def dispatch_once(*, batch_size: int = 50) -> int:
     async with SessionLocal() as db:
         events = (
             await db.execute(
-                select(AffiliateEvent).order_by(AffiliateEvent.created_at.asc()).limit(int(batch_size))
+                select(AffiliateEvent)
+                .where(AffiliateEvent.dispatched_at.is_(None))
+                .order_by(AffiliateEvent.created_at.asc())
+                .limit(int(batch_size))
             )
         ).scalars().all()
 
         if not events:
             return 0
+
+        dispatched = 0
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             for ev in events:
@@ -60,9 +66,12 @@ async def dispatch_once(*, batch_size: int = 50) -> int:
                 if last_exc is not None:
                     break
 
-                # mark processed - AffiliateEvent is append-only; skipping processed flag in this simple dispatcher
+                # Mark as dispatched so we don't re-send on next poll.
+                ev.dispatched_at = utcnow()
+                await db.commit()
+                dispatched += 1
 
-        return len(events)
+            return dispatched
 
 
 async def run_forever(*, poll_seconds: float = 2.0, batch_size: int = 50) -> None:

@@ -1,0 +1,19 @@
+{
+  "notifications": [
+    {
+      "id": "ntf_72d7d07f978cda5ff1461b59",
+      "user_id": "u1",
+      "business_id": null,
+      "channel": "sms",
+      "template": null,
+      "payload": {
+        "to": "+1111111111",
+        "message": "from send"
+      },
+      "status": "sent",
+      "error_message": null,
+      "created_at": "2026-01-08T20:57:06.746Z",
+      "sent_at": "2026-01-08T20:57:06.755Z"
+    }
+  ]
+}

@@ -99,6 +99,7 @@ class AffiliateEvent(Base):
         Index("ix_affiliate_events_type_time", "event_type", "occurred_at"),
         Index("ix_affiliate_events_order", "order_id"),
         Index("ix_affiliate_events_buyer_phone", "buyer_phone"),
+        Index("ix_affiliate_events_dispatched", "dispatched_at"),
     )
 
     # Producer-provided explicit event id.
@@ -121,6 +122,9 @@ class AffiliateEvent(Base):
 
     meta: Mapped[dict | None] = mapped_column("metadata", SqliteJson, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # Outbox processing marker. Null means not yet dispatched.
+    dispatched_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class IdempotencyRecord(Base):
@@ -147,14 +151,15 @@ class CommissionSettings(Base):
     pool_pct: Mapped[float] = mapped_column(Float, default=0.10)
     epoch_days: Mapped[int] = mapped_column(Integer, default=182)
 
-    # Weights sum to 1.0. Default: sales 52.7777%, buyers 21.1111%, msme_referrals 21.1111%, clicks (unique phones) 5%.
+    # Weights sum to 1.0.
+    # Default OP weights: sales 50%, unique buyers 20%, MSME referrals 20%, conversion quality 10%.
     weights: Mapped[dict] = mapped_column(
         SqliteJson,
         default=lambda: {
-            "sales_volume": 0.5277777778,
-            "unique_buyers": 0.2111111111,
-            "msme_referrals": 0.2111111111,
-            "clicks": 0.05,
+            "sales_volume": 0.5,
+            "unique_buyers": 0.2,
+            "msme_referrals": 0.2,
+            "conversion_quality": 0.1,
         },
     )
 

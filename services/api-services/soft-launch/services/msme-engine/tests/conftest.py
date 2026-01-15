@@ -18,6 +18,8 @@ def _configure_test_db(service_root: Path) -> None:
     tmp = tempfile.NamedTemporaryFile(prefix="msme_engine_test_", suffix=".db", delete=False)
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{tmp.name}"
     os.environ["MSME_JWT_SECRET"] = "test-secret"
+    # Disable emitting audit events during tests for determinism
+    os.environ.setdefault("AUDIT_EMIT_ENABLED", "0")
 
     # Ensure `src` package is importable.
     sys.path.insert(0, str(service_root))

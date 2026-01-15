@@ -9,14 +9,16 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 import logging
 import time
 import uuid
+import httpx
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.config import get_jwt_secret
+from src.app.config import get_jwt_secret, get_notification_base_url, get_notification_timeout_seconds
 from src.app.db import Base, engine, get_db_session
 from src.app.idempotency import idempotent_execute, scope_for
+from src.app import audit_client
 from src.app.models import (
     AuthSession,
     Business,
@@ -31,6 +33,7 @@ from src.app.schemas import (
     AuthLogin,
     AuthRegister,
     BusinessMetadataOut,
+    BusinessEntitlementsOut,
     BusinessOut,
     BusinessRegister,
     BusinessRegisterOut,
@@ -63,6 +66,94 @@ app = FastAPI(title="MSME Engine (Soft Launch)")
 logger = logging.getLogger("msme_engine")
 
 _SERVICE = "msme-engine"
+
+# Forward important Python logs (WARNING+) to audit-service.
+audit_client.install_audit_log_forwarding(service=_SERVICE)
+
+
+_PLAN_FREE = "free"
+_PLAN_PAID = "paid"
+
+
+async def _notify_in_app(*, user_id: str | None, business_id: str | None, template: str, payload: dict | None, correlation_id: str | None) -> None:
+    base = get_notification_base_url().rstrip("/")
+    timeout = get_notification_timeout_seconds()
+    headers: dict[str, str] = {}
+    if correlation_id:
+        headers["X-Correlation-Id"] = correlation_id
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            await client.post(
+                f"{base}/notification/send",
+                json={
+                    "channel": "in_app",
+                    "user_id": user_id,
+                    "business_id": business_id,
+                    "template": template,
+                    "payload": payload or {},
+                },
+                headers=headers,
+            )
+    except httpx.RequestError:
+        # Best-effort: do not fail core flows if notification service is down.
+        logger.info("notification_unreachable", extra={"template": template, "correlation_id": correlation_id})
+
+
+def _normalize_plan(value: str | None) -> str:
+    v = (value or "").strip().lower()
+    if v in ("", _PLAN_FREE):
+        return _PLAN_FREE
+    if v == _PLAN_PAID:
+        return _PLAN_PAID
+    raise HTTPException(status_code=400, detail="invalid_subscription_plan")
+
+
+def _is_subscription_active(plan: str, expiry: datetime | None) -> bool:
+    if plan != _PLAN_PAID:
+        return True
+    if expiry is None:
+        # Paid with no expiry is treated as active.
+        return True
+    now = datetime.now(timezone.utc)
+    return expiry >= now
+
+
+def _effective_plan_for(b: Business) -> str:
+    plan = _normalize_plan(b.subscription_plan)
+    if not bool(b.is_active):
+        return _PLAN_FREE
+    if plan == _PLAN_PAID and not _is_subscription_active(plan, b.subscription_expiry):
+        return _PLAN_FREE
+    return plan
+
+
+def _entitlements_for(b: Business) -> BusinessEntitlementsOut:
+    plan = _effective_plan_for(b)
+    is_active = bool(b.is_active)
+
+    # Policy:
+    # - Free: bots enabled, no affiliate promo links, 7% fee
+    # - Paid: bots enabled, affiliate promo links enabled, 5% fee
+    if plan == _PLAN_PAID and is_active:
+        return BusinessEntitlementsOut(
+            business_id=b.id,
+            plan=_PLAN_PAID,
+            subscription_expiry=b.subscription_expiry,
+            is_active=is_active,
+            bot_instances_enabled=True,
+            affiliate_promo_links_enabled=True,
+            transaction_fee_pct=0.05,
+        )
+
+    return BusinessEntitlementsOut(
+        business_id=b.id,
+        plan=_PLAN_FREE,
+        subscription_expiry=b.subscription_expiry,
+        is_active=is_active,
+        bot_instances_enabled=True,
+        affiliate_promo_links_enabled=False,
+        transaction_fee_pct=0.07,
+    )
 _REQ_COUNT = Counter("http_requests_total", "Total HTTP requests", ["service", "method", "route", "status"])
 _REQ_LATENCY = Histogram("http_request_duration_seconds", "HTTP request duration", ["service", "method", "route"])
 
@@ -504,6 +595,31 @@ async def business_register(
             },
         )
 
+        await _notify_in_app(
+            user_id=owner_id,
+            business_id=business.id,
+            template="msme_registered",
+            payload={"business_name": business.name, "msme_code": code},
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )
+
+        await audit_client.emit_audit(
+            service="msme-engine",
+            event_type="business_registered",
+            payload={
+                "business_id": business.id,
+                "business_name": business.name,
+                "msme_code": code,
+                "owner_id": owner_id,
+                "affiliate_code": payload.affiliate_code,
+                "referred_by_msme_code": payload.referred_by_msme_code,
+            },
+            actor_id=owner_id,
+            entity_type="business",
+            entity_id=business.id,
+            metadata={"correlation_id": getattr(request.state, "correlation_id", None)},
+        )
+
         return 201, BusinessRegisterOut(business=_business_out(business), msme_code=code)
 
     status, body = await idempotent_execute(db=db, scope=scope_for("POST", "/business/register"), key=x_idempotency_key, run=_run)
@@ -599,16 +715,33 @@ async def business_subscribe(
         if not b:
             raise HTTPException(status_code=404, detail="business_not_found")
 
-        sub = BusinessSubscription(business_id=b.id, plan=payload.plan, status="pending_payment")
+        plan = _normalize_plan(payload.plan)
+
+        # Free plan is immediate; paid requires payment_success event.
+        sub_status = "active" if plan == _PLAN_FREE else "pending_payment"
+        sub = BusinessSubscription(business_id=b.id, plan=plan, status=sub_status)
         db.add(sub)
         await db.commit()
         await db.refresh(sub)
+
+        if plan == _PLAN_FREE:
+            b.subscription_plan = _PLAN_FREE
+            b.subscription_expiry = None
+            await db.commit()
+
+            await _notify_in_app(
+                user_id=b.owner_id,
+                business_id=b.id,
+                template="subscription_activated",
+                payload={"plan": "free"},
+                correlation_id=getattr(request.state, "correlation_id", None),
+            )
 
         # Minimal payment initiation placeholder.
         payment_request = {
             "reference_id": sub.id,
             "business_id": b.id,
-            "plan": payload.plan,
+            "plan": plan,
             "currency": "ZMW",
         }
 
@@ -620,6 +753,14 @@ async def business_subscribe(
             source="business_service",
             correlation_id=getattr(request.state, "correlation_id", None),
             meta=payment_request,
+        )
+
+        await _notify_in_app(
+            user_id=b.owner_id,
+            business_id=b.id,
+            template="subscription_initiated",
+            payload=payment_request,
+            correlation_id=getattr(request.state, "correlation_id", None),
         )
 
         return 201, SubscriptionInitiateOut(subscription=_subscription_out(sub), payment_request=payment_request)
@@ -639,6 +780,14 @@ async def business_subscription(id: str, db: AsyncSession = Depends(get_db_sessi
     if not sub:
         raise HTTPException(status_code=404, detail="subscription_not_found")
     return _subscription_out(sub)
+
+
+@app.get("/business/{id}/entitlements", response_model=BusinessEntitlementsOut)
+async def business_entitlements(id: str, db: AsyncSession = Depends(get_db_session)) -> BusinessEntitlementsOut:
+    b = (await db.execute(select(Business).where(Business.id == id))).scalar_one_or_none()
+    if not b:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    return _entitlements_for(b)
 
 
 @app.get("/business/{id}/metadata", response_model=BusinessMetadataOut)
@@ -704,6 +853,8 @@ async def payment_success(
         if not b:
             raise HTTPException(status_code=404, detail="business_not_found")
 
+        plan = _normalize_plan(payload.plan)
+
         # Activate latest subscription or create one.
         sub = (
             await db.execute(
@@ -714,17 +865,19 @@ async def payment_success(
         ).scalars().first()
 
         if not sub:
-            sub = BusinessSubscription(business_id=b.id, plan=payload.plan, status="active")
+            sub = BusinessSubscription(business_id=b.id, plan=plan, status="active")
             db.add(sub)
             await db.commit()
             await db.refresh(sub)
 
-        sub.plan = payload.plan
+        sub.plan = plan
         sub.status = "active"
         sub.start_date = sub.start_date or datetime.now(timezone.utc)
         sub.end_date = payload.paid_until
-        b.subscription_plan = payload.plan
-        b.subscription_expiry = payload.paid_until
+
+        # If a paid subscription is expired/invalid, entitlements will downgrade automatically.
+        b.subscription_plan = plan
+        b.subscription_expiry = payload.paid_until if plan == _PLAN_PAID else None
 
         await db.commit()
 
@@ -736,6 +889,14 @@ async def payment_success(
             source=payload.source or "payment_service",
             correlation_id=getattr(request.state, "correlation_id", None),
             meta=payload.model_dump(mode="json"),
+        )
+
+        await _notify_in_app(
+            user_id=b.owner_id,
+            business_id=b.id,
+            template="subscription_payment_success",
+            payload={"plan": plan, "paid_until": payload.paid_until.isoformat().replace("+00:00", "Z") if payload.paid_until else None},
+            correlation_id=getattr(request.state, "correlation_id", None),
         )
 
         return 200, {"status": "ok"}
@@ -777,6 +938,14 @@ async def payment_failed(
             source=payload.source or "payment_service",
             correlation_id=getattr(request.state, "correlation_id", None),
             meta=payload.model_dump(mode="json"),
+        )
+
+        await _notify_in_app(
+            user_id=b.owner_id,
+            business_id=b.id,
+            template="subscription_payment_failed",
+            payload={"reason": payload.reason, "plan": payload.plan},
+            correlation_id=getattr(request.state, "correlation_id", None),
         )
 
         return 200, {"status": "ok"}

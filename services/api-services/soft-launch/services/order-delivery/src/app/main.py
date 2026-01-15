@@ -8,12 +8,21 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from sqlalchemy import text, inspect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.config import (
+    get_affiliate_engine_base_url,
+    get_affiliate_engine_timeout_seconds,
+    get_msme_base_url,
+    get_msme_timeout_seconds,
+    get_notification_base_url,
+    get_notification_timeout_seconds,
+)
 from src.app.db import Base, engine, get_db_session
 from src.app.idempotency import idempotent_execute, scope_for
 from src.app.models import Delivery, Order, OutboxEvent
@@ -25,6 +34,7 @@ from src.app.schemas import (
     OrderOut,
     StatusOut,
 )
+from src.app import audit_client
 
 app = FastAPI(title="Order + Delivery Service (Soft Launch)")
 
@@ -33,6 +43,77 @@ logger = logging.getLogger("order-delivery")
 _SERVICE = "order_delivery"
 _REQ_COUNT = Counter("http_requests_total", "Total HTTP requests", ["service", "method", "route", "status"])
 _REQ_LATENCY = Histogram("http_request_duration_seconds", "HTTP request duration", ["service", "method", "route"])
+
+
+async def _notify_in_app(*, user_id: str | None, business_id: str | None, template: str, payload: dict | None, correlation_id: str | None) -> None:
+    base = get_notification_base_url().rstrip("/")
+    timeout = get_notification_timeout_seconds()
+    headers: dict[str, str] = {}
+    if correlation_id:
+        headers["X-Correlation-Id"] = correlation_id
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            await client.post(
+                f"{base}/notification/send",
+                json={
+                    "channel": "in_app",
+                    "user_id": user_id,
+                    "business_id": business_id,
+                    "template": template,
+                    "payload": payload or {},
+                },
+                headers=headers,
+            )
+    except httpx.RequestError:
+        logger.info("notification_unreachable", extra={"template": template, "correlation_id": correlation_id})
+
+
+def _extract_affiliate_code(meta: dict | None) -> str | None:
+    if not meta:
+        return None
+
+    value = meta.get("affiliate_code")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+
+    value = meta.get("affiliateCode")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+
+    value = meta.get("affiliate")
+    if isinstance(value, dict):
+        code = value.get("code")
+        if isinstance(code, str) and code.strip():
+            return code.strip()
+
+    return None
+
+
+async def _dispatch_to_affiliate_engine_order_created(*, payload: dict, correlation_id: str) -> bool:
+    base = get_affiliate_engine_base_url().rstrip("/")
+    timeout = get_affiliate_engine_timeout_seconds()
+
+    headers: dict[str, str] = {"X-Correlation-Id": correlation_id}
+    event_id = payload.get("event_id")
+    if isinstance(event_id, str) and event_id:
+        headers["X-Idempotency-Key"] = event_id
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(f"{base}/events/order-created", json=payload, headers=headers)
+    except httpx.RequestError:
+        logger.info("affiliate_engine_unreachable", extra={"correlation_id": correlation_id})
+        return False
+
+    if r.status_code in (200, 201):
+        return True
+
+    # Affiliate engine will return 200 ignored when no affiliate_code.
+    logger.info(
+        "affiliate_engine_order_created_failed",
+        extra={"status": r.status_code, "correlation_id": correlation_id},
+    )
+    return False
 
 
 def _utcnow() -> datetime:
@@ -62,6 +143,43 @@ def _verify_delivery_code(*, delivery: Delivery, code: str) -> bool:
         return False
     expected = _hash_delivery_code(salt_hex=delivery.delivery_code_salt, code=code)
     return secrets.compare_digest(delivery.delivery_code_hash, expected)
+
+
+def _fee_amount_minor_units(*, total_amount: int, fee_bps: int) -> int:
+    # Rounds to nearest minor unit.
+    if total_amount <= 0 or fee_bps <= 0:
+        return 0
+    return int((total_amount * fee_bps + 5000) // 10000)
+
+
+async def _get_transaction_fee_bps_for_business(*, business_id: str) -> tuple[int, str]:
+    # Returns (fee_bps, source). Safe fallback to free tier if MSME is unavailable.
+    msme_url = get_msme_base_url().rstrip("/")
+    timeout = get_msme_timeout_seconds()
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.get(f"{msme_url}/business/{business_id}/entitlements")
+    except httpx.RequestError:
+        return 700, "fallback_free_msme_unreachable"
+
+    if r.status_code == 200:
+        try:
+            ent = r.json() if isinstance(r.json(), dict) else {}
+        except ValueError:
+            ent = {}
+        pct = ent.get("transaction_fee_pct")
+        try:
+            fee_bps = int(round(float(pct) * 10000))
+        except (TypeError, ValueError):
+            fee_bps = 700
+        # Clamp to expected policy values.
+        if fee_bps not in (500, 700):
+            fee_bps = 700
+        return fee_bps, "msme_entitlements"
+
+    if r.status_code == 404:
+        return 700, "fallback_free_business_not_found"
+    return 700, "fallback_free_msme_error"
 
 
 async def _ensure_delivery_hash_columns() -> None:
@@ -154,12 +272,21 @@ async def metrics():
 @app.post("/orders/create", response_model=OrderOut)
 async def order_create(
     payload: OrderCreate,
+    request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db_session),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     async def _run():
         now = _utcnow()
+        fee_bps, fee_source = await _get_transaction_fee_bps_for_business(business_id=payload.business_id)
+        fee_amount = _fee_amount_minor_units(total_amount=int(payload.total_amount), fee_bps=fee_bps)
+        meta = dict(payload.meta or {})
+        meta.setdefault("transaction_fee_pct", fee_bps / 10000)
+        meta.setdefault("platform_fee_amount", fee_amount)
+        meta.setdefault("msme_net_amount", int(payload.total_amount) - fee_amount)
+        meta.setdefault("fee_source", fee_source)
+
         order = Order(
             session_id=payload.session_id,
             user_phone=payload.user_phone,
@@ -169,18 +296,72 @@ async def order_create(
             delivery_method=payload.delivery_method,
             total_amount=int(payload.total_amount),
             currency=payload.currency,
-            meta=payload.meta,
+            meta=meta,
             created_at=now,
             updated_at=now,
         )
         db.add(order)
-        await _emit_outbox(
-            db,
+
+        # Assign `order.id` before we emit outbox events referencing it.
+        await db.flush()
+
+        correlation_id = getattr(request.state, "correlation_id", None)
+        affiliate_code = _extract_affiliate_code(meta)
+
+        # Keep the outbox event, but enrich it with affiliate attribution fields so a dispatcher can
+        # reliably forward to affiliate-engine when available.
+        outbox_event = OutboxEvent(
             event_type="order_created",
-            payload={"order_id": order.id, "business_id": order.business_id, "user_phone": order.user_phone},
+            processed=False,
+            created_at=now,
+            payload={
+                "event_id": f"order-created-{order.id}",
+                "event_type": "order_created",
+                "occurred_at": now.isoformat().replace("+00:00", "Z"),
+                "correlation_id": correlation_id or str(uuid.uuid4()),
+                "producer": "order-delivery",
+                "order_id": order.id,
+                "business_id": order.business_id,
+                "status": order.status,
+                "total_amount": float(order.total_amount),
+                "currency": order.currency,
+                "session_id": order.session_id,
+                "user_phone": order.user_phone,
+                "user_id": order.user_id,
+                "affiliate_code": affiliate_code,
+                "metadata": meta,
+                "transaction_fee_pct": meta.get("transaction_fee_pct"),
+                "platform_fee_amount": meta.get("platform_fee_amount"),
+                "msme_net_amount": meta.get("msme_net_amount"),
+            },
         )
+        db.add(outbox_event)
         await db.commit()
         await db.refresh(order)
+
+        # Best-effort immediate dispatch to affiliate-engine for attribution.
+        if affiliate_code and correlation_id:
+            ok = await _dispatch_to_affiliate_engine_order_created(payload=outbox_event.payload, correlation_id=correlation_id)
+            if ok:
+                outbox_event.processed = True
+                await db.commit()
+
+        await _notify_in_app(
+            user_id=order.user_id or order.user_phone,
+            business_id=order.business_id,
+            template="order_created",
+            payload={"order_id": order.id, "total_amount": order.total_amount, "currency": order.currency},
+            correlation_id=correlation_id,
+        )
+        await audit_client.emit_audit(
+            service="order-delivery",
+            event_type="order_created",
+            payload={"order_id": order.id, "business_id": order.business_id, "total_amount": order.total_amount},
+            actor_id=order.user_id or order.user_phone,
+            entity_type="order",
+            entity_id=order.id,
+            metadata={"correlation_id": correlation_id, "affiliate_code": affiliate_code},
+        )
         return 201, OrderOut(**_serialize_order(order))
 
     status, body = await idempotent_execute(db=db, scope=scope_for("POST", "/orders/create"), key=x_idempotency_key, run=_run)
@@ -197,17 +378,47 @@ async def order_get(order_id: str, db: AsyncSession = Depends(get_db_session)):
 
 
 @app.post("/orders/{order_id}/mark_paid", response_model=OrderOut)
-async def order_mark_paid(order_id: str, db: AsyncSession = Depends(get_db_session)):
+async def order_mark_paid(order_id: str, request: Request, db: AsyncSession = Depends(get_db_session)):
     order = (await db.execute(select(Order).where(Order.id == order_id))).scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="order_not_found")
 
     if order.status == "pending_payment":
+        meta = dict(order.meta or {})
+        if "platform_fee_amount" not in meta or "transaction_fee_pct" not in meta:
+            fee_bps, fee_source = await _get_transaction_fee_bps_for_business(business_id=order.business_id)
+            fee_amount = _fee_amount_minor_units(total_amount=int(order.total_amount), fee_bps=fee_bps)
+            meta.setdefault("transaction_fee_pct", fee_bps / 10000)
+            meta.setdefault("platform_fee_amount", fee_amount)
+            meta.setdefault("msme_net_amount", int(order.total_amount) - fee_amount)
+            meta.setdefault("fee_source", fee_source)
+            order.meta = meta
+
         order.status = "paid"
         order.updated_at = _utcnow()
-        await _emit_outbox(db, event_type="order_paid", payload={"order_id": order.id, "business_id": order.business_id})
+        await _emit_outbox(
+            db,
+            event_type="order_paid",
+            payload={
+                "order_id": order.id,
+                "business_id": order.business_id,
+                "total_amount": order.total_amount,
+                "currency": order.currency,
+                "transaction_fee_pct": meta.get("transaction_fee_pct"),
+                "platform_fee_amount": meta.get("platform_fee_amount"),
+                "msme_net_amount": meta.get("msme_net_amount"),
+            },
+        )
         await db.commit()
         await db.refresh(order)
+
+        await _notify_in_app(
+            user_id=order.user_id or order.user_phone,
+            business_id=order.business_id,
+            template="order_paid",
+            payload={"order_id": order.id, "total_amount": order.total_amount, "currency": order.currency},
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )
 
     return OrderOut(**_serialize_order(order))
 
@@ -215,6 +426,7 @@ async def order_mark_paid(order_id: str, db: AsyncSession = Depends(get_db_sessi
 @app.post("/delivery/initiate/{order_id}", response_model=DeliveryInitiateOut)
 async def delivery_initiate(
     order_id: str,
+    request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db_session),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
@@ -276,6 +488,14 @@ async def delivery_initiate(
         )
         await db.commit()
         await db.refresh(delivery)
+
+        await _notify_in_app(
+            user_id=delivery.user_id or delivery.user_phone,
+            business_id=delivery.business_id,
+            template="delivery_initiated",
+            payload={"order_id": order.id, "delivery_id": delivery.id, "delivery_code": code, "delivery_method": delivery.delivery_method},
+            correlation_id=getattr(request.state, "correlation_id", None),
+        )
         return 201, {"delivery": DeliveryOut(**_serialize_delivery(delivery)), "delivery_code": code}
 
     status, body = await idempotent_execute(
@@ -311,7 +531,7 @@ async def deliveries_by_user(user_phone: str, db: AsyncSession = Depends(get_db_
 
 
 @app.post("/delivery/{delivery_id}/confirm", response_model=DeliveryOut)
-async def delivery_confirm(delivery_id: str, payload: DeliveryConfirmIn, db: AsyncSession = Depends(get_db_session)):
+async def delivery_confirm(delivery_id: str, payload: DeliveryConfirmIn, request: Request, db: AsyncSession = Depends(get_db_session)):
     delivery = (await db.execute(select(Delivery).where(Delivery.id == delivery_id))).scalar_one_or_none()
     if not delivery:
         raise HTTPException(status_code=404, detail="delivery_not_found")
@@ -347,4 +567,12 @@ async def delivery_confirm(delivery_id: str, payload: DeliveryConfirmIn, db: Asy
 
     await db.commit()
     await db.refresh(delivery)
+
+    await _notify_in_app(
+        user_id=delivery.user_id or delivery.user_phone,
+        business_id=delivery.business_id,
+        template="delivery_confirmed",
+        payload={"delivery_id": delivery.id, "order_id": delivery.order_id, "confirmed_by": delivery.confirmed_by},
+        correlation_id=getattr(request.state, "correlation_id", None),
+    )
     return DeliveryOut(**_serialize_delivery(delivery))

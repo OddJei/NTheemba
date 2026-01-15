@@ -59,6 +59,9 @@ async function sendNotification(req, res) {
         throw new Error('missing_email_payload');
       }
       await sendEmail({ to, subject, text: message, html });
+    } else if (normalizedChannel === 'in_app' || normalizedChannel === 'inapp') {
+      // Soft-launch: store as an in-app notification record only.
+      // Mark as sent immediately (no external delivery).
     } else {
       return res.status(400).json({ detail: 'unsupported channel' });
     }

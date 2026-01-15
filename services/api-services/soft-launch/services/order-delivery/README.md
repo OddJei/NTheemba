@@ -6,7 +6,7 @@ This service is a fused **Order + Delivery** service for soft-launch. It owns:
 - Outbox events for notifications/audit integration
 
 ## Ports
-- Suggested default: **8540**
+- Suggested default: **8560**
 
 ## Run locally
 ```powershell
@@ -14,8 +14,21 @@ cd c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\servic
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-$env:PORT = "8540"
+$env:PORT = "8560"
 python -m uvicorn src.app.main:app --host 127.0.0.1 --port $env:PORT
+```
+
+## Affiliate Engine integration
+
+If `metadata.affiliate_code` is present on `POST /orders/create`, the service will enqueue an `order_created` outbox event that can be forwarded to Affiliate Engine (`POST /events/order-created`) for attribution.
+
+Config:
+- `AFFILIATE_ENGINE_BASE_URL` (default `http://127.0.0.1:8510`)
+- `AFFILIATE_ENGINE_TIMEOUT_SECONDS` (default `3.0`)
+
+Optional outbox dispatcher (retries and marks events processed):
+```powershell
+python -m src.app.outbox_dispatcher
 ```
 
 ## Endpoints

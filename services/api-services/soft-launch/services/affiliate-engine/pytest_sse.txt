@@ -1,0 +1,9 @@
+============================= test session starts =============================
+platform win32 -- Python 3.10.11, pytest-8.4.1, pluggy-1.6.0 -- C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\affiliate-engine
+plugins: anyio-4.9.0, asyncio-1.1.0, cov-6.2.1, mock-3.14.1, typeguard-4.4.4
+asyncio: mode=strict, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 4 items / 3 deselected / 1 selected
+
+tests/test_idempotency.py::test_dashboard_stream_emits_json 

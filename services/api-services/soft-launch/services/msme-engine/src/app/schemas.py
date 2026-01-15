@@ -158,6 +158,20 @@ class BusinessMetadataOut(BaseModel):
     is_active: bool
 
 
+class BusinessEntitlementsOut(BaseModel):
+    business_id: str
+    plan: str  # free|paid
+    subscription_expiry: Optional[datetime] = None
+    is_active: bool
+
+    # Feature flags for this plan
+    bot_instances_enabled: bool
+    affiliate_promo_links_enabled: bool
+
+    # Transaction fee percentage charged by platform (e.g. 0.07 == 7%)
+    transaction_fee_pct: float
+
+
 # ---- Events ----
 
 

@@ -20,6 +20,12 @@ def _configure_test_db(service_root: Path) -> None:
     tmp = tempfile.NamedTemporaryFile(prefix="catalog_inventory_test_", suffix=".db", delete=False)
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{tmp.name}"
 
+    # Avoid external HTTP calls in unit tests.
+    os.environ["CATALOG_SKIP_MSME_VALIDATION"] = "1"
+    os.environ["NOTIFICATION_BASE_URL"] = "http://127.0.0.1:9"
+    # Disable audit emission during unit tests.
+    os.environ["AUDIT_EMIT_ENABLED"] = "0"
+
     # Ensure `src` package is importable.
     sys.path.insert(0, str(service_root))
 

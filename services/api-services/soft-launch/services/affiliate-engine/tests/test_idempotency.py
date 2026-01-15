@@ -40,3 +40,40 @@ def test_dashboard_has_expected_keys(client) -> None:
     dash = client.get(f"/affiliates/{affiliate['id']}/dashboard").json()
     for key in ("clicks", "attributions", "conversions", "conversion_rate", "total_earnings"):
         assert key in dash
+
+
+import pytest
+
+
+@pytest.mark.anyio
+async def test_dashboard_stream_emits_json() -> None:
+    import json
+
+    from src.app.db import Base, engine
+    from src.app.db import get_db_session
+    from src.app.main import affiliate_dashboard_stream
+    from src.app.models import Affiliate
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with get_db_session() as db:
+        affiliate = Affiliate(name="DashStream", phone="+260900000004")
+        db.add(affiliate)
+        await db.commit()
+        await db.refresh(affiliate)
+
+    resp = await affiliate_dashboard_stream(affiliate_id=str(affiliate.id), days=30)
+    assert resp.media_type == "text/event-stream"
+
+    first_chunk = await anext(resp.body_iterator)
+    if isinstance(first_chunk, bytes):
+        first_chunk = first_chunk.decode("utf-8", errors="replace")
+
+    first_event = first_chunk.split("\n\n", 1)[0]
+    assert first_event.startswith("data: ")
+
+    payload = first_event[len("data: ") :]
+    doc = json.loads(payload)
+    for key in ("clicks", "attributions", "conversions", "conversion_rate", "total_earnings"):
+        assert key in doc
