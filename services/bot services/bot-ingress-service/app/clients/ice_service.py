@@ -18,6 +18,7 @@ async def preload_session_context(
     platform: str,
     bot_type: str,
     business_id: Optional[str] = None,
+    required_blobs: Optional[list[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Ask ICE to preload/cache session context for this session.
 
@@ -38,7 +39,7 @@ async def preload_session_context(
         "platform": platform,
         "bot_type": bot_type,
         "reason": "ingress_cache_miss",
-        "required_blobs": ["session", "order_draft", "bot_meta"],
+        "required_blobs": required_blobs or ["session", "order_draft", "bot_meta"],
     }
     if business_id:
         payload["business_id"] = business_id

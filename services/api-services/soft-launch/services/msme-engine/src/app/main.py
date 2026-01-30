@@ -11,11 +11,19 @@ import time
 import uuid
 import httpx
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.config import get_jwt_secret, get_notification_base_url, get_notification_timeout_seconds
+from src.app.config import (
+    get_jwt_secret,
+    get_notification_base_url,
+    get_notification_timeout_seconds,
+    get_payment_revenue_base_url,
+    get_pg_schema,
+    get_subscription_price_minor,
+    get_subscription_currency,
+)
 from src.app.db import Base, engine, get_db_session
 from src.app.idempotency import idempotent_execute, scope_for
 from src.app import audit_client
@@ -44,6 +52,7 @@ from src.app.schemas import (
     PaymentSuccessEvent,
     RefreshRequest,
     SubscribeRequest,
+    SubscribeAndPayRequest,
     SubscriptionInitiateOut,
     SubscriptionOut,
     TokenPair,
@@ -60,6 +69,13 @@ from src.app.security import (
     jwt_decode,
     verify_password,
 )
+import asyncio
+
+try:
+    # background reminder job (best-effort import; tests may not need DB)
+    from src.app.jobs import subscription_reminder
+except Exception:
+    subscription_reminder = None
 
 app = FastAPI(title="MSME Engine (Soft Launch)")
 
@@ -158,6 +174,18 @@ _REQ_COUNT = Counter("http_requests_total", "Total HTTP requests", ["service", "
 _REQ_LATENCY = Histogram("http_request_duration_seconds", "HTTP request duration", ["service", "method", "route"])
 
 
+async def startup() -> None:
+    async with engine.begin() as conn:
+        schema = get_pg_schema()
+        if schema and str(engine.url).startswith("postgres"):
+            await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+        await conn.run_sync(Base.metadata.create_all)
+
+
+# Register startup handler
+app.add_event_handler("startup", startup)
+
+
 @app.middleware("http")
 async def correlation_id_middleware(request: Request, call_next):
     start = time.perf_counter()
@@ -175,13 +203,34 @@ async def correlation_id_middleware(request: Request, call_next):
     return response
 
 
-@app.on_event("startup")
 async def startup() -> None:
     async with engine.begin() as conn:
+        schema = get_pg_schema()
+        # ensure per-service schema exists and set search_path so create_all runs in that schema
+        try:
+            await conn.exec_driver_sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+            await conn.exec_driver_sql(f"SET search_path TO {schema}, public")
+        except Exception:
+            # best-effort: continue and let create_all fail noisily if this DB doesn't support schemas
+            pass
         await conn.run_sync(Base.metadata.create_all)
 
     async for db in get_db_session():
         await _ensure_default_roles(db)
+
+    # Start background reminder loop if available. Run as best-effort.
+    if subscription_reminder is not None:
+        try:
+            # create a background task that runs periodic checks
+            app.state._subscription_reminder_task = asyncio.create_task(
+                subscription_reminder.background_loop(get_db_session, app)
+            )
+        except Exception:
+            logger.exception("failed_starting_subscription_reminder")
+
+
+# Register startup handler without using the deprecated decorator.
+app.add_event_handler("startup", startup)
 
 
 @app.get("/health")
@@ -203,6 +252,7 @@ async def _ensure_default_roles(db: AsyncSession) -> None:
         ("msme", "MSME owner"),
         ("staff", "Internal staff"),
         ("default", "Default user"),
+        ("freeter", "Freeter / downgraded user"),
     ]
     created = False
     for name, desc in defaults:
@@ -729,6 +779,16 @@ async def business_subscribe(
             b.subscription_expiry = None
             await db.commit()
 
+        else:
+            # record expected subscription price/currency on the business for paid plans
+            try:
+                b.subscription_plan = plan
+                b.subscription_price_minor = get_subscription_price_minor(plan)
+                b.subscription_currency = get_subscription_currency(plan)
+                await db.commit()
+            except Exception:
+                logger.exception("set_subscription_price_failed")
+
             await _notify_in_app(
                 user_id=b.owner_id,
                 business_id=b.id,
@@ -744,6 +804,15 @@ async def business_subscribe(
             "plan": plan,
             "currency": "ZMW",
         }
+        await _record_event(
+            db=db,
+            event_id=f"subscription_initiated:{b.id}:{uuid.uuid4().hex}",
+            event_type="subscription_initiated",
+            business_id=b.id,
+            source="business_service",
+            correlation_id=getattr(request.state, "correlation_id", None),
+            meta=payment_request,
+        )
 
         await _record_event(
             db=db,
@@ -766,6 +835,195 @@ async def business_subscribe(
         return 201, SubscriptionInitiateOut(subscription=_subscription_out(sub), payment_request=payment_request)
 
     status, body = await idempotent_execute(db=db, scope=scope_for("POST", "/business/{id}/subscribe"), key=x_idempotency_key, run=_run)
+    response.status_code = int(status)
+    return body
+
+
+
+@app.post("/business/{id}/subscribe_and_pay", response_model=SubscriptionInitiateOut)
+async def business_subscribe_and_pay(
+    request: Request,
+    id: str,
+    payload: SubscribeAndPayRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db_session),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """Subscribe and optionally initiate a deposit to payment-revenue.
+
+    If `amount_minor` and `phone_number` are provided and the plan is paid,
+    msme will call `payment-revenue`'s `/pawapay/deposits/initiate` and forward
+    the caller's `Authorization` header (if present) so `payment-revenue` can
+    record the initiator.
+    """
+    correlation_id = request.headers.get("X-Correlation-Id") or getattr(request.state, "correlation_id", None) or str(uuid.uuid4())
+
+    async def _run():
+        b = (await db.execute(select(Business).where(Business.id == id))).scalar_one_or_none()
+        if not b:
+            raise HTTPException(status_code=404, detail="business_not_found")
+
+        plan = _normalize_plan(payload.plan)
+
+        sub_status = "active" if plan == _PLAN_FREE else "pending_payment"
+        sub = BusinessSubscription(business_id=b.id, plan=plan, status=sub_status)
+        db.add(sub)
+        await db.commit()
+        await db.refresh(sub)
+
+        payment_request = {
+            "reference_id": sub.id,
+            "business_id": b.id,
+            "plan": plan,
+            "currency": payload.currency or "ZMW",
+        }
+
+        # If caller provided payment details and plan is paid, call payment-revenue
+        pr_result = None
+        if plan == _PLAN_PAID and payload.amount_minor and payload.phone_number and payload.provider:
+            # Require caller Authorization header for payment-initiating flows so payment-revenue can record initiator.
+            auth = request.headers.get("Authorization")
+            if not auth:
+                raise HTTPException(status_code=401, detail="authorization_required_for_payment")
+
+            pr_base = get_payment_revenue_base_url().rstrip("/")
+            headers: dict[str, str] = {"Authorization": auth}
+            # Use X-Idempotency-Key if provided or provided deposit_id
+            idem = payload.deposit_id or x_idempotency_key or sub.id
+            if idem:
+                headers["X-Idempotency-Key"] = idem
+
+            # Persist provided amount on business (caller-provided amount overrides default plan price)
+            try:
+                if payload.amount_minor:
+                    b.subscription_price_minor = int(payload.amount_minor)
+                else:
+                    b.subscription_price_minor = get_subscription_price_minor(plan)
+                b.subscription_currency = payload.currency or get_subscription_currency(plan)
+                b.subscription_plan = plan
+                await db.commit()
+            except Exception:
+                logger.exception("persist_subscription_price_failed")
+
+            body = {
+                "depositId": payload.deposit_id or None,
+                "order_id": None,
+                "business_id": b.id,
+                "amount_minor": int(payload.amount_minor) if payload.amount_minor else int(b.subscription_price_minor or 0),
+                "currency": payload.currency or (b.subscription_currency or "ZMW"),
+                "phoneNumber": payload.phone_number,
+                "provider": payload.provider,
+                "metadata": {"reference_id": sub.id, "source": "msme-subscribe"},
+            }
+
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    r = await client.post(f"{pr_base}/pawapay/deposits/initiate", json=body, headers=headers)
+                if r.status_code not in (200, 201):
+                    if r.status_code == 401:
+                        # Translate upstream 401 into a clearer local 401 so callers know
+                        # an Authorization header is required for payment-initiating calls.
+                        raise HTTPException(status_code=401, detail="authorization_required_for_payment")
+                    raise HTTPException(status_code=502, detail=f"payment_revenue_initiate_failed_{r.status_code}")
+                pr_result = r.json()
+            except httpx.RequestError:
+                raise HTTPException(status_code=502, detail="payment_revenue_unreachable")
+
+        await _record_event(
+            db=db,
+            event_id=f"subscription_initiated:{b.id}:{uuid.uuid4().hex}",
+            event_type="subscription_initiated",
+            business_id=b.id,
+            source="business_service",
+            correlation_id=correlation_id,
+            meta=payment_request,
+        )
+
+        await _notify_in_app(
+            user_id=b.owner_id,
+            business_id=b.id,
+            template="subscription_initiated",
+            payload={**payment_request, "message": "Subscription started. Please complete payment if required."},
+            correlation_id=correlation_id,
+        )
+
+        result = SubscriptionInitiateOut(subscription=_subscription_out(sub), payment_request=payment_request)
+            await _record_event(
+                db=db,
+                event_id=f"subscription_initiated:{b.id}:{uuid.uuid4().hex}",
+                event_type="subscription_initiated",
+                business_id=b.id,
+                source="business_service",
+                correlation_id=correlation_id,
+                meta=payment_request,
+            )
+        # Attach payment-revenue response when available.
+        if pr_result is not None:
+            result.payment_request["payment_revenue_response"] = pr_result
+
+        # Send immediate user-facing notification depending on payment outcome.
+        try:
+            if plan == _PLAN_FREE:
+                await _notify_in_app(
+                    user_id=b.owner_id,
+                    business_id=b.id,
+                    template="subscription_activated",
+                    payload={"plan": "free", "message": "Welcome — your free subscription is active!"},
+                    correlation_id=correlation_id,
+                )
+            else:
+                # Paid plan: if payment-revenue returned a completed status, confirm immediately.
+                status_val = None
+                if isinstance(pr_result, dict):
+                    status_val = str(pr_result.get("status") or pr_result.get("status_code") or "").upper()
+
+                if status_val == "COMPLETED":
+                    await _notify_in_app(
+                        user_id=b.owner_id,
+                        business_id=b.id,
+                        template="subscription_payment_success",
+                        payload={"plan": plan, "message": "Congratulations — payment received and subscription is active."},
+                        correlation_id=correlation_id,
+                    )
+                else:
+                    await _notify_in_app(
+                        user_id=b.owner_id,
+                        business_id=b.id,
+                        template="subscription_pending_payment",
+                        payload={"plan": plan, "message": "Payment pending — we'll notify you when it's confirmed."},
+                        correlation_id=correlation_id,
+                    )
+        except Exception:
+            # best-effort: do not fail the main flow if notification fails
+                        await _record_event(
+                            db=db,
+                            event_id=f"payment_success:{b.id}:{uuid.uuid4().hex}",
+                            event_type="payment_success",
+                            business_id=b.id,
+                            source="payment_service",
+                            correlation_id=correlation_id,
+                            meta={"plan": plan, "payment_response": pr_result},
+                        )
+            logger.exception("notify_in_app_failed")
+
+        return 201, result.model_dump(mode="json")
+
+    # Early guard: require Authorization header for payment-initiating subscribe_and_pay requests.
+    plan = _normalize_plan(payload.plan)
+    if plan == _PLAN_PAID and payload.amount_minor and payload.phone_number and payload.provider:
+        if not request.headers.get("Authorization"):
+                        await _record_event(
+                            db=db,
+                            event_id=f"payment_pending:{b.id}:{uuid.uuid4().hex}",
+                            event_type="payment_pending",
+                            business_id=b.id,
+                            source="payment_service",
+                            correlation_id=correlation_id,
+                            meta={"plan": plan, "payment_response": pr_result},
+                        )
+            raise HTTPException(status_code=401, detail="authorization_required_for_payment")
+
+    status, body = await idempotent_execute(db=db, scope=scope_for("POST", "/business/{id}/subscribe_and_pay"), key=x_idempotency_key, run=_run)
     response.status_code = int(status)
     return body
 
@@ -895,7 +1153,11 @@ async def payment_success(
             user_id=b.owner_id,
             business_id=b.id,
             template="subscription_payment_success",
-            payload={"plan": plan, "paid_until": payload.paid_until.isoformat().replace("+00:00", "Z") if payload.paid_until else None},
+            payload={
+                "plan": plan,
+                "paid_until": payload.paid_until.isoformat().replace("+00:00", "Z") if payload.paid_until else None,
+                "message": "Congratulations — payment received and your subscription is active.",
+            },
             correlation_id=getattr(request.state, "correlation_id", None),
         )
 
@@ -944,7 +1206,11 @@ async def payment_failed(
             user_id=b.owner_id,
             business_id=b.id,
             template="subscription_payment_failed",
-            payload={"reason": payload.reason, "plan": payload.plan},
+            payload={
+                "reason": payload.reason,
+                "plan": payload.plan,
+                "message": f"Payment failed{(': ' + payload.reason) if payload.reason else ''}. Please retry.",
+            },
             correlation_id=getattr(request.state, "correlation_id", None),
         )
 
@@ -979,3 +1245,78 @@ async def events_for_business(business_id: str, limit: int = 200, offset: int = 
         )
         for r in rows
     ]
+
+
+# ---- Notification proxy (frontend-friendly) ----
+
+
+@app.post("/notification/send")
+async def notification_send(request: Request):
+    """Proxy endpoint for frontend to send notifications via the central notification service."""
+    body = await request.json()
+    base = get_notification_base_url().rstrip("/")
+    headers: dict[str, str] = {}
+    # forward correlation id and auth if present
+    cid = request.headers.get("X-Correlation-Id")
+    if cid:
+        headers["X-Correlation-Id"] = cid
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(f"{base}/notification/send", json=body, headers=headers)
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="notification_service_unreachable")
+
+    try:
+        return JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception:
+        return JSONResponse(status_code=r.status_code, content={"detail": "invalid_notification_response"})
+
+
+@app.get("/notification/user/{user_id}")
+async def notification_list_for_user(user_id: str, request: Request):
+    base = get_notification_base_url().rstrip("/")
+    headers: dict[str, str] = {}
+    cid = request.headers.get("X-Correlation-Id")
+    if cid:
+        headers["X-Correlation-Id"] = cid
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{base}/notification/user/{user_id}", headers=headers)
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="notification_service_unreachable")
+
+    try:
+        return JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception:
+        return JSONResponse(status_code=r.status_code, content={"detail": "invalid_notification_response"})
+
+
+@app.get("/notification/{id}")
+async def notification_get(id: str, request: Request):
+    base = get_notification_base_url().rstrip("/")
+    headers: dict[str, str] = {}
+    cid = request.headers.get("X-Correlation-Id")
+    if cid:
+        headers["X-Correlation-Id"] = cid
+    auth = request.headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{base}/notification/{id}", headers=headers)
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="notification_service_unreachable")
+
+    try:
+        return JSONResponse(status_code=r.status_code, content=r.json())
+    except Exception:
+        return JSONResponse(status_code=r.status_code, content={"detail": "invalid_notification_response"})

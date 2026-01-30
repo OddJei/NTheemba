@@ -107,3 +107,4 @@ class UserServiceClient:
             return {"error": f"User preferences update error: {str(e)}"}
 
 
+

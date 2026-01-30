@@ -7,8 +7,10 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 import httpx
 import asyncio
+import os
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -20,6 +22,7 @@ from src.app.events import add_outbox_event
 from src.app.idempotency import idempotent_execute, scope_for
 from src.app.models import Category, Inventory, OutboxEvent, Product, ProductVariant
 from src.app import audit_client
+from src.app import security
 from src.app.schemas import (
     BusinessCatalogOut,
     CategoryCreate,
@@ -43,6 +46,15 @@ logger = logging.getLogger("catalog_inventory")
 _SERVICE = "catalog-inventory"
 _REQ_COUNT = Counter("http_requests_total", "Total HTTP requests", ["service", "method", "route", "status"])
 _REQ_LATENCY = Histogram("http_request_duration_seconds", "HTTP request duration", ["service", "method", "route"])
+
+_AUTH_SKIP_PATHS = {
+    "/health",
+    "/metrics",
+    "/openapi.json",
+    "/docs",
+    "/docs/index.html",
+    "/redoc",
+}
 
 # Install Python log forwarding to audit-service (best-effort).
 try:
@@ -95,10 +107,30 @@ async def correlation_id_middleware(request: Request, call_next):
     return response
 
 
-@app.on_event("startup")
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    # Require Bearer access tokens issued by msme-engine for all routes except health/metrics/docs.
+    if request.url.path in _AUTH_SKIP_PATHS:
+        return await call_next(request)
+    try:
+        await security.require_access_token(request)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
+
+
 async def startup() -> None:
     async with engine.begin() as conn:
+        schema = os.getenv("PG_SCHEMA", "").strip()
+        if schema and str(engine.url).startswith("postgres"):
+            from sqlalchemy import text
+
+            await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
         await conn.run_sync(Base.metadata.create_all)
+
+
+# Register startup handler without using the deprecated decorator.
+app.add_event_handler("startup", startup)
 
 
 def _correlation_id(request: Request) -> Optional[str]:

@@ -16,8 +16,17 @@ import src.app.models as models
 from src.app.db import DATABASE_URL
 
 
+def _sync_database_url() -> str:
+    url = os.getenv("DATABASE_URL") or DATABASE_URL
+    if url.startswith("sqlite+aiosqlite"):
+        return url.replace("sqlite+aiosqlite", "sqlite", 1)
+    if url.startswith("postgresql+asyncpg"):
+        return url.replace("postgresql+asyncpg", "postgresql", 1)
+    return url
+
+
 def run_migrations_offline():
-    url = DATABASE_URL
+    url = _sync_database_url()
     context.configure(url=url, target_metadata=models.Base.metadata, literal_binds=True)
 
     with context.begin_transaction():
@@ -32,11 +41,9 @@ def do_run_migrations(connection: Connection):
 
 
 def run_migrations_online():
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    section = config.get_section(config.config_ini_section, {})
+    section["sqlalchemy.url"] = _sync_database_url()
+    connectable = engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
 
     with connectable.connect() as connection:
         do_run_migrations(connection)

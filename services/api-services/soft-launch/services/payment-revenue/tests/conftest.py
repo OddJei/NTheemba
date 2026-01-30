@@ -28,3 +28,10 @@ def client() -> TestClient:
 
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture()
+def auth_headers() -> dict[str, str]:
+    # Most endpoints are protected by auth middleware; use the test shortcut.
+    # Admin role bypasses business scoping checks in unit tests.
+    return {"Authorization": "Bearer dummy-token", "X-Role": "admin"}

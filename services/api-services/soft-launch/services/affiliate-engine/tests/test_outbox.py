@@ -1,7 +1,7 @@
 
 import pytest
 from unittest.mock import AsyncMock, patch
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
 import uuid
@@ -23,6 +23,16 @@ async def test_outbox_dispatch_marks_events_dispatched(service_root):
     event_id = _uuid()
     
     async with get_db_session() as db:
+        # Ensure DB schema exists and clean state: create tables and remove any undispatched events
+        from src.app.db import engine, Base
+        # Ensure models are imported so their tables are registered on Base.metadata
+        import src.app.models as models  # noqa: F401
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        await db.execute(text("DELETE FROM affiliate_events WHERE dispatched_at IS NULL"))
+        await db.commit()
+
         event = AffiliateEvent(
             event_id=event_id,
             affiliate_id="aff1",
@@ -68,6 +78,16 @@ async def test_outbox_dispatch_skips_already_dispatched(service_root):
     event_id = _uuid()
     
     async with get_db_session() as db:
+        # Ensure DB schema exists and clear any leftover events to make test deterministic
+        from src.app.db import engine, Base
+        # Ensure models are imported so their tables are registered on Base.metadata
+        import src.app.models as models  # noqa: F401
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        await db.execute(text("DELETE FROM affiliate_events"))
+        await db.commit()
+
         event = AffiliateEvent(
             event_id=event_id,
             affiliate_id="aff1",

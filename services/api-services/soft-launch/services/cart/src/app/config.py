@@ -24,3 +24,8 @@ def get_notification_timeout_seconds() -> float:
         return float(os.getenv("NOTIFICATION_TIMEOUT_SECONDS", "3.0"))
     except ValueError:
         return 3.0
+
+
+def get_jwt_secret() -> str:
+    # Shared secret used by msme-engine for issuing access tokens; other services verify with it.
+    return os.getenv("MSME_JWT_SECRET", "change-me")

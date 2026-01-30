@@ -102,6 +102,8 @@ class Business(Base):
 
     subscription_plan: Mapped[str | None] = mapped_column(String(60), nullable=True)
     subscription_expiry: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    subscription_price_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    subscription_currency: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     delivery_locations: Mapped[dict | None] = mapped_column(SqliteJson, nullable=True)
     tags: Mapped[list[str] | None] = mapped_column(SqliteJson, nullable=True)
@@ -124,6 +126,21 @@ class BusinessSubscription(Base):
 
     status: Mapped[str] = mapped_column(String(30), default="pending_payment")
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SubscriptionReminder(Base):
+    __tablename__ = "subscription_reminders"
+    __table_args__ = (Index("ix_subscription_reminder_business", "business_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    business_id: Mapped[str] = mapped_column(String(36), index=True)
+
+    reminders_sent: Mapped[int] = mapped_column(Integer, default=0)
+    last_reminder_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    auto_pay_attempted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class MsmeCode(Base):
@@ -152,13 +169,13 @@ class MsmeEvent(Base):
         Index("ix_msme_events_type_time", "event_type", "occurred_at"),
     )
 
-    event_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     business_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("businesses.id"), nullable=True, index=True)
     event_type: Mapped[str] = mapped_column(String(40), index=True)
     occurred_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
     source: Mapped[str | None] = mapped_column(String(60), nullable=True)
-    correlation_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     meta: Mapped[dict | None] = mapped_column("metadata", SqliteJson, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

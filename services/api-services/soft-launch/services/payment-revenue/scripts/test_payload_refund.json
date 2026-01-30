@@ -1,0 +1,7 @@
+{
+  "refundId": "test-ref-1",
+  "status": "COMPLETED",
+  "amount": "25.00",
+  "currency": "ZMW",
+  "depositId": "test-dep-1"
+}

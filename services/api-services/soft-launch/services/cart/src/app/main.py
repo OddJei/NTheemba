@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +20,8 @@ from src.app.schemas import CartCreate, CartOut, CartItemCreate, CartItemOut, Ch
 from src.app import events
 from src.app import config as _config
 from src.app import audit_client
+from src.app import security
+import os
 
 
 async def _notify_in_app(*, user_id: str | None, business_id: str | None, template: str, payload: dict | None, correlation_id: str | None) -> None:
@@ -50,6 +53,15 @@ logger = logging.getLogger("cart")
 _SERVICE = "cart"
 _REQ_COUNT = Counter("http_requests_total", "Total HTTP requests", ["service", "method", "route", "status"])
 _REQ_LATENCY = Histogram("http_request_duration_seconds", "HTTP request duration", ["service", "method", "route"])
+
+_AUTH_SKIP_PATHS = {
+    "/health",
+    "/metrics",
+    "/openapi.json",
+    "/docs",
+    "/docs/index.html",
+    "/redoc",
+}
 
 
 async def _inventory_update(
@@ -99,10 +111,30 @@ async def correlation_id_middleware(request: Request, call_next):
     return response
 
 
-@app.on_event("startup")
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    # Require Bearer access tokens issued by msme-engine for all routes except health/metrics/docs.
+    if request.url.path in _AUTH_SKIP_PATHS:
+        return await call_next(request)
+    try:
+        await security.require_access_token(request)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
+
+
 async def startup() -> None:
     async with engine.begin() as conn:
+        schema = os.getenv("PG_SCHEMA", "").strip()
+        if schema and str(engine.url).startswith("postgres"):
+            from sqlalchemy import text
+
+            await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
         await conn.run_sync(Base.metadata.create_all)
+
+
+# Register startup handler without using the deprecated decorator.
+app.add_event_handler("startup", startup)
 
 
 @app.get("/health")

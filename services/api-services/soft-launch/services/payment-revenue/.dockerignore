@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+.env
+*.db
+.DS_Store
+
+# Non-production / local-only
+tests/
+design/
+scripts/
+data/
+# Ignore local notes/artifacts, but keep requirements*.txt
+pawapay*.txt
+pytest_*.txt
+dummy data.txt
+*.md
+ngrok.json
+docker-compose.yml
+fly.toml

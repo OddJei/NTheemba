@@ -22,6 +22,16 @@ class SessionMode(enum.Enum):
 class SessionStatus(enum.Enum):
     active = "active"
     inactive = "inactive"
+    closed = "closed"
+
+
+class SessionState(enum.Enum):
+    chat = "chat"
+    cart = "cart"
+    order = "order"
+    payment = "payment"
+    delivery = "delivery"
+    closed = "closed"
 
 
 def gen_uuid():
@@ -38,6 +48,10 @@ class Bot(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Optimistic concurrency control for session updates
+    version = Column(Integer, nullable=False, default=1)
+
+    __mapper_args__ = {"version_id_col": version}
 
 
 class Session(Base):
@@ -57,9 +71,21 @@ class Session(Base):
     bot_type = Column(Enum(BotType), nullable=False)
     session_mode = Column(Enum(SessionMode), nullable=False)
     platform = Column(String, nullable=False)
+    # `state` records the current logical stage of the session. Use
+    # `SessionStateCycle` records to track the start/completion of each stage and
+    # preserve affiliate attribution per-cycle (so attribution is tied to the
+    # user's lifecycle segment rather than the Session row).
+    state = Column(Enum(SessionState), nullable=False, default=SessionState.chat)
+    # Timestamp when the session entered the current `state`.
+    state_entered_at = Column(DateTime, nullable=True)
+    inactive_at = Column(DateTime, nullable=True)
+    reactivated_at = Column(DateTime, nullable=True)
+    closed_at = Column(DateTime, nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
     current_node = Column(String, nullable=True)
     last_event_id = Column(String, nullable=True)
     object_context = Column(JSON().with_variant(JSONB, "postgresql"), nullable=True)
+    # affiliate attribution is stored per-cycle in SessionStateCycle
     status = Column(Enum(SessionStatus), nullable=False, default=SessionStatus.active)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -84,5 +110,27 @@ class Event(Base):
     updated_fields = Column(JSON().with_variant(JSONB, "postgresql"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    session = relationship("Session")
+
+
+class SessionStateCycle(Base):
+    __tablename__ = "session_state_cycles"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    # Records one lifecycle 'cycle' for a session (e.g. chat -> cart -> order).
+    # Fields:
+    # - `cycle_type`: the `SessionState` this cycle represents
+    # - `started_at` / `completed_at`: timestamps for the cycle
+    # - `initiated_by_affiliate` + `affiliate_*` / `meta`: attribution captured
+    #   when the cycle was started (copied forward when transitions occur).
+    session_id = Column(String, ForeignKey("sessions.id"), nullable=False)
+    cycle_type = Column(Enum(SessionState), nullable=False)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    initiated_by_affiliate = Column(Boolean, default=False, nullable=False)
+    affiliate_code = Column(String, nullable=True)
+    affiliate_id = Column(String, nullable=True)
+    meta = Column(JSON().with_variant(JSONB, "postgresql"), nullable=True)
 
     session = relationship("Session")

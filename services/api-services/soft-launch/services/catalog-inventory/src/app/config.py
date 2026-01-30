@@ -54,3 +54,8 @@ def get_notification_timeout_seconds() -> float:
 def skip_msme_validation() -> bool:
     # Test/dev escape hatch: when enabled, product creation will not call MSME engine.
     return os.getenv("CATALOG_SKIP_MSME_VALIDATION", "0") in ("1", "true", "True")
+
+
+def get_jwt_secret() -> str:
+    # Shared secret used by msme-engine for issuing access tokens; other services verify with it.
+    return os.getenv("MSME_JWT_SECRET", "change-me")

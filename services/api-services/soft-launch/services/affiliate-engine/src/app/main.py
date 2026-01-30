@@ -3,16 +3,19 @@ from __future__ import annotations
 import secrets
 import string
 import uuid
+import urllib.parse
 from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse, Response, JSONResponse
 import logging
 import time
 import uuid
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+import asyncio
+import json
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest, CollectorRegistry
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.config import get_admin_key, get_epoch_days_default, get_pool_pct_default, get_catalog_base_url, get_msme_base_url, skip_link_target_validation
 from src.app.config import (
     get_admin_key,
+    get_affiliate_default_whatsapp_number,
+    get_affiliate_token_prefix,
+    get_affiliate_token_ttl_seconds,
     get_catalog_base_url,
     get_epoch_days_default,
     get_msme_base_url,
@@ -27,7 +33,9 @@ from src.app.config import (
     get_notification_timeout_seconds,
     get_pool_pct_default,
     skip_link_target_validation,
+    get_pg_schema,
 )
+from sqlalchemy import text
 import httpx
 from src.app.db import Base, engine, get_db_session
 from src.app.idempotency import idempotent_execute, scope_for
@@ -38,6 +46,7 @@ from src.app.models import (
     AffiliateEarning,
     AffiliateEvent,
     AffiliateLink,
+    AffiliateToken,
     AffiliateTier,
     AffiliateTierAssignment,
     CommissionSettings,
@@ -55,11 +64,15 @@ from src.app.pool import (
     get_or_open_epoch,
     get_open_epoch,
 )
+from src.app.schemas import OrderDeliveredEvent
 from src.app.schemas import (
     AffiliateCreate,
     AffiliateOut,
     AttributionCreate,
     AttributionOut,
+    AffiliateLinkResolveOut,
+    TokenResolveRequest,
+    TokenResolveOut,
     ClickCreate,
     ClickOut,
     EarningOut,
@@ -80,19 +93,118 @@ from src.app.schemas import (
     PoolAllocationOut,
     AffiliateEventOut,
 )
+
+from fastapi import Depends
+from contextlib import asynccontextmanager
+
 from src.app.events import OrderCreatedEvent
 from src.app import audit_client
+from src.app import security
 
-app = FastAPI(title="Affiliate Engine (Soft Launch)")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Ensure per-service schema exists (Postgres) and set search_path so
+    # `Base.metadata.create_all()` creates tables in the correct schema.
+    async with engine.begin() as conn:
+        try:
+            schema = get_pg_schema()
+            await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+            await conn.execute(text(f"SET search_path TO {schema}"))
+        except Exception:
+            # Non-Postgres backends will ignore schema operations.
+            pass
+
+        await conn.run_sync(Base.metadata.create_all)
+
+    # Ensure default pool config exists.
+    await _ensure_schema_and_defaults()
+
+    yield
+
+
+app = FastAPI(title="Affiliate Engine (Soft Launch)", lifespan=lifespan)
+
+
+async def _ensure_schema_and_defaults() -> None:
+    async with get_db_session() as db:
+        settings = await get_or_create_settings(
+            db,
+            pool_pct_default=get_pool_pct_default(),
+            epoch_days_default=get_epoch_days_default(),
+        )
+        await ensure_default_tiers(db)
+        await get_or_open_epoch(db, pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days))
+
+
+async def startup_event() -> None:
+    # Ensure per-service schema exists (Postgres) and set search_path so
+    # `Base.metadata.create_all()` creates tables in the correct schema.
+    async with engine.begin() as conn:
+        try:
+            schema = get_pg_schema()
+            await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+            await conn.execute(text(f"SET search_path TO {schema}"))
+        except Exception:
+            # Non-Postgres backends will ignore schema operations.
+            pass
+
+        await conn.run_sync(Base.metadata.create_all)
+
+    # Ensure default pool config exists.
+    await _ensure_schema_and_defaults()
+
+
+# Register startup handler for test compatibility without using the deprecated decorator.
+app.add_event_handler("startup", startup_event)
 
 logger = logging.getLogger("affiliate_engine")
 
 _SERVICE = "affiliate-engine"
-_REQ_COUNT = Counter("http_requests_total", "Total HTTP requests", ["service", "method", "route", "status"])
-_REQ_LATENCY = Histogram("http_request_duration_seconds", "HTTP request duration", ["service", "method", "route"])
+_PROM_REGISTRY = CollectorRegistry()
+
+# Use a dedicated registry so tests can import the app multiple times without
+# causing duplicate timeseries errors in the global CollectorRegistry.
+try:
+    _REQ_COUNT = Counter(
+        "http_requests_total",
+        "Total HTTP requests",
+        ["service", "method", "route", "status"],
+        registry=_PROM_REGISTRY,
+    )
+    _REQ_LATENCY = Histogram(
+        "http_request_duration_seconds",
+        "HTTP request duration",
+        ["service", "method", "route"],
+        registry=_PROM_REGISTRY,
+    )
+except ValueError:
+    # If metrics were already registered in this registry (re-imports/tests),
+    # reuse the existing collectors to avoid ValueError on duplicated timeseries.
+    _REQ_COUNT = _PROM_REGISTRY._names_to_collectors.get("http_requests_total")
+    _REQ_LATENCY = _PROM_REGISTRY._names_to_collectors.get("http_request_duration_seconds")
 
 # Forward important Python logs (WARNING+) to audit-service.
 audit_client.install_audit_log_forwarding(service=_SERVICE)
+
+_AUTH_SKIP_PATHS = {
+    "/health",
+    "/metrics",
+    "/openapi.json",
+    "/docs",
+    "/docs/index.html",
+    "/redoc",
+}
+
+# Prefix-based public routes (e.g. affiliate click landing/resolve endpoints).
+_AUTH_SKIP_PREFIXES = (
+    "/a/",
+    "/affiliates",
+    "/track",
+    "/events",
+    "/pool",
+    "/admin",
+    "/attribute",
+)
 
 async def _notify_in_app(*, user_id: str | None, business_id: str | None, template: str, payload: dict | None, correlation_id: str | None) -> None:
     base = get_notification_base_url().rstrip("/")
@@ -117,6 +229,34 @@ async def _notify_in_app(*, user_id: str | None, business_id: str | None, templa
         logger.info("notification_unreachable", extra={"template": template, "correlation_id": correlation_id})
 
 
+async def _notify_channels(*, user_id: str | None, business_id: str | None, template: str, payload: dict | None, correlation_id: str | None, channels: list[str]) -> None:
+    """Send notifications on multiple channels via the notification service.
+
+    Channels are strings understood by the notification service, e.g. `in_app`, `sms`, `email`.
+    """
+    base = get_notification_base_url().rstrip("/")
+    timeout = get_notification_timeout_seconds()
+    headers: dict[str, str] = {}
+    if correlation_id:
+        headers["X-Correlation-Id"] = correlation_id
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            for ch in channels:
+                await client.post(
+                    f"{base}/notification/send",
+                    json={
+                        "channel": ch,
+                        "user_id": user_id,
+                        "business_id": business_id,
+                        "template": template,
+                        "payload": payload or {},
+                    },
+                    headers=headers,
+                )
+    except httpx.RequestError:
+        logger.info("notification_unreachable_multi", extra={"template": template, "correlation_id": correlation_id, "channels": channels})
+
+
 @app.middleware("http")
 async def correlation_id_middleware(request: Request, call_next):
     start = time.perf_counter()
@@ -134,20 +274,479 @@ async def correlation_id_middleware(request: Request, call_next):
     return response
 
 
-@app.on_event("startup")
-async def startup() -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+@app.post("/events/order/delivered")
+async def ingest_order_delivered(request: Request, payload: OrderDeliveredEvent):
+    """Mark affiliate sale events as delivered when order-delivery confirms delivery.
 
-    # Ensure default pool config exists.
+    This updates `AffiliateEvent.delivered_at` for any sale events matching the `order_id` and
+    marks corresponding `AffiliateAttribution` as `delivered`.
+    """
+    updated = 0
     async with get_db_session() as db:
-        settings = await get_or_create_settings(
-            db,
-            pool_pct_default=get_pool_pct_default(),
-            epoch_days_default=get_epoch_days_default(),
+        # Update matching sale events
+        res = await db.execute(
+            select(AffiliateEvent).where(AffiliateEvent.order_id == payload.order_id, AffiliateEvent.event_type == "sale")
         )
-        await ensure_default_tiers(db)
-        await get_or_open_epoch(db, pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days))
+        rows = res.scalars().all()
+        for ev in rows:
+            ev.delivered_at = payload.occurred_at
+            updated += 1
+
+        # Update attribution status if present
+        res2 = await db.execute(select(AffiliateAttribution).where(AffiliateAttribution.order_id == payload.order_id))
+        attr = res2.scalar_one_or_none()
+        if attr:
+            attr.status = "delivered"
+
+        if updated or attr:
+            await db.commit()
+
+    return {"updated_events": updated, "attribution_updated": bool(attr)}
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    # Require Bearer access tokens issued by msme-engine for all routes except health/metrics/docs.
+    if request.url.path in _AUTH_SKIP_PATHS or any(request.url.path.startswith(p) for p in _AUTH_SKIP_PREFIXES):
+        return await call_next(request)
+    try:
+        await security.require_access_token(request)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
+
+
+@app.get("/admin/epochs/{epoch_id}/debug-scores")
+async def admin_debug_epoch_scores(epoch_id: str, db: AsyncSession = Depends(get_db_session)):
+    """Return computed metrics, raw and final OP scores and debug details for an epoch.
+
+    Useful for inspecting `compute_op_scores` behavior during tests.
+    """
+    res = await db.execute(select(PoolEpoch).where(PoolEpoch.id == epoch_id))
+    epoch = res.scalar_one_or_none()
+    if not epoch:
+        raise HTTPException(status_code=404, detail="epoch_not_found")
+
+    metrics = await compute_metrics_for_epoch(db, epoch)
+
+    # Load settings (weights) if present
+    settings_row = (await db.execute(select(CommissionSettings).where(CommissionSettings.id == 1))).scalar_one_or_none()
+    weights = (settings_row.weights if settings_row else None)
+
+    scores, details = compute_op_scores(metrics, weights)
+
+    # Serialize metrics dataclasses to plain dicts
+    metrics_out = []
+    for m in metrics:
+        metrics_out.append(
+            {
+                "affiliate_id": m.affiliate_id,
+                "sales_volume": m.sales_volume,
+                "unique_buyers": m.unique_buyers,
+                "msme_referrals": m.msme_referrals,
+                "clicks": m.clicks,
+                "attributions": m.attributions,
+                "paid_attributions": m.paid_attributions,
+                "tier_name": m.tier_name,
+                "tier_multiplier": m.tier_multiplier,
+            }
+        )
+
+    return {
+        "epoch_id": epoch.id,
+        "starts_at": epoch.starts_at.isoformat(),
+        "ends_at": (epoch.ends_at.isoformat() if epoch.ends_at else None),
+        "metrics": metrics_out,
+        "scores": scores,
+        "details": details,
+    }
+
+
+# db_session is defined above token_resolve to make it available to Depends()
+
+
+@app.post("/token/resolve", response_model=TokenResolveOut)
+async def token_resolve(
+    request: Request,
+    payload: TokenResolveRequest,
+) -> TokenResolveOut:
+    # Auth enforced by middleware; decoded payload is on request.state.token_payload
+    token_str = payload.token
+    # Accept `ace:xxxx` or raw token
+    prefix = get_affiliate_token_prefix()
+    if token_str.startswith(prefix):
+        token_val = token_str[len(prefix) :]
+    else:
+        token_val = token_str
+
+    # Lookup token
+    async with get_db_session() as db:
+        res = await db.execute(select(AffiliateToken).where(AffiliateToken.token == token_val))
+        token_row = res.scalar_one_or_none()
+    if not token_row:
+        raise HTTPException(status_code=404, detail="token_not_found")
+
+    now = datetime.now(timezone.utc)
+    # Normalize expires_at to timezone-aware for safe comparison (SQLite may return naive datetimes).
+    if getattr(token_row.expires_at, "tzinfo", None) is None:
+        token_row.expires_at = token_row.expires_at.replace(tzinfo=timezone.utc)
+
+    if token_row.expires_at < now:
+        raise HTTPException(status_code=410, detail="token_expired")
+
+    if token_row.used:
+        raise HTTPException(status_code=409, detail="token_already_used")
+
+    # Verify caller business identity (from access token payload or header)
+    token_payload = getattr(request.state, "token_payload", {}) or {}
+    caller_business = token_payload.get("business_id") or request.headers.get("X-Business-Id")
+    if not caller_business:
+        raise HTTPException(status_code=401, detail="business_auth_required")
+
+    if str(caller_business) != str(token_row.business_id):
+        raise HTTPException(status_code=403, detail="token_business_mismatch")
+
+    # Mark token used (single-use)
+    token_row.used = True
+    token_row.used_at = now
+
+    # Capture optional buyer/session info supplied by the bot
+    buyer_phone_raw = getattr(payload, "buyer_phone", None)
+    session_id = getattr(payload, "session_id", None)
+    buyer_phone = _sanitize_whatsapp_number(buyer_phone_raw)
+
+    # Persist buyer/session to token meta for auditing/reference
+    meta = token_row.meta or {}
+    if buyer_phone is not None:
+        meta["buyer_phone"] = buyer_phone
+    if session_id is not None:
+        meta["session_id"] = session_id
+    token_row.meta = meta
+
+    # Fetch product details from catalog
+    product = None
+    try:
+        catalog_url = get_catalog_base_url()
+        async with httpx.AsyncClient(timeout=3.5) as client:
+            r = await client.get(f"{catalog_url}/catalog/product/{token_row.product_id}")
+            if r.status_code == 200:
+                product = r.json() if isinstance(r.json(), dict) else None
+    except httpx.RequestError:
+        product = None
+
+    # Record an event and persist token state
+    async with get_db_session() as db:
+        db.add(token_row)
+        await _record_event(
+            db,
+                AffiliateEvent(
+                event_id=str(uuid.uuid4()),
+                affiliate_id=token_row.affiliate_id,
+                event_type="token_resolved",
+                occurred_at=now,
+                source="token_resolve",
+                correlation_id=getattr(request.state, "correlation_id", None),
+                buyer_phone=buyer_phone,
+                session_id=session_id,
+                order_id=None,
+                business_id=token_row.business_id,
+                amount_zmw=None,
+                meta={"token": token_row.token, "first_token_link_id": token_row.link_id},
+            ),
+        )
+        await db.commit()
+
+    out = TokenResolveOut(
+        product_id=token_row.product_id,
+        name=(product.get("name") if isinstance(product, dict) else None),
+        price=(product.get("price") if isinstance(product, dict) else None),
+        currency=(product.get("currency") if isinstance(product, dict) else "ZMW"),
+        product_url=(product.get("product_url") if isinstance(product, dict) else None),
+        image_url=(product.get("image_url") if isinstance(product, dict) else None),
+        affiliate_id=token_row.affiliate_id,
+        campaign=None,
+        meta=token_row.meta,
+    )
+
+    return out
+
+
+def _sanitize_whatsapp_number(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    s = str(raw).strip().replace(" ", "").replace("-", "")
+    if s.startswith("+"):
+        s = s[1:]
+    if not s.isdigit():
+        return None
+    return s
+
+
+def _extract_whatsapp_number(entitlements: dict | None) -> str | None:
+    if not isinstance(entitlements, dict):
+        return None
+    # Try common keys that MSME / bot services may expose.
+    for key in (
+        "whatsapp_number",
+        "whatsapp_phone",
+        "chatbot_whatsapp_number",
+        "chatbot_phone",
+        "bot_phone",
+        "business_phone",
+        "phone",
+    ):
+        v = entitlements.get(key)
+        cleaned = _sanitize_whatsapp_number(v)
+        if cleaned:
+            return cleaned
+    return None
+
+
+def _product_preview(prod: dict | None) -> dict | None:
+    if not isinstance(prod, dict):
+        return None
+    name = prod.get("name") or prod.get("title") or prod.get("product_name")
+    price = prod.get("price") or prod.get("price_zmw") or prod.get("amount")
+    currency = prod.get("currency") or "ZMW"
+    out = {
+        "name": name,
+        "price": price,
+        "currency": currency,
+    }
+    # remove null-ish values
+    return {k: v for k, v in out.items() if v is not None}
+
+
+@app.get("/a/{affiliate_code}/resolve", response_model=AffiliateLinkResolveOut)
+async def resolve_affiliate_link(
+    request: Request,
+    affiliate_code: str,
+    session_id: str | None = None,
+    user_phone: str | None = None,
+    correlation_id: str | None = None,
+) -> AffiliateLinkResolveOut:
+    # 1) Find link.
+    async with get_db_session() as db:
+        res = await db.execute(select(AffiliateLink).where(AffiliateLink.code == affiliate_code))
+        link = res.scalar_one_or_none()
+    if not link:
+        raise HTTPException(status_code=404, detail="affiliate_link_not_found")
+
+    if not link.product_id or not link.business_id:
+        return AffiliateLinkResolveOut(
+            status="unavailable",
+            reason="link_missing_product_or_business",
+            affiliate_code=affiliate_code,
+            link_id=link.id,
+            affiliate_id=link.affiliate_id,
+            business_id=link.business_id,
+            product_id=link.product_id,
+            campaign=link.campaign,
+        )
+
+    # 2) Validate MSME + product if enabled.
+    ent: dict | None = None
+    prod: dict | None = None
+    if not skip_link_target_validation():
+        msme_url = get_msme_base_url()
+        catalog_url = get_catalog_base_url()
+        try:
+            async with httpx.AsyncClient(timeout=3.5) as client:
+                r = await client.get(f"{msme_url}/business/{link.business_id}/entitlements")
+                if r.status_code == 404:
+                    return AffiliateLinkResolveOut(
+                        status="unavailable",
+                        reason="business_not_found",
+                        affiliate_code=affiliate_code,
+                        link_id=link.id,
+                        affiliate_id=link.affiliate_id,
+                        business_id=link.business_id,
+                        product_id=link.product_id,
+                        campaign=link.campaign,
+                    )
+                if r.status_code != 200:
+                    return AffiliateLinkResolveOut(
+                        status="unavailable",
+                        reason="msme_error",
+                        affiliate_code=affiliate_code,
+                        link_id=link.id,
+                        affiliate_id=link.affiliate_id,
+                        business_id=link.business_id,
+                        product_id=link.product_id,
+                        campaign=link.campaign,
+                    )
+                ent = r.json() if isinstance(r.json(), dict) else {}
+                if not bool(ent.get("is_active", True)):
+                    return AffiliateLinkResolveOut(
+                        status="unavailable",
+                        reason="business_inactive",
+                        affiliate_code=affiliate_code,
+                        link_id=link.id,
+                        affiliate_id=link.affiliate_id,
+                        business_id=link.business_id,
+                        product_id=link.product_id,
+                        campaign=link.campaign,
+                    )
+                if not bool(ent.get("affiliate_promo_links_enabled", False)):
+                    return AffiliateLinkResolveOut(
+                        status="unavailable",
+                        reason="affiliate_links_not_allowed_for_plan",
+                        affiliate_code=affiliate_code,
+                        link_id=link.id,
+                        affiliate_id=link.affiliate_id,
+                        business_id=link.business_id,
+                        product_id=link.product_id,
+                        campaign=link.campaign,
+                    )
+
+                r = await client.get(f"{catalog_url}/catalog/product/{link.product_id}")
+                if r.status_code != 200:
+                    return AffiliateLinkResolveOut(
+                        status="unavailable",
+                        reason="product_not_found",
+                        affiliate_code=affiliate_code,
+                        link_id=link.id,
+                        affiliate_id=link.affiliate_id,
+                        business_id=link.business_id,
+                        product_id=link.product_id,
+                        campaign=link.campaign,
+                    )
+                prod = r.json() if isinstance(r.json(), dict) else {}
+                prod_business = prod.get("business_id") if isinstance(prod, dict) else None
+                if prod_business and str(prod_business) != str(link.business_id):
+                    return AffiliateLinkResolveOut(
+                        status="unavailable",
+                        reason="product_business_mismatch",
+                        affiliate_code=affiliate_code,
+                        link_id=link.id,
+                        affiliate_id=link.affiliate_id,
+                        business_id=link.business_id,
+                        product_id=link.product_id,
+                        campaign=link.campaign,
+                        product=_product_preview(prod),
+                    )
+        except httpx.RequestError:
+            return AffiliateLinkResolveOut(
+                status="unavailable",
+                reason="upstream_unreachable",
+                affiliate_code=affiliate_code,
+                link_id=link.id,
+                affiliate_id=link.affiliate_id,
+                business_id=link.business_id,
+                product_id=link.product_id,
+                campaign=link.campaign,
+            )
+
+    # 3) Determine WhatsApp number.
+    wa_number = _extract_whatsapp_number(ent) or _sanitize_whatsapp_number(get_affiliate_default_whatsapp_number())
+    if not wa_number:
+        return AffiliateLinkResolveOut(
+            status="unavailable",
+            reason="missing_whatsapp_number",
+            affiliate_code=affiliate_code,
+            link_id=link.id,
+            affiliate_id=link.affiliate_id,
+            business_id=link.business_id,
+            product_id=link.product_id,
+            campaign=link.campaign,
+            product=_product_preview(prod),
+        )
+
+    # 4) Create a short-lived token.
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=get_affiliate_token_ttl_seconds())
+    token = None
+    for _ in range(3):
+        candidate = _generate_code(length=24)
+        token_row = AffiliateToken(
+            token=candidate,
+            link_id=link.id,
+            affiliate_id=link.affiliate_id,
+            product_id=link.product_id,
+            business_id=link.business_id,
+            expires_at=expires_at,
+            meta={
+                "correlation_id": correlation_id or getattr(request.state, "correlation_id", None),
+                "session_id": session_id,
+                "user_phone": user_phone,
+                "user_agent": request.headers.get("user-agent"),
+                "ip": request.client.host if request.client else None,
+                "affiliate_code": affiliate_code,
+            },
+        )
+        db.add(token_row)
+        try:
+            await db.commit()
+            token = candidate
+            break
+        except IntegrityError:
+            await db.rollback()
+            continue
+
+    if not token:
+        return AffiliateLinkResolveOut(
+            status="unavailable",
+            reason="token_generation_failed",
+            affiliate_code=affiliate_code,
+            link_id=link.id,
+            affiliate_id=link.affiliate_id,
+            business_id=link.business_id,
+            product_id=link.product_id,
+            campaign=link.campaign,
+            product=_product_preview(prod),
+        )
+
+    token_message = f"{get_affiliate_token_prefix()}{token}"
+    # Machine-only marker to help bots detect token-containing messages
+    marker = "[[AFFLINK]]"
+    # Prefill includes token, a machine marker, then a short buyer-facing line
+    prefill_text = f"{token_message} {marker} Hey 🖐\n i was directed here"
+    whatsapp_url = f"https://wa.me/{wa_number}?text={urllib.parse.quote(prefill_text)}"
+
+    # Optional: record a click + audit event for analytics.
+    click = AffiliateClick(
+        link_id=link.id,
+        correlation_id=correlation_id or getattr(request.state, "correlation_id", None),
+        session_id=session_id,
+        user_phone=user_phone,
+        meta={"source": "affiliate_link_resolve", "token": token},
+    )
+    async with get_db_session() as db:
+        db.add(click)
+        await _record_event(
+            db,
+            AffiliateEvent(
+                event_id=str(uuid.uuid4()),
+                affiliate_id=link.affiliate_id,
+                event_type="campaign_click",
+                occurred_at=click.occurred_at,
+                source="affiliate_link_resolve",
+                correlation_id=correlation_id or getattr(request.state, "correlation_id", None),
+                buyer_phone=user_phone,
+                session_id=session_id,
+                order_id=None,
+                business_id=link.business_id,
+                amount_zmw=None,
+                meta={"affiliate_code": affiliate_code, "link_id": link.id, "token": token},
+            ),
+        )
+        await db.commit()
+
+    return AffiliateLinkResolveOut(
+        status="available",
+        affiliate_code=affiliate_code,
+        link_id=link.id,
+        affiliate_id=link.affiliate_id,
+        business_id=link.business_id,
+        product_id=link.product_id,
+        campaign=link.campaign,
+        token=token,
+        token_message=token_message,
+        expires_at=expires_at,
+        whatsapp_url=whatsapp_url,
+        product=_product_preview(prod),
+    )
+
 
 
 @app.get("/health")
@@ -157,7 +756,7 @@ async def health():
 
 @app.get("/metrics")
 async def metrics():
-    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    return Response(content=generate_latest(_PROM_REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 
 def _require_admin(x_admin_key: Optional[str]) -> None:
@@ -530,6 +1129,27 @@ async def attribute_order(
             ),
         )
 
+        # Notify affiliate and admin about the conversion/attribution.
+        try:
+            await _notify_channels(
+                user_id=attribution.affiliate_id,
+                business_id=payload.business_id,
+                template="affiliate_conversion",
+                payload={"order_id": payload.order_id, "click_id": attribution.click_id},
+                correlation_id=payload.correlation_id or getattr(request.state, "correlation_id", None),
+                channels=["in_app", "sms"],
+            )
+            await _notify_channels(
+                user_id=None,
+                business_id=payload.business_id,
+                template="affiliate_conversion_admin",
+                payload={"order_id": payload.order_id, "affiliate_id": attribution.affiliate_id},
+                correlation_id=payload.correlation_id or getattr(request.state, "correlation_id", None),
+                channels=["in_app", "email"],
+            )
+        except Exception:
+            logger.exception("notify_failed_on_attribution")
+
         return 200, AttributionOut(
             id=attribution.id,
             affiliate_id=attribution.affiliate_id,
@@ -626,6 +1246,43 @@ async def list_affiliate_events(
     ]
 
 
+@app.get("/notifications/stream")
+async def notifications_stream(user_id: str | None = None, business_id: str | None = None):
+    """Server-Sent Events endpoint streaming affiliate events in realtime.
+
+    Optional filters: `user_id` (affiliate id) or `business_id`.
+    """
+
+    async def event_gen():
+        last = datetime.now(timezone.utc) - timedelta(seconds=1)
+        while True:
+            async with get_db_session() as db:
+                q = select(AffiliateEvent).where(AffiliateEvent.occurred_at > last)
+                if user_id:
+                    q = q.where(AffiliateEvent.affiliate_id == user_id)
+                if business_id:
+                    q = q.where(AffiliateEvent.business_id == business_id)
+                q = q.order_by(AffiliateEvent.occurred_at.asc())
+                rows = (await db.execute(q)).scalars().all()
+                for e in rows:
+                    last = e.occurred_at
+                    payload = {
+                        "event_id": e.event_id,
+                        "affiliate_id": e.affiliate_id,
+                        "event_type": e.event_type,
+                        "occurred_at": e.occurred_at.isoformat(),
+                        "buyer_phone": e.buyer_phone,
+                        "session_id": e.session_id,
+                        "order_id": e.order_id,
+                        "business_id": e.business_id,
+                        "meta": e.meta,
+                    }
+                    yield f"data: {json.dumps(payload, default=str)}\n\n"
+            await asyncio.sleep(1)
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
 @app.post("/events/payment-success")
 async def ingest_payment_success(
     request: Request,
@@ -651,18 +1308,8 @@ async def ingest_payment_success(
             if not attr:
                 raise HTTPException(status_code=404, detail="attribution_not_found_for_order")
             affiliate_id = attr.affiliate_id
-            attr.status = "paid"
-
-        earning = AffiliateEarning(
-            affiliate_id=str(affiliate_id),
-            order_id=order_id,
-            payment_id=payload.payment_id,
-            amount=float(affiliate_amount),
-            currency=payload.currency,
-            status="ready",  # soft launch: ready once payment verified
-        )
-
-        db.add(earning)
+            # Do not mark attribution as paid here — payouts will come from the pool allocations only.
+            attr.status = "attributed"
 
         await _record_event(
             db,
@@ -677,25 +1324,42 @@ async def ingest_payment_success(
                 session_id=None,
                 order_id=order_id,
                 business_id=payload.business_id,
-                amount_zmw=float(affiliate_amount),
+                # Pool GMV metric: store the full sale amount (not commission) on the sale event.
+                amount_zmw=float(payload.amount),
                 meta={
                     "payment_id": payload.payment_id,
                     "amount": float(payload.amount),
                     "currency": payload.currency,
                     "earnings": payload.earnings.model_dump(mode="json"),
+                    "affiliate_commission_zmw": float(affiliate_amount),
                 },
             ),
         )
 
-        await db.commit()
+        # Notify affiliate and admin about the sale/achievement.
+        try:
+            # Notify affiliate: in-app + sms
+            await _notify_channels(
+                user_id=str(affiliate_id),
+                business_id=payload.business_id,
+                template="affiliate_sale",
+                payload={"order_id": order_id, "amount": float(payload.amount), "currency": payload.currency},
+                correlation_id=payload.correlation_id,
+                channels=["in_app", "sms"],
+            )
+            # Notify admin/business: in-app + email (business admins are resolved by notification service)
+            await _notify_channels(
+                user_id=None,
+                business_id=payload.business_id,
+                template="affiliate_sale_admin",
+                payload={"order_id": order_id, "affiliate_id": affiliate_id, "amount": float(payload.amount)},
+                correlation_id=payload.correlation_id,
+                channels=["in_app", "email"],
+            )
+        except Exception:
+            logger.exception("notify_failed_on_payment_success")
 
-        await _notify_in_app(
-            user_id=str(affiliate_id),
-            business_id=payload.business_id,
-            template="affiliate_payout_ready",
-            payload={"order_id": order_id, "amount": float(affiliate_amount), "currency": payload.currency},
-            correlation_id=getattr(request.state, "correlation_id", None),
-        )
+        await db.commit()
         return 200, {"status": "ok", "affiliate_id": str(affiliate_id), "order_id": order_id}
 
     status_code, body = await idempotent_execute(
@@ -943,6 +1607,8 @@ async def pool_standings(db: AsyncSession = Depends(db_session)) -> PoolStanding
             affiliate_id=m.affiliate_id,
             tier_name=m.tier_name,
             tier_multiplier=float(m.tier_multiplier),
+            effective_tier=details.get(m.affiliate_id, {}).get("effective_tier"),
+            tier_qualification=details.get(m.affiliate_id, {}).get("tier_details"),
             sales_volume=float(m.sales_volume),
             unique_buyers=int(m.unique_buyers),
             msme_referrals=int(m.msme_referrals),

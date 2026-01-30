@@ -1,0 +1,107 @@
+.....ss...F...                                                           [100%]
+================================== FAILURES ===================================
+____________________ test_tier_multiplier_increases_share _____________________
+
+client = <starlette.testclient.TestClient object at 0x0000028594328610>
+
+    def test_tier_multiplier_increases_share(client) -> None:
+        # Create two affiliates with identical performance but B has gold tier.
+        # NOTE: pool policy requires qualifying for the tier before multiplier activates.
+        # For unit tests, we lower the per-tier thresholds via env vars.
+        a_id = _create_affiliate(client, "A2", "+260900000011")
+        b_id = _create_affiliate(client, "B2", "+260900000021")
+    
+        _create_link(client, a_id, "codeA2")
+        _create_link(client, b_id, "codeB2")
+    
+        # Assign gold to B2
+        resp = client.put(
+            f"/admin/affiliates/{b_id}/tier",
+            headers={"X-Admin-Key": "test-admin"},
+            json={"tier_name": "gold"},
+        )
+        assert resp.status_code == 200
+    
+        import os
+    
+        os.environ["AFFILIATE_TIER_GOLD_GMV_MIN_ZMW"] = "1"
+        os.environ["AFFILIATE_TIER_GOLD_BUYERS_MIN"] = "1"
+        os.environ["AFFILIATE_TIER_GOLD_REFERRALS_MIN"] = "0"
+        os.environ["AFFILIATE_TIER_GOLD_CUSTOMERS_MIN"] = "1"
+        os.environ["AFFILIATE_OP_MIN_CLICKS"] = "1"
+        os.environ["AFFILIATE_OP_MIN_PAID_ATTRIBUTIONS"] = "1"
+        os.environ["AFFILIATE_OP_MIN_UNIQUE_BUYERS"] = "1"
+        os.environ["AFFILIATE_OP_MIN_SALES_VOLUME"] = "1"
+    
+        # Same single paid order for each
+        for code in ("codeA2", "codeB2"):
+            session_id = _uuid()
+            buyer_phone = f"+260822{session_id[-6:]}"
+            business_id = _uuid()
+            order_id = _uuid()
+            _track_click(client, code, session_id, buyer_phone)
+            _attribute_order(client, code, order_id, business_id, session_id, buyer_phone)
+            _payment_success(client, order_id, business_id, buyer_phone, affiliate_amount=10.0)
+    
+        epoch_id = _get_open_epoch_id(client)
+        client.put(
+            f"/admin/epochs/{epoch_id}/gross-revenue",
+            headers={"X-Admin-Key": "test-admin"},
+            json={"gross_revenue_zmw": 1000.0},
+        )
+    
+        standings = client.get("/pool/standings").json()["standings"]
+        by_aff = {s["affiliate_id"]: s for s in standings}
+    
+        # Gold tier should increase B2 projected payout over A2 with equal underlying performance.
+        assert by_aff[b_id]["tier_name"] == "gold"
+>       assert by_aff[b_id]["projected_payout_zmw"] > by_aff[a_id]["projected_payout_zmw"]
+E       assert 50.0 > 50.0
+
+tests\test_pool.py:231: AssertionError
+============================== warnings summary ===============================
+.venv\lib\site-packages\starlette\formparsers.py:12
+  C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\affiliate-engine\.venv\lib\site-packages\starlette\formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+tests\test_outbox.py:15
+  C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\affiliate-engine\tests\test_outbox.py:15: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.asyncio
+
+tests\test_outbox.py:64
+  C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\affiliate-engine\tests\test_outbox.py:64: PytestUnknownMarkWarning: Unknown pytest.mark.asyncio - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.asyncio
+
+tests/test_affiliate_link_resolve.py::test_affiliate_link_resolve_returns_whatsapp_url
+  C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\affiliate-engine\src\app\main.py:600: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+tests/test_affiliate_link_resolve.py::test_affiliate_link_resolve_returns_whatsapp_url
+  C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\affiliate-engine\.venv\lib\site-packages\fastapi\applications.py:4495: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)
+
+tests/test_outbox.py::test_outbox_dispatch_marks_events_dispatched
+tests/test_outbox.py::test_outbox_dispatch_skips_already_dispatched
+  C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\affiliate-engine\.venv\lib\site-packages\_pytest\python.py:148: PytestUnhandledCoroutineWarning: async def functions are not natively supported and have been skipped.
+  You need to install a suitable plugin for your async framework, for example:
+    - anyio
+    - pytest-asyncio
+    - pytest-tornasync
+    - pytest-trio
+    - pytest-twisted
+    warnings.warn(PytestUnhandledCoroutineWarning(msg.format(nodeid)))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_pool.py::test_tier_multiplier_increases_share - assert 50.0...
+1 failed, 11 passed, 2 skipped, 7 warnings in 85.12s (0:01:25)

@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  payment-revenue:
+    build: .
+    image: ntheemba/payment-revenue:local
+    container_name: payment-revenue
+    env_file:
+      - .env
+    ports:
+      - "8590:8080"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    networks:
+      - app-net
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: ngrok
+    depends_on:
+      - payment-revenue
+    environment:
+      # Provide NGROK_AUTHTOKEN in your environment or in .env
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command: ["http", "--authtoken=${NGROK_AUTHTOKEN}", "http://payment-revenue:8080"]
+    ports:
+      - "4040:4040"
+    restart: unless-stopped
+    networks:
+      - app-net
+
+networks:
+  app-net:
+    external: true

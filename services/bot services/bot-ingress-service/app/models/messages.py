@@ -81,12 +81,17 @@ class EnrichedPayload(BaseModel):
 
     def as_stream_dict(self) -> Dict[str, str]:
         meta = self.meta or {}
-
+        # Prefer canonical refs when available (ref shape: {key,id,schema_version,snapshot})
         session_val = meta.get("session") or {}
-        if hasattr(session_val, "dict"):
-            session = session_val.dict()
+        session_ref = meta.get("session_ref") or {}
+
+        if session_ref:
+            session = {"session_id": session_ref.get("id"), **(session_ref.get("snapshot") or {})}
         else:
-            session = session_val
+            if hasattr(session_val, "dict"):
+                session = session_val.dict()
+            else:
+                session = session_val
 
         user_val = meta.get("user") or {}
         if hasattr(user_val, "dict"):
@@ -94,10 +99,15 @@ class EnrichedPayload(BaseModel):
         else:
             user = user_val
 
+        # Bot id and type: prefer bot_ref, then embedded bot details
+        bot_ref = meta.get("bot_ref") or {}
         bot_val = meta.get("bot") or {}
-        bot_details = bot_val.get("bot_details") or {}
-        if hasattr(bot_details, "dict"):
-            bot_details = bot_details.dict()
+        if bot_ref:
+            bot_details = {"id": bot_ref.get("id"), **(bot_ref.get("snapshot") or {})}
+        else:
+            bot_details = bot_val.get("bot_details") or {}
+            if hasattr(bot_details, "dict"):
+                bot_details = bot_details.dict()
 
         routing_hints = meta.get("routing_hints") or {}
 

@@ -12,3 +12,5 @@ pytest-asyncio
 python-multipart
 boto3
 Pillow
+
+asyncpg==0.28.0

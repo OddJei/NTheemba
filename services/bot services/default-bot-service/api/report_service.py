@@ -112,3 +112,4 @@ class ReportServiceClient:
             return {"error": f"Available reports error: {str(e)}"}
 
 
+

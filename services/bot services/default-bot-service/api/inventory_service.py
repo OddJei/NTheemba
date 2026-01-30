@@ -117,3 +117,4 @@ class InventoryServiceClient:
             return {"error": f"Inventory levels error: {str(e)}"}
 
 
+

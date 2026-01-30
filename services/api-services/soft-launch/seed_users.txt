@@ -1,0 +1,102 @@
+# Seed users for msme-engine (soft-launch)
+
+# 1) MSME users (2)
+- username: msme_service
+  email: msme@example.com
+  phone: 260760000010
+  password: S3rv!c3-P@ssw0rd
+  role: msme
+
+- username: msme_shop2
+  email: msme2@example.com
+  phone: 260760000015
+  password: Msme2-P@ssw0rd
+  role: msme
+
+# 2) Affiliates (4)
+- username: affiliate_joe
+  email: affiliate@example.com
+  phone: 260760000011
+  password: Aff!l1@t3-P@ss
+  role: affiliate
+
+- username: affiliate_sara
+  email: sara.affiliate@example.com
+  phone: 260760000016
+  password: Aff!l1@t3-S@rA
+  role: affiliate
+
+- username: affiliate_tom
+  email: tom.affiliate@example.com
+  phone: 260760000017
+  password: Aff!l1@t3-T0m
+  role: affiliate
+
+- username: affiliate_lee
+  email: lee.affiliate@example.com
+  phone: 260760000018
+  password: Aff!l1@t3-L33
+  role: affiliate
+
+# 3) Customers (5)
+- username: customer_anna
+  email: anna@example.com
+  phone: 260760000012
+  password: C0nsum3r-P@ss
+  role: customer
+
+- username: customer_bob
+  email: bob@example.com
+  phone: 260760000019
+  password: C0nsum3r-B0b
+  role: customer
+
+- username: customer_carla
+  email: carla@example.com
+  phone: 260760000020
+  password: C0nsum3r-C@r
+  role: customer
+
+- username: customer_dan
+  email: dan@example.com
+  phone: 260760000021
+  password: C0nsum3r-D@n
+  role: customer
+
+- username: customer_ella
+  email: ella@example.com
+  phone: 260760000022
+  password: C0nsum3r-3llA
+  role: customer
+
+# 4) Admin & Service (already recommended)
+- username: admin_ops
+  email: ops@example.com
+  phone: 260760000013
+  password: Adm1n-Str0ng!
+  role: admin
+
+- username: service-account
+  email: svc@example.com
+  phone: 260760000014
+  password: S3rv1c3-Ch@ng3m3
+  role: service
+
+
+# Quick curl to register the FIRST user (msme_service)
+# Adjust URL if your msme-engine listens on a different host/port.
+
+curl -X POST 'http://127.0.0.1:8500/auth/register' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "username": "msme_service",
+    "email": "msme@example.com",
+    "phone": "260760000010",
+    "password": "S3rv!c3-P@ssw0rd",
+    "role": "msme"
+  }'
+
+# After registration, login to get tokens:
+# curl -X POST 'http://127.0.0.1:8500/auth/login' -H 'Content-Type: application/json' -d '{"identifier":"msme_service","password":"S3rv!c3-P@ssw0rd"}'
+
+# Tip: Use the returned `access_token` as `Authorization: Bearer <token>` when testing other services.

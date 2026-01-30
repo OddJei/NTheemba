@@ -133,6 +133,16 @@ class SubscribeRequest(BaseModel):
     plan: str
 
 
+class SubscribeAndPayRequest(SubscribeRequest):
+    # Optional payment details — when provided, msme will initiate a deposit
+    # to `payment-revenue` on behalf of the caller.
+    amount_minor: Optional[int] = None
+    currency: Optional[str] = "ZMW"
+    phone_number: Optional[str] = None
+    provider: Optional[str] = None
+    deposit_id: Optional[str] = None
+
+
 class SubscriptionOut(BaseModel):
     id: str
     business_id: str

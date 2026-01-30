@@ -1,0 +1,120 @@
+# Affiliate pool logic
+
+## What the pool is
+- **Platform revenue:** MSME subscriptions + platform fees (**7%** free tier, **5%** paid tier).
+- **Affiliate pool:** Every 6/3 months, the platform sets aside **10% of gross revenue** for affiliates.
+- **Sharing rule:** The pool is split based on performance—measured, normalized, and (optionally) boosted by multipliers.
+
+---
+
+## Performance metrics (updated)
+
+| Metric | Weight | What it means |
+|---|---:|---|
+| **Sales volume (GMV)** | 50% | The **total value** of products sold through your links (not item count). |
+| **Unique buyers** | 20% | The number of different people who **actually purchased** via your link. |
+| **MSME referrals** | 20% | The number of **new MSMEs** you brought onto the platform. |
+| **Conversion quality (unique customers)** | 10% | The number of **unique phone numbers** you brought to chat with MSME bots (they don’t have to buy). |
+
+- **Important uniqueness rule:** Each phone number is counted **once, ever**—even across pool resets. No double counting.
+
+---
+
+## How scoring stays fair (normalization)
+
+We compare everyone fairly by scaling each metric to the top performer.
+
+- **Step 1—Raw scores:** Collect GMV, buyers, referrals, unique customers.
+- **Step 2—Normalize per metric:**  
+  Top performer in a metric gets \(1.0\). Others get a fraction of that top value:
+  \[
+  \text{Normalized} = \frac{\text{Your raw}}{\text{Top raw in metric}}
+  \]
+- **Step 3—Apply weights:**  
+  \[
+  \text{Score} = 0.5\cdot S + 0.2\cdot B + 0.2\cdot R + 0.1\cdot C
+  \]
+  where \(S,B,R,C\) are your normalized values.
+- **Step 4—Multipliers (optional):**  
+  \[
+  \text{Adjusted score} = \text{Score} \times \text{Multiplier}
+  \]
+- **Step 5—Split the pool:**  
+  If total adjusted scores sum to \(T\), your payout is:
+  \[
+  \text{Payout} = \frac{\text{Your adjusted score}}{T} \times \text{Pool amount}
+  \]
+
+---
+
+## Multipliers and qualification thresholds
+
+Multipliers boost active affiliates—but you must **qualify** first. Buying a multiplier without meeting thresholds does **not** activate it. No performance = no payout.
+
+### Tiers and multipliers
+- **Bronze:** \(1.3\times\)
+- **Silver:** \(1.5\times\)
+- **Gold:** \(1.8\times\)
+
+### Qualification thresholds (per 6‑month cycle)
+You must meet **all** thresholds in at least **two metrics** to activate a tier. Hitting **all four** metrics upgrades you one tier (e.g., meeting Bronze in all four auto‑qualifies you for Silver).
+
+| Tier | GMV (Sales volume) | Unique buyers | MSME referrals | Conversion quality (unique customers) |
+|---|---:|---:|---:|---:|
+| **Bronze (1.3x)** | ≥ ZMW 15,000 | ≥ 60 | ≥ 6 | ≥ 120 |
+| **Silver (1.5x)** | ≥ ZMW 40,000 | ≥ 150 | ≥ 15 | ≥ 300 |
+| **Gold (1.8x)** | ≥ ZMW 80,000 | ≥ 300 | ≥ 30 | ≥ 600 |
+
+- **Activation rule:**  
+  - Meet thresholds in **≥2 metrics** → activate that tier.  
+  - Meet thresholds in **all 4 metrics** → auto‑upgrade **one tier** (e.g., Bronze → Silver).  
+- **Purchase option:** You can **buy** a tier, but it only activates if you meet **≥2 metric thresholds** for that tier. Buying alone doesn’t activate it.
+
+---
+
+## Worked example
+
+Pool = **ZMW 10,000**. Three affiliates: Alice, Ben, Chipo.
+
+### Raw performance
+| Affiliate | GMV | Unique buyers | MSME referrals | Conversion quality |
+|---|---:|---:|---:|---:|
+| Alice | ZMW 12,000 | 60 | 8 | 150 |
+| Ben | ZMW 8,000 | 40 | 5 | 220 |
+| Chipo | ZMW 5,000 | 25 | 3 | 90 |
+
+### Normalize each metric
+- **GMV max = 12,000:** Alice \(1.0\), Ben \(0.667\), Chipo \(0.417\)  
+- **Buyers max = 60:** Alice \(1.0\), Ben \(0.667\), Chipo \(0.417\)  
+- **Referrals max = 8:** Alice \(1.0\), Ben \(0.625\), Chipo \(0.375\)  
+- **Conversion max = 220:** Alice \(0.682\), Ben \(1.0\), Chipo \(0.409\)
+
+### Weighted scores
+- **Alice:** \(0.5(1.0)+0.2(1.0)+0.2(1.0)+0.1(0.682)=0.968\)  
+- **Ben:** \(0.5(0.667)+0.2(0.667)+0.2(0.625)+0.1(1.0)=0.692\)  
+- **Chipo:** \(0.5(0.417)+0.2(0.417)+0.2(0.375)+0.1(0.409)=0.408\)
+
+### Tier qualification check
+- **Alice:** Meets Bronze in **Unique buyers (60)** and **Referrals (8)**; GMV below Bronze (needs 15k). → **Bronze qualifies**.  
+- **Ben:** Meets Bronze in **Conversion (220 ≥ 120)**; other metrics below Bronze. Only **1 metric** met → **no tier activation**.  
+- **Chipo:** Below Bronze in all metrics → **no tier activation**.
+
+### Apply multipliers
+- **Alice:** Bronze \(1.3\times\) → \(0.968 \times 1.3 = 1.258\)  
+- **Ben:** No tier → \(0.692 \times 1.0 = 0.692\)  
+- **Chipo:** No tier → \(0.408 \times 1.0 = 0.408\)
+
+### Split the pool
+- **Total adjusted:** \(1.258 + 0.692 + 0.408 = 2.358\)  
+- **Alice:** \(\frac{1.258}{2.358}\times 10{,}000 \approx \text{ZMW }5{,}338\)  
+- **Ben:** \(\frac{0.692}{2.358}\times 10{,}000 \approx \text{ZMW }2{,}937\)  
+- **Chipo:** \(\frac{0.408}{2.358}\times 10{,}000 \approx \text{ZMW }1{,}731\)
+
+---
+
+## Quick rules recap
+- **Pool size:** \(10\%\) of gross platform revenue every 6 months.  
+- **Uniqueness:** Each phone number counted **once, ever**.  
+- **Normalization:** Compare fairly—top performer in each metric is \(1.0\).  
+- **Multipliers:** Earn or buy, but activate only if you meet **≥2 metric thresholds**.  
+- **No performance = no payout.**

@@ -179,6 +179,8 @@ def test_pool_allocations_sum_to_pool_and_rankings(client) -> None:
 
 def test_tier_multiplier_increases_share(client) -> None:
     # Create two affiliates with identical performance but B has gold tier.
+    # NOTE: pool policy requires qualifying for the tier before multiplier activates.
+    # For unit tests, we lower the per-tier thresholds via env vars.
     a_id = _create_affiliate(client, "A2", "+260900000011")
     b_id = _create_affiliate(client, "B2", "+260900000021")
 
@@ -192,6 +194,17 @@ def test_tier_multiplier_increases_share(client) -> None:
         json={"tier_name": "gold"},
     )
     assert resp.status_code == 200
+
+    import os
+
+    os.environ["AFFILIATE_TIER_GOLD_GMV_MIN_ZMW"] = "1"
+    os.environ["AFFILIATE_TIER_GOLD_BUYERS_MIN"] = "1"
+    os.environ["AFFILIATE_TIER_GOLD_REFERRALS_MIN"] = "0"
+    os.environ["AFFILIATE_TIER_GOLD_CUSTOMERS_MIN"] = "1"
+    os.environ["AFFILIATE_OP_MIN_CLICKS"] = "1"
+    os.environ["AFFILIATE_OP_MIN_PAID_ATTRIBUTIONS"] = "1"
+    os.environ["AFFILIATE_OP_MIN_UNIQUE_BUYERS"] = "1"
+    os.environ["AFFILIATE_OP_MIN_SALES_VOLUME"] = "1"
 
     # Same single paid order for each
     for code in ("codeA2", "codeB2"):
@@ -216,3 +229,81 @@ def test_tier_multiplier_increases_share(client) -> None:
     # Gold tier should increase B2 projected payout over A2 with equal underlying performance.
     assert by_aff[b_id]["tier_name"] == "gold"
     assert by_aff[b_id]["projected_payout_zmw"] > by_aff[a_id]["projected_payout_zmw"]
+
+
+def test_unique_customers_counted_once_ever_across_epochs(client) -> None:
+    a_id = _create_affiliate(client, "UE", "+260900000061")
+    _create_link(client, a_id, "codeUE")
+
+    phone = "+260811000777"
+    _track_click(client, "codeUE", _uuid(), phone)
+
+    # First epoch should count the customer.
+    standings = client.get("/pool/standings").json()["standings"]
+    row = next(r for r in standings if r["affiliate_id"] == a_id)
+    assert row["clicks"] == 1
+
+    # Close the current epoch.
+    epoch_id = _get_open_epoch_id(client)
+    client.put(
+        f"/admin/epochs/{epoch_id}/gross-revenue",
+        headers={"X-Admin-Key": "test-admin"},
+        json={"gross_revenue_zmw": 1000.0},
+    )
+    client.post(f"/admin/epochs/{epoch_id}/close", headers={"X-Admin-Key": "test-admin"})
+
+    # Open a new epoch and click again with the same phone.
+    resp = client.post("/admin/epochs/open", headers={"X-Admin-Key": "test-admin"})
+    assert resp.status_code == 200
+    _track_click(client, "codeUE", _uuid(), phone)
+
+    # The same phone should not count again for clicks (once-ever semantics for clicks).
+    standings2 = client.get("/pool/standings").json()["standings"]
+    row2 = next(r for r in standings2 if r["affiliate_id"] == a_id)
+    assert row2["clicks"] == 0
+
+
+def test_unique_buyers_counted_once_ever_across_epochs(client) -> None:
+    a_id = _create_affiliate(client, "UB", "+260900000071")
+    _create_link(client, a_id, "codeUB")
+
+    phone = "+260811000999"
+    session_id = _uuid()
+    business_id = _uuid()
+    order_id = _uuid()
+
+    # Single paid order in first epoch
+    _track_click(client, "codeUB", session_id, phone)
+    _attribute_order(client, "codeUB", order_id, business_id, session_id, phone)
+    _payment_success(client, order_id, business_id, phone, affiliate_amount=5.0)
+
+    # First epoch should count the buyer.
+    standings = client.get("/pool/standings").json()["standings"]
+    row = next(r for r in standings if r["affiliate_id"] == a_id)
+    assert row["unique_buyers"] == 1
+
+    # Close the current epoch.
+    epoch_id = _get_open_epoch_id(client)
+    client.put(
+        f"/admin/epochs/{epoch_id}/gross-revenue",
+        headers={"X-Admin-Key": "test-admin"},
+        json={"gross_revenue_zmw": 1000.0},
+    )
+    client.post(f"/admin/epochs/{epoch_id}/close", headers={"X-Admin-Key": "test-admin"})
+
+    # Open a new epoch and send another paid order with the same buyer phone.
+    resp = client.post("/admin/epochs/open", headers={"X-Admin-Key": "test-admin"})
+    assert resp.status_code == 200
+
+    # Another order with same phone should NOT increase unique_buyers (once-ever semantics)
+    session_id2 = _uuid()
+    business_id2 = _uuid()
+    order_id2 = _uuid()
+    _track_click(client, "codeUB", session_id2, phone)
+    _attribute_order(client, "codeUB", order_id2, business_id2, session_id2, phone)
+    _payment_success(client, order_id2, business_id2, phone, affiliate_amount=5.0)
+
+    # Unique buyers are counted per-epoch, so the buyer should be counted again in the new epoch.
+    standings2 = client.get("/pool/standings").json()["standings"]
+    row2 = next(r for r in standings2 if r["affiliate_id"] == a_id)
+    assert row2["unique_buyers"] == 1

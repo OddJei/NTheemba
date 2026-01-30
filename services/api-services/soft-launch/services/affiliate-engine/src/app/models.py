@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.sqlite import JSON as SqliteJson
 from sqlalchemy.sql.schema import Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -41,6 +41,33 @@ class AffiliateLink(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     affiliate: Mapped[Affiliate] = relationship(back_populates="links")
+
+
+class AffiliateToken(Base):
+    __tablename__ = "affiliate_tokens"
+    __table_args__ = (
+        UniqueConstraint("token", name="uq_affiliate_token"),
+        Index("ix_affiliate_tokens_token", "token"),
+        Index("ix_affiliate_tokens_expires", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Short-lived token exchanged via WhatsApp message.
+    token: Mapped[str] = mapped_column(String(120), nullable=False)
+
+    link_id: Mapped[str] = mapped_column(String(36), ForeignKey("affiliate_links.id"), index=True)
+    affiliate_id: Mapped[str] = mapped_column(String(36), ForeignKey("affiliates.id"), index=True)
+    product_id: Mapped[str] = mapped_column(String(36), index=True)
+    business_id: Mapped[str] = mapped_column(String(36), index=True)
+
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+    used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    meta: Mapped[dict | None] = mapped_column(SqliteJson, nullable=True)
 
 
 class AffiliateClick(Base):
@@ -100,6 +127,7 @@ class AffiliateEvent(Base):
         Index("ix_affiliate_events_order", "order_id"),
         Index("ix_affiliate_events_buyer_phone", "buyer_phone"),
         Index("ix_affiliate_events_dispatched", "dispatched_at"),
+        Index("ix_affiliate_events_delivered", "delivered_at"),
     )
 
     # Producer-provided explicit event id.
@@ -117,6 +145,7 @@ class AffiliateEvent(Base):
 
     order_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     business_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    delivered_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     amount_zmw: Mapped[float | None] = mapped_column(Float, nullable=True)
 

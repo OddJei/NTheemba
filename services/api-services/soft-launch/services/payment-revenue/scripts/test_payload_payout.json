@@ -1,0 +1,12 @@
+{
+  "payoutId": "test-pay-1",
+  "status": "COMPLETED",
+  "amount": "50.00",
+  "currency": "ZMW",
+  "recipient": {
+    "accountDetails": {
+      "phoneNumber": "260760000002",
+      "provider": "MTN_MOMO_ZMB"
+    }
+  }
+}

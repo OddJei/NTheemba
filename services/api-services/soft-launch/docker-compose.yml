@@ -1,0 +1,223 @@
+networks:
+  softlaunch-net:
+    name: softlaunch-net
+
+volumes:
+  postgres_data:
+
+services:
+  msme-engine:
+    image: python:3.10-slim
+    working_dir: /app
+    volumes:
+      - ./services/msme-engine:/app
+    command: >-
+      sh -c "pip install -r requirements.txt && uvicorn src.app.main:app --host 0.0.0.0 --port 8500"
+    environment:
+      PG_USER: postgres
+      PG_PASSWORD: "!ladybug!#!"
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_DB: ntheemba
+      PG_SCHEMA: msme_engine
+      NOTIFICATION_BASE_URL: http://notification:8570
+    ports:
+      - "8500:8500"
+    networks:
+      - softlaunch-net
+
+
+  affiliate-engine:
+    image: python:3.10-slim
+    working_dir: /app
+    volumes:
+      - ./services/affiliate-engine:/app
+    command: >-
+      sh -c "pip install -r requirements.txt && uvicorn src.app.main:app --host 0.0.0.0 --port 8510"
+    environment:
+      PG_USER: postgres
+      PG_PASSWORD: "!ladybug!#!"
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_DB: ntheemba
+      PG_SCHEMA: affiliate_engine
+      MSME_BASE_URL: http://msme-engine:8500
+    ports:
+      - "8510:8510"
+    networks:
+      - softlaunch-net
+
+  catalog-inventory:
+    image: python:3.10-slim
+    working_dir: /app
+    volumes:
+      - ./services/catalog-inventory:/app
+    command: >-
+      sh -c "pip install -r requirements.txt && uvicorn src.app.main:app --host 0.0.0.0 --port 8520"
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://postgres:!ladybug!%23!@postgres:5432/ntheemba"
+      PG_SCHEMA: catalog_inventory
+    ports:
+      - "8520:8520"
+    networks:
+      - softlaunch-net
+    depends_on:
+      - postgres
+
+  cart:
+    image: python:3.10-slim
+    working_dir: /app
+    volumes:
+      - ./services/cart:/app
+    command: >-
+      sh -c "pip install -r requirements.txt && uvicorn src.app.main:app --host 0.0.0.0 --port 8530"
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://postgres:!ladybug!%23!@postgres:5432/ntheemba"
+      PG_SCHEMA: cart_service
+      CATALOG_SERVICE_URL: http://catalog-inventory:8520
+      NOTIFICATION_BASE_URL: http://notification:8570
+    ports:
+      - "8530:8530"
+    networks:
+      - softlaunch-net
+    depends_on:
+      - postgres
+
+  order-delivery:
+    build:
+      context: ./services/order-delivery
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://postgres:!ladybug!%23!@postgres:5432/ntheemba"
+      PG_SCHEMA: order_delivery
+      MSME_BASE_URL: http://msme-engine:8500
+      CATALOG_SERVICE_URL: http://catalog-inventory:8520
+      # INTERNAL_SERVICE_SECRET is removed; services should use JWTs for internal auth.
+    ports:
+      - "8560:8560"
+    command: >-
+      python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8560
+    networks:
+      - softlaunch-net
+
+  payment-revenue:
+    build:
+      context: ./services/payment-revenue
+      dockerfile: Dockerfile
+    environment:
+      # Use Postgres in this stack (schema via search_path).
+      DATABASE_URL: "postgresql+asyncpg://postgres:!ladybug!%23!@postgres:5432/ntheemba"
+      PG_SCHEMA: payment_revenue
+      MSME_BASE_URL: http://msme-engine:8500
+      ORDER_DELIVERY_BASE_URL: http://order-delivery:8560
+      AFFILIATE_ENGINE_BASE_URL: http://affiliate-engine:8510
+      NOTIFICATION_BASE_URL: http://notification:8570
+
+      # Enables the outbox flusher to call protected internal endpoints on this service.
+      # Set this in your root .env to a random string.
+      # INTERNAL_SERVICE_SECRET and OUTBOX_FLUSH_INTERNAL_SECRET removed; use MSME-issued JWTs
+      # Read from the root .env (or shell env). Do NOT hardcode secrets here.
+      PAWAPAY_API_KEY: ${PAWAPAY_API_KEY:-}
+      PAWAPAY_BASE_URL: ${PAWAPAY_BASE_URL:-https://api.sandbox.pawapay.io/v2}
+
+      # Automated delivery of callback-driven events
+      OUTBOX_FLUSH_ENABLED: "true"
+      OUTBOX_FLUSH_INTERVAL_SECONDS: "10"
+      # Keep retrying when downstream services are temporarily unavailable.
+      OUTBOX_FLUSH_MAX_ATTEMPTS: "0"
+      OUTBOX_FLUSH_BACKOFF_BASE_SECONDS: "10"
+      OUTBOX_FLUSH_BACKOFF_MAX_SECONDS: "300"
+      PAYMENT_REVENUE_BASE_URL: http://payment-revenue:8590
+      # Ensure audit events are sent to the centralized audit-service in the compose network
+      AUDIT_SERVICE_URL: http://audit-service:8290
+      # Forward regular service logs (INFO+) to audit-service as `python_log` events
+      AUDIT_FORWARD_LOGS_ENABLED: "true"
+      AUDIT_FORWARD_LOGS_LEVEL: "INFO"
+      # Service account credentials used to fetch JWT from msme-engine
+      MSME_SERVICE_IDENTIFIER: ${MSME_SERVICE_IDENTIFIER:-service-account}
+      MSME_SERVICE_PASSWORD: ${MSME_SERVICE_PASSWORD:-change-me}
+    ports:
+      - "8590:8590"
+    networks:
+      - softlaunch-net
+    depends_on:
+      - postgres
+      - msme-engine
+      - affiliate-engine
+      - notification
+      - order-delivery
+
+  notification:
+    build:
+      context: ./services/notification
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8570"
+    ports:
+      - "8570:8570"
+    networks:
+      - softlaunch-net
+
+  bot-session:
+    build:
+      context: ./services/bot-session
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://postgres:!ladybug!%23!@postgres:5432/ntheemba"
+      PG_SCHEMA: bot_session
+    ports:
+      - "8000:8000"
+    command: >-
+      python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8000
+    networks:
+      - softlaunch-net
+
+
+  audit-service:
+    build:
+      context: ./services/audit-service
+    environment:
+      PG_USER: postgres
+      PG_PASSWORD: "!ladybug!#!"
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_DB: ntheemba
+      PG_SCHEMA: audit_service
+      AUDIT_SCHEMA: audit_service
+    ports:
+      - "8290:8290"
+    command: >-
+      uvicorn main:app --host 0.0.0.0 --port 8290
+    networks:
+      - softlaunch-net
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    depends_on:
+      - payment-revenue
+    environment:
+      # Provide your ngrok authtoken via environment or .env file
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    entrypoint: ["ngrok"]
+    command: ["http", "payment-revenue:8590", "--log=stdout", "--authtoken=${NGROK_AUTHTOKEN}"]
+    ports:
+      - "4040:4040" # ngrok web UI
+    networks:
+      - softlaunch-net
+
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "!ladybug!#!"
+      POSTGRES_DB: ntheemba
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - softlaunch-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

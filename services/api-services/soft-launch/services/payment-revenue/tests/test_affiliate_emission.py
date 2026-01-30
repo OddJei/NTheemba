@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 
-def test_payment_success_emits_affiliate_engine_payload_contains_affiliate_code(client, monkeypatch):
+def test_payment_success_emits_affiliate_engine_payload_contains_affiliate_code(client, auth_headers, monkeypatch):
     from src.app import main as pr_main
     from fastapi import HTTPException
 
@@ -34,7 +34,7 @@ def test_payment_success_emits_affiliate_engine_payload_contains_affiliate_code(
     # First call: settlement is created but dispatch fails.
     r1 = client.post(
         "/events/payment-success",
-        headers={"X-Correlation-Id": "corr-pay-1"},
+        headers={**auth_headers, "X-Correlation-Id": "corr-pay-1"},
         json={
             "order_id": order_id,
             "payment_id": str(uuid.uuid4()),
@@ -50,7 +50,7 @@ def test_payment_success_emits_affiliate_engine_payload_contains_affiliate_code(
     # Second call: should retry and succeed (handler returns existing settlement).
     r2 = client.post(
         "/events/payment-success",
-        headers={"X-Correlation-Id": "corr-pay-2"},
+        headers={**auth_headers, "X-Correlation-Id": "corr-pay-2"},
         json={
             "order_id": order_id,
             "payment_id": str(uuid.uuid4()),

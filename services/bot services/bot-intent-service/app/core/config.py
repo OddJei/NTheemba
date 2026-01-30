@@ -33,6 +33,10 @@ class GeminiConfig:
     api_key: str | None = os.getenv("INTENT_GEMINI_API_KEY", os.getenv("gemini_key"))
     timeout_seconds: float = float(os.getenv("INTENT_GEMINI_TIMEOUT_SECONDS", "15.0"))
 
+    # Token limits for Gemini usage: input tokens limit (approximate) and output tokens limit
+    max_input_tokens: int = int(os.getenv("INTENT_GEMINI_MAX_INPUT_TOKENS", "450"))
+    max_output_tokens: int = int(os.getenv("INTENT_GEMINI_MAX_OUTPUT_TOKENS", "50"))
+
     # Enable Gemini if a key is present, unless explicitly disabled.
     enabled: bool = _env_bool("INTENT_GEMINI_ENABLED", "True" if api_key else "False")
 

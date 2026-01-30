@@ -1,0 +1,82 @@
+Providers
+Providers in our Merchant API refer to the specific Mobile Money Operators (MMOs) that are available through our platform. They are a mandatory part of the accountDetails for both Deposits and Payouts. This ensures the payment is routed to the correct provider.
+You can always check which providers are available on your account from the active configuration endpoint.
+You can use the predict provider endpoint to predict the provider for a phone number (MSISDN).
+The number of decimal places that can be specified for the amount of the payment varies between different providers. You can use the active configuration endpoint to dynamically fetch whether decimals are supported by the provider.
+You can find the list of all available providers, their currency, authorisation type and supported decimal places below.
+Zambia
+
+MMO	Provider	Country	Currency	Authorisation	Decimals in amount
+Airtel	AIRTEL_OAPI_ZMB	ZMB	ZMW	PROVIDER_AUTH	2 places
+MTN	MTN_MOMO_ZMB	ZMB	ZMW	PROVIDER_AUTH	2 places
+Zamtel	ZAMTEL_ZMB	ZMB	ZMW	PROVIDER_AUTH	2 places
+
+Sandbox test numbers
+​
+Overview
+As part of using the pawaPay platform, you will have access to our sandbox environment. Your sandbox account will have access to all the providers available on our platform. This allows you to safely test your integration without using actual mobile money wallets and real funds. In the sandbox, we provide special phone numbers (MSISDNs) that allow you to simulate both successful and unsuccessful transactions, helping you verify how your integration handles various payment outcomes.
+​
+Sandbox test phone numbers (MSISDNs)
+These phone numbers can only be used in sandbox, not in production.
+The payment process is faster than in production as the customer does not explicitly authorise the payment.
+Zambia
+
+Airtel (AIRTEL_OAPI_ZMB)
+MTN (MTN_MOMO_ZMB)
+Zamtel (ZAMTEL_ZMB)
+Operation	MSISDN	Status	failureCode
+Deposit	260973456019	FAILED	PAYER_LIMIT_REACHED
+260973456039	FAILED	PAYMENT_NOT_APPROVED
+260973456049	FAILED	INSUFFICIENT_BALANCE
+260973456069	FAILED	UNSPECIFIED_FAILURE
+260973456129	SUBMITTED	-
+260973456789	COMPLETED	-
+Payout	260973456089	FAILED	RECIPIENT_NOT_FOUND
+260973456119	FAILED	UNSPECIFIED_FAILURE
+260973456129	SUBMITTED	-
+260973456789	COMPLETED	-
+
+
+# Deposit (initiate)
+curl -X POST http://localhost:8590/pawapay/deposits/initiate \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "depositId": "dep-123",
+    "order_id": "order-123",
+    "business_id": "biz-123",
+    "amount_minor": 5000,
+    "currency": "ZMW",
+    "phoneNumber": "260971234567",
+    "provider": "MTN_MOMO_ZMB",
+    "metadata": {"source":"test"}
+  }'
+
+# Payout (initiate)
+curl -X POST http://localhost:8590/pawapay/payouts/initiate \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "payoutId": "pout-123",
+    "order_id": "order-123",
+    "business_id": "biz-123",
+    "amount_minor": 3000,
+    "currency": "ZMW",
+    "phoneNumber": "260971234567",
+    "provider": "MTN_MOMO_ZMB",
+    "metadata": {"note":"test payout"}
+  }'
+
+# Refund (initiate)
+curl -X POST http://localhost:8590/pawapay/refunds/initiate \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refundId": "ref-123",
+    "depositId": "dep-123",
+    "amount_minor": 1000,
+    "currency": "ZMW",
+    "order_id": "order-123",
+    "business_id": "biz-123",
+    "metadata": {"reason":"test"}
+  }'

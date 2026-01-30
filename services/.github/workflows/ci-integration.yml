@@ -1,0 +1,41 @@
+name: CI — custom-bot-service
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Run unit + integration tests
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r "bot services/custom-bot-service/requirements.txt"
+          pip install pytest pytest-asyncio aiohttp anyio
+
+      - name: Run tests (custom-bot-service)
+        run: |
+          cd "bot services/custom-bot-service"
+          pytest -q

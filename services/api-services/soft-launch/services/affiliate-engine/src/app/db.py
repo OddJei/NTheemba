@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
-from .config import get_database_url
+from .config import get_database_url, get_pg_schema
 
 
 class Base(DeclarativeBase):
@@ -13,7 +13,14 @@ class Base(DeclarativeBase):
 
 
 def create_engine() -> AsyncEngine:
-    return create_async_engine(get_database_url(), future=True)
+    url = get_database_url()
+    # If using asyncpg, set server_settings so asyncpg receives `server_settings`
+    # instead of an unsupported `options` kwarg.
+    if url.startswith("postgresql+asyncpg://"):
+        schema = get_pg_schema()
+        return create_async_engine(url, future=True, connect_args={"server_settings": {"search_path": schema}})
+
+    return create_async_engine(url, future=True)
 
 
 engine = create_engine()

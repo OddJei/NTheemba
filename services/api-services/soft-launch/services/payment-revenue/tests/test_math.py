@@ -20,6 +20,9 @@ os.environ["AFFILIATE_ENGINE_BASE_URL"] = "http://127.0.0.1:9"
 from src.app.main import app
 
 
+AUTH_HEADERS = {"Authorization": "Bearer dummy-token", "X-Role": "admin"}
+
+
 def test_payment_success_computes_and_persists_settlement(monkeypatch):
     # Patch dispatch to avoid network.
     from src.app import main as m
@@ -38,7 +41,7 @@ def test_payment_success_computes_and_persists_settlement(monkeypatch):
     with TestClient(app) as client:
         r = client.post(
             "/events/payment-success",
-            headers={"X-Idempotency-Key": "p1"},
+            headers={**AUTH_HEADERS, "X-Idempotency-Key": "p1"},
             json={
                 "payment_id": "p1",
                 "order_id": "o1",
@@ -56,7 +59,7 @@ def test_payment_success_computes_and_persists_settlement(monkeypatch):
         # Idempotent re-submit.
         r2 = client.post(
             "/events/payment-success",
-            headers={"X-Idempotency-Key": "p1"},
+            headers={**AUTH_HEADERS, "X-Idempotency-Key": "p1"},
             json={
                 "payment_id": "p1",
                 "order_id": "o1",
@@ -79,7 +82,7 @@ def test_subscription_payment_success_dispatches_to_msme(monkeypatch):
     with TestClient(app) as client:
         r = client.post(
             "/events/subscription-payment-success",
-            headers={"X-Idempotency-Key": "subp1"},
+            headers={**AUTH_HEADERS, "X-Idempotency-Key": "subp1"},
             json={
                 "payment_id": "subp1",
                 "business_id": "b_sub_1",
@@ -98,7 +101,7 @@ def test_subscription_payment_success_dispatches_to_msme(monkeypatch):
         # Idempotent replay
         r2 = client.post(
             "/events/subscription-payment-success",
-            headers={"X-Idempotency-Key": "subp1"},
+            headers={**AUTH_HEADERS, "X-Idempotency-Key": "subp1"},
             json={
                 "payment_id": "subp1",
                 "business_id": "b_sub_1",
@@ -132,7 +135,7 @@ def test_payouts_endpoint_returns_ledger_rows(monkeypatch):
     with TestClient(app) as client:
         r = client.post(
             "/events/payment-success",
-            headers={"X-Idempotency-Key": payment_id},
+            headers={**AUTH_HEADERS, "X-Idempotency-Key": payment_id},
             json={
                 "payment_id": payment_id,
                 "order_id": order_id,
@@ -143,7 +146,7 @@ def test_payouts_endpoint_returns_ledger_rows(monkeypatch):
         )
         assert r.status_code in (200, 201)
 
-        pr = client.get(f"/payouts/{order_id}")
+        pr = client.get(f"/payouts/{order_id}", headers=AUTH_HEADERS)
         assert pr.status_code == 200
         rows = pr.json()
         assert isinstance(rows, list)

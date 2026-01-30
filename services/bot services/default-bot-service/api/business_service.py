@@ -107,3 +107,4 @@ class BusinessServiceClient:
             return {"error": f"Business analytics error: {str(e)}"}
 
 
+

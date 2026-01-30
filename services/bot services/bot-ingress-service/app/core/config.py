@@ -48,6 +48,21 @@ class Settings:
     # Bot-layer contract: ICE hydrate endpoint (sync)
     ice_preload_path: str = os.getenv("ICE_PRELOAD_PATH", "/api/v1/hydrate/session")
 
+    # Hydrate-first mode
+    #
+    # When enabled, ingress will attempt to hydrate/cache all required blobs (via ICE)
+    # before doing enrichment fallbacks to other services.
+    ingress_hydrate_first: bool = os.getenv("INGRESS_HYDRATE_FIRST", "False") == "True"
+    # If False, enrichment will avoid calling bot/auth/capability HTTP services and will
+    # rely on hydrated cache + safe defaults.
+    enrich_allow_fallback_http: bool = os.getenv("INGRESS_ENRICH_ALLOW_FALLBACK_HTTP", "True") == "True"
+
+    # Hydration dedupe/backoff knobs
+    hydrate_lock_ttl_seconds: int = int(os.getenv("INGRESS_HYDRATE_LOCK_TTL", "20"))
+    hydrate_negative_ttl_seconds: int = int(os.getenv("INGRESS_HYDRATE_NEGATIVE_TTL", "30"))
+    # Use reference-only payloads (refs + small inline snapshots) instead of embedding full blobs
+    ingress_use_refs: bool = os.getenv("INGRESS_USE_REFS", "False") == "True"
+
 
 @lru_cache()
 def get_settings() -> Settings:

@@ -13,7 +13,7 @@ Deliver channel-ready provider payloads to external messaging providers (WhatsAp
 ## Outputs
 
 - Provider API calls (HTTP/SDK) to send messages.
-- Stream: `outbound:receipts` — normalized delivery receipts for upstream consumption.
+- Stream: `outbound:{platform}` — normalized delivery receipts for upstream consumption.
 - Stream: `outbound:dlq` — failed sends after retry policies.
 
 ## Provider Adapters
@@ -65,7 +65,7 @@ Adapter design guidelines:
 1. `outbound:requests` received with WhatsApp payload.
 2. Select `wa` adapter, validate payload, check rate limits.
 3. Call provider API with `Idempotency-Key=event_id`.
-4. On success: emit `outbound:receipts` with `status=queued`/`sent`; follow provider receipts to emit `status=delivered`.
+4. On success: emit `outbound:{platform}` with `status=queued`/`sent`; follow provider receipts to emit `status=delivered`.
 5. On repeated failure: emit `outbound:dlq` for manual review.
 
 ---

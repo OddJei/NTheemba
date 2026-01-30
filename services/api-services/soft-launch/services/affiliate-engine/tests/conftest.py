@@ -45,7 +45,17 @@ def _configure_test_db(service_root: Path) -> None:
 
 @pytest.fixture()
 def client() -> TestClient:
+    # Drop and recreate all tables for each test to ensure clean state.
+    import asyncio
+    from src.app.db import Base, engine
     from src.app.main import app
+
+    async def _reset_db():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(_reset_db())
 
     with TestClient(app) as test_client:
         yield test_client

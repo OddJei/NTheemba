@@ -182,3 +182,36 @@ Response (200):
 
 ---
 
+Layered Approach (7 primary)
+Bot‑Facing API Layer
+
+HTTP + Redis contracts only.
+Endpoints: POST /hydrate/session, POST /reserve, POST /confirm_order.
+Owns schemas, error codes, idempotency behavior.
+Stable forever.
+Transport / API Gateway Layer
+
+FastAPI routing, auth (JWT/mTLS), rate limits.
+Input validation, request logging, request IDs.
+Application / Domain Layer
+
+Deterministic logic: pricing, reservation, validation rules.
+Uses idempotency keys, transactions.
+No HTTP or DB knowledge.
+Adapter / Integration Layer
+
+Pluggable adapters: MSME, affiliate, payment, inventory, catalog.
+Translates external shapes into ICE canonical blobs.
+Persistence & Cache Layer
+
+Postgres JSONB for canonical blobs & audit.
+Redis for cache + streams (hot data).
+Snapshot storage for large catalog blobs.
+Async Eventing / Streams Layer
+
+ice:preload, ice:hydrated, oob:audit.
+Workers for hydration, cache refresh, TTL cleanup, audit publishing.
+Observability & Ops Layer
+
+Metrics, tracing, logs, health checks.
+Schema version tooling and migrations.

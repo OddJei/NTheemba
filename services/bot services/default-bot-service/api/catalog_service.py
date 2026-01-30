@@ -254,3 +254,4 @@ class CatalogServiceClient:
             return {"error": f"Catalog analytics error: {str(e)}"}
 
 
+

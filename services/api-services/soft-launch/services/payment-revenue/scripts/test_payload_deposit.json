@@ -1,0 +1,12 @@
+{
+  "depositId": "test-dep-1",
+  "status": "COMPLETED",
+  "amount": "100.00",
+  "currency": "ZMW",
+  "payer": {
+    "accountDetails": {
+      "phoneNumber": "260771234567",
+      "provider": "AIRTEL_OAPI_ZMB"
+    }
+  }
+}

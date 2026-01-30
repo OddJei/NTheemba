@@ -247,10 +247,23 @@ def install_audit_log_forwarding(*, service: str) -> None:
     if not audit_forward_logs_enabled():
         return
 
-    root = logging.getLogger()
-    for h in root.handlers:
-        if isinstance(h, AuditLogForwardingHandler) and getattr(h, "_service", None) == service:
-            return
+    handler = AuditLogForwardingHandler(
+        service=service,
+        level=get_audit_forward_logs_level(),
+        exclude_prefixes=get_audit_forward_logs_exclude_prefixes(),
+    )
 
-    handler = AuditLogForwardingHandler(service=service, level=get_audit_forward_logs_level(), exclude_prefixes=get_audit_forward_logs_exclude_prefixes())
-    root.addHandler(handler)
+    def _ensure_handler_attached(target_logger: logging.Logger) -> None:
+        for existing in target_logger.handlers:
+            if isinstance(existing, AuditLogForwardingHandler) and getattr(existing, "_service", None) == service:
+                return
+        target_logger.addHandler(handler)
+
+    # Attach to root logger (covers most application loggers).
+    _ensure_handler_attached(logging.getLogger())
+
+    # Uvicorn uses dedicated loggers with their own handlers and often has propagate=False.
+    # If we only attach to root, we won't see access logs like:
+    #   "POST /pawapay/..." 201
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        _ensure_handler_attached(logging.getLogger(name))

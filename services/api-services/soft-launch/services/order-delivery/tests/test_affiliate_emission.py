@@ -39,7 +39,7 @@ async def test_order_create_emits_order_created_to_affiliate_engine(monkeypatch)
     with TestClient(od_main.app) as client:
         r = client.post(
             "/orders/create",
-            headers={"X-Correlation-Id": "corr-aff-1"},
+            headers={"X-Correlation-Id": "corr-aff-1", "Authorization": "Bearer dummy-token"},
             json={
                 "session_id": None,
                 "user_phone": "+260971000000",

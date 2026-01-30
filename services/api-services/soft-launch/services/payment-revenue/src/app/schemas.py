@@ -93,3 +93,76 @@ class SubscriptionPaymentOut(OrmBaseModel):
 
 class StatusOut(OrmBaseModel):
     status: str
+
+
+class RefundRequestIn(OrmBaseModel):
+    order_id: str
+    reason: Optional[str] = None
+
+
+class RefundOut(OrmBaseModel):
+    status: str
+    order_id: str
+    business_id: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+# -----------------
+# pawaPay (Zambia)
+# -----------------
+
+
+class PawaPayDepositInitiateIn(OrmBaseModel):
+    # Optional so callers can retry with the same ID.
+    deposit_id: Optional[str] = Field(default=None, alias="depositId")
+
+    order_id: Optional[str] = None
+    business_id: Optional[str] = None
+
+    amount_minor: int = Field(ge=0)
+    currency: str = "ZMW"
+
+    phone_number: str = Field(alias="phoneNumber")
+    provider: Optional[str] = None  # Auto-inferred from phone if not provided
+
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PawaPayPayoutInitiateIn(OrmBaseModel):
+    payout_id: Optional[str] = Field(default=None, alias="payoutId")
+
+    order_id: Optional[str] = None
+    business_id: Optional[str] = None
+
+    amount_minor: int = Field(ge=0)
+    currency: str = "ZMW"
+
+    phone_number: str = Field(alias="phoneNumber")
+    provider: Optional[str] = None  # Auto-inferred from phone if not provided
+
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PawaPayRefundInitiateIn(OrmBaseModel):
+    refund_id: Optional[str] = Field(default=None, alias="refundId")
+    deposit_id: str = Field(alias="depositId")
+
+    # Optional for partial refunds.
+    amount_minor: Optional[int] = Field(default=None, ge=0)
+    currency: Optional[str] = None
+
+    order_id: Optional[str] = None
+    business_id: Optional[str] = None
+
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PawaPayTxnOut(OrmBaseModel):
+    # Works for deposit/payout/refund.
+    external_id: str
+    status: str
+    amount_minor: int
+    currency: str
+    provider: Optional[str] = None
+    phone_number: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

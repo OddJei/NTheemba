@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List
 from typing import Any, Dict, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -35,6 +36,47 @@ class LinkOut(BaseModel):
     product_id: str
     business_id: str
     created_at: datetime
+
+
+class AffiliateLinkResolveOut(BaseModel):
+    status: Literal["available", "unavailable"]
+    reason: Optional[str] = None
+
+    affiliate_code: str
+    link_id: Optional[str] = None
+    affiliate_id: Optional[str] = None
+    business_id: Optional[str] = None
+    product_id: Optional[str] = None
+    campaign: Optional[str] = None
+
+    token: Optional[str] = None
+    token_message: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+    whatsapp_url: Optional[str] = None
+
+    # Optional lightweight preview for static landing page.
+    product: Optional[Dict[str, Any]] = None
+
+
+class TokenResolveRequest(BaseModel):
+    token: str
+    # Optional phone number supplied by bot (unique buyer identifier)
+    buyer_phone: Optional[str] = None
+    # Optional session id or chat id from the client/UI
+    session_id: Optional[str] = None
+
+
+class TokenResolveOut(BaseModel):
+    product_id: str
+    name: Optional[str] = None
+    price: Optional[float] = None
+    currency: Optional[str] = None
+    product_url: Optional[str] = None
+    image_url: Optional[str] = None
+    affiliate_id: Optional[str] = None
+    campaign: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
 
 
 class ClickCreate(BaseModel):
@@ -100,6 +142,17 @@ class PaymentSuccessEvent(BaseModel):
     currency: str
 
     earnings: EarningsBreakdown
+
+
+class OrderDeliveredEvent(BaseModel):
+    event_id: str
+    event_type: str = "order_delivered"
+    occurred_at: datetime
+    correlation_id: Optional[str]
+
+    order_id: str
+    business_id: str
+
 
 
 class EarningOut(BaseModel):
@@ -187,6 +240,12 @@ class PoolStanding(BaseModel):
     affiliate_id: str
     tier_name: Optional[str]
     tier_multiplier: float
+
+    # Tier qualification details (pool policy transparency)
+    # - effective_tier: tier used for payout multiplier after qualification/auto-upgrade logic
+    # - tier_qualification: structured reasons for eligibility / ineligibility
+    effective_tier: Optional[str] = None
+    tier_qualification: Optional[Dict[str, Any]] = None
 
     sales_volume: float
     unique_buyers: int

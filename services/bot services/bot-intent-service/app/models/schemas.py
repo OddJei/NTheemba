@@ -29,11 +29,21 @@ class IntentRequest(BaseModel):
     raw_text: str = Field(
         ...,
         description="Normalized/plaintext user message",
-        validation_alias=AliasChoices("raw_text", "normalized_text"),
+        validation_alias=AliasChoices("raw_text", "normalized_text", "text"),
     )
 
     # Optional enriched meta from bots/ingress
     enriched_meta: Dict[str, Any] = Field(default_factory=dict)
+
+    # Optional runtime context from bot engines (lightweight summary)
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional runtime context for intent extraction (e.g. oob_summary)",
+        validation_alias=AliasChoices("context", "runtime_context"),
+    )
+
+    # Whether intent extraction is required for this message.
+    required: bool = Field(default=False, validation_alias=AliasChoices("required", "intent_required"))
 
     # Optional extra context
     attachments: List[Attachment] = Field(default_factory=list)
@@ -44,12 +54,19 @@ class IntentInfo(BaseModel):
     confidence: float = 0.0
 
 
+class DetectedIntent(BaseModel):
+    id: str
+    slots: Dict[str, Any] = Field(default_factory=dict)
+    confidence: float = 1.0
+
+
 class IntentResponse(BaseModel):
     event_id: str
     session_id: str
 
     intent: IntentInfo
     slots: Dict[str, Any] = Field(default_factory=dict)
+    intents: List[DetectedIntent] = Field(default_factory=list, description="List of all detected intents in order")
 
     intent_required: bool = Field(default=False)
     next_action: Literal["reply", "outbound", "none"] = Field(default="reply")

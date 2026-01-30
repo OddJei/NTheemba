@@ -1,10 +1,44 @@
 from __future__ import annotations
 
 import os
+import urllib.parse
 
 
 def get_database_url() -> str:
-    return os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./affiliate_engine.db")
+    """Return async DB URL.
+
+    Prefer explicit `DATABASE_URL`. Otherwise build from Postgres env vars:
+    - PG_USER, PG_PASSWORD, PG_HOST, PG_PORT, PG_DB
+
+    For per-service schema, set `PG_SCHEMA` and the connection will include
+    search_path via the `options` parameter when building the URL.
+    Falls back to sqlite file for local quick dev if no PG_USER provided.
+    """
+    explicit = os.getenv("DATABASE_URL")
+    if explicit:
+        return explicit
+
+    pg_user = os.getenv("PG_USER")
+    if not pg_user:
+        return os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./affiliate_engine.db")
+
+    pg_password = os.getenv("PG_PASSWORD", "")
+    pg_host = os.getenv("PG_HOST", "127.0.0.1")
+    pg_port = os.getenv("PG_PORT", "5432")
+    pg_db = os.getenv("PG_DB", "ntheemba")
+    pg_schema = os.getenv("PG_SCHEMA", "affiliate_engine")
+
+    # url-encode password
+    quoted_pw = urllib.parse.quote_plus(pg_password)
+
+    # Asyncpg + SQLAlchemy connection URL (do not pass `options` here because
+    # asyncpg.connect() does not accept that kwarg). The per-service schema is
+    # applied via `connect_args` when building the engine.
+    return f"postgresql+asyncpg://{pg_user}:{quoted_pw}@{pg_host}:{pg_port}/{pg_db}"
+
+
+def get_pg_schema() -> str:
+    return os.getenv("PG_SCHEMA", "affiliate_engine")
 
 
 def get_admin_key() -> str:
@@ -45,3 +79,30 @@ def get_notification_timeout_seconds() -> float:
         return float(os.getenv("NOTIFICATION_TIMEOUT_SECONDS", "3.0"))
     except ValueError:
         return 3.0
+
+
+def get_jwt_secret() -> str:
+    # Shared secret used by msme-engine for issuing access tokens; other services verify with it.
+    return os.getenv("MSME_JWT_SECRET", "change-me")
+
+
+def get_affiliate_token_ttl_seconds() -> int:
+    """Short-lived WhatsApp token TTL (seconds)."""
+    try:
+        return int(os.getenv("AFFILIATE_TOKEN_TTL_SECONDS", "600"))
+    except ValueError:
+        return 600
+
+
+def get_affiliate_token_prefix() -> str:
+    # Prefix included in the WhatsApp message body so the bot can detect tokens.
+    return os.getenv("AFFILIATE_TOKEN_PREFIX", "ace:")
+
+
+def get_affiliate_default_whatsapp_number() -> str | None:
+    """Fallback WhatsApp number if MSME service doesn't provide one.
+
+    Format: digits with country code, e.g. 26097xxxxxxx. (Leading + allowed; it will be stripped.)
+    """
+    v = os.getenv("AFFILIATE_DEFAULT_WHATSAPP_NUMBER", "").strip()
+    return v or None

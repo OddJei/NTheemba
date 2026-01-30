@@ -3,8 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, UniqueConstraint
-from sqlalchemy.dialects.sqlite import JSON as SqliteJson
+from sqlalchemy import Boolean, DateTime, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.app.db import Base
@@ -40,7 +39,28 @@ class Settlement(Base):
     status: Mapped[str] = mapped_column(String(32), default="computed")  # computed|dispatched
     dispatched: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    meta: Mapped[dict] = mapped_column(SqliteJson, default=dict)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Outbox(Base):
+    __tablename__ = "outbox"
+    __table_args__ = (
+        # Allows idempotent event insertion when callbacks are delivered multiple times.
+        UniqueConstraint("topic", "dedupe_key", name="uq_outbox_topic_dedupe_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    topic: Mapped[str] = mapped_column(String(64), index=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    destination: Mapped[str] = mapped_column(String(256))
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="pending")  # pending|sent|failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    send_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -67,7 +87,7 @@ class Payout(Base):
     amount_minor: Mapped[int] = mapped_column(Integer)
 
     status: Mapped[str] = mapped_column(String(32), default="pending")  # pending|dispatched
-    meta: Mapped[dict] = mapped_column(SqliteJson, default=dict)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -92,7 +112,7 @@ class SubscriptionPayment(Base):
     status: Mapped[str] = mapped_column(String(32), default="computed")  # computed|dispatched
     dispatched: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    meta: Mapped[dict] = mapped_column(SqliteJson, default=dict)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -105,5 +125,78 @@ class IdempotencyRecord(Base):
     scope: Mapped[str] = mapped_column(String(128), index=True)
     key: Mapped[str] = mapped_column(String(128), index=True)
     status_code: Mapped[int] = mapped_column(Integer)
-    response_body: Mapped[dict] = mapped_column(SqliteJson, default=dict)
+    response_body: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PawaPayDeposit(Base):
+    __tablename__ = "pawapay_deposits"
+    __table_args__ = (UniqueConstraint("deposit_id", name="uq_pawapay_deposit_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    deposit_id: Mapped[str] = mapped_column(String(64), index=True)
+
+    order_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    business_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    currency: Mapped[str] = mapped_column(String(8), default="ZMW")
+    amount_minor: Mapped[int] = mapped_column(Integer, default=0)
+
+    phone_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    status: Mapped[str] = mapped_column(String(32), default="CREATED")
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(String(256), nullable=True)
+
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class PawaPayPayout(Base):
+    __tablename__ = "pawapay_payouts"
+    __table_args__ = (UniqueConstraint("payout_id", name="uq_pawapay_payout_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    payout_id: Mapped[str] = mapped_column(String(64), index=True)
+
+    order_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    business_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    currency: Mapped[str] = mapped_column(String(8), default="ZMW")
+    amount_minor: Mapped[int] = mapped_column(Integer, default=0)
+
+    phone_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    status: Mapped[str] = mapped_column(String(32), default="CREATED")
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(String(256), nullable=True)
+
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class PawaPayRefund(Base):
+    __tablename__ = "pawapay_refunds"
+    __table_args__ = (UniqueConstraint("refund_id", name="uq_pawapay_refund_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    refund_id: Mapped[str] = mapped_column(String(64), index=True)
+    deposit_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    order_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    business_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    currency: Mapped[str] = mapped_column(String(8), default="ZMW")
+    amount_minor: Mapped[int] = mapped_column(Integer, default=0)
+
+    status: Mapped[str] = mapped_column(String(32), default="CREATED")
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(String(256), nullable=True)
+
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

@@ -1,0 +1,73 @@
+# Dummy test data for manual endpoint testing
+
+--- MSME 1 (create owner variant) ---
+{
+  "owner": {
+    "user_id": "b1f3a9d8-8c4b-4a4e-9c2f-1d2a5f6e7a01",
+    "username": "test_owner_01",
+    "email": "owner+test01@example.com",
+    "phone": "+260971000101"
+  },
+  "business": {
+    "id": "05fef278-3a66-4b26-a13e-8ae4406bc724",
+    "name": "Test MSME One",
+    "location": "Lusaka",
+    "category": "Retail",
+    "logo_url": "https://example.com/logos/testmsme1.png",
+    "affiliate_code": "TESTMSME01",
+    "referred_by_msme_code": null,
+    "subscription_plan": "free",
+    "msme_code": "MSME-01234"
+  }
+}
+
+--- MSME 2 (link existing owner variant) ---
+{
+  "owner_user_id": "c301a1bd-7506-4229-9603-00d4474087c5",
+  "business": {
+    "id": "f2a7d9e1-6b55-4b2b-9a7f-3c4d2e5f8b02",
+    "name": "Test MSME Two",
+    "location": "Kitwe",
+    "category": "Food",
+    "logo_url": "https://example.com/logos/testmsme2.png",
+    "affiliate_code": "TESTMSME02",
+    "referred_by_msme_code": "MSME-01234",
+    "subscription_plan": "paid",
+    "msme_code": "MSME-04567"
+  }
+}
+
+--- Affiliate 1 ---
+{
+  "affiliate": {
+    "id": "a9c2b3d4-1111-2222-3333-444455556666",
+    "name": "Test Affiliate One",
+    "phone": "+260971000201",
+    "affiliate_code": "AFF-ONE-01"
+  },
+  "example_link": {
+    "campaign": "launch_promo",
+    "product_id": "prod-001",
+    "business_id": "05fef278-3a66-4b26-a13e-8ae4406bc724"
+  }
+}
+
+--- Affiliate 2 ---
+{
+  "affiliate": {
+    "id": "d7e8f901-7777-8888-9999-0000aaaabbbb",
+    "name": "Test Affiliate Two",
+    "phone": "+260971000202",
+    "affiliate_code": "AFF-TWO-02"
+  },
+  "example_link": {
+    "campaign": "winter_sale",
+    "product_id": "prod-002",
+    "business_id": "f2a7d9e1-6b55-4b2b-9a7f-3c4d2e5f8b02"
+  }
+}
+
+# Notes:
+# - Replace the placeholder IDs where necessary with values returned by your create endpoints.
+# - Use the MSME blocks with `POST /business/register` (owner variant creates user; owner_user_id links existing user).
+# - Use Affiliate blocks with `POST /affiliates` and `POST /affiliates/{affiliate_id}/links`.

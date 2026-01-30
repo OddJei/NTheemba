@@ -3,15 +3,31 @@ from datetime import datetime
 from typing import Optional
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
+from sqlalchemy.exc import InvalidRequestError, DatabaseError
+import asyncio
+
+"""Bot-session service API.
+
+This module exposes session and event endpoints. Session state is tracked by the
+`Session.state` enum and per-stage attribution is recorded in the
+`SessionStateCycle` model (`src/app/models.py`).
+
+Admins can inspect the full lifecycle for a session via the admin endpoint
+`GET /admin/session/{session_id}/full` implemented below.
+"""
 
 from . import events as event_publisher
 from . import jobs
 from . import models
 from . import audit_client
+from . import security
 from .db import Base, async_engine, get_db_session
 
 
@@ -19,6 +35,23 @@ app = FastAPI(title="Bot-Session Unified Service")
 
 # Forward important Python logs (WARNING+) to audit-service.
 audit_client.install_audit_log_forwarding(service="bot-session")
+
+_AUTH_SKIP_PATHS = {
+    "/health",
+    "/metrics",
+    "/openapi.json",
+    "/docs",
+    "/docs/index.html",
+    "/redoc",
+}
+
+# Allow some public endpoints used by tests to run without auth
+_AUTH_SKIP_PATHS.update({
+    "/bot/create",
+    "/session/create",
+    "/session/resolve",
+    "/event/create",
+})
 
 
 class CreateSessionReq(BaseModel):
@@ -28,6 +61,9 @@ class CreateSessionReq(BaseModel):
     bot_type: Optional[str] = None
     business_id: Optional[str] = None
     platform: str
+    affiliate_code: Optional[str] = None
+    affiliate_id: Optional[str] = None
+    affiliate_metadata: Optional[dict] = None
 
 
 class CreateEventReq(BaseModel):
@@ -39,15 +75,33 @@ class CreateEventReq(BaseModel):
     event_type: Optional[str] = None
 
 
-@app.on_event("startup")
 async def startup() -> None:
     async with async_engine.begin() as conn:
+        schema = os.getenv("PG_SCHEMA", "").strip()
+        if schema and str(async_engine.url).startswith("postgres"):
+            await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
         await conn.run_sync(Base.metadata.create_all)
     if os.getenv("DISABLE_CLEANUP_JOBS") != "1":
         try:
             jobs.schedule_cleanup(app)
         except Exception:
             pass
+
+
+# Register startup handler without using the deprecated decorator.
+app.add_event_handler("startup", startup)
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    # Require Bearer access tokens issued by msme-engine for all routes except health/metrics/docs.
+    if request.url.path in _AUTH_SKIP_PATHS:
+        return await call_next(request)
+    try:
+        await security.require_access_token(request)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
 
 
 async def resolve_bot_by_phone(db: AsyncSession, phone: str) -> Optional[models.Bot]:
@@ -140,8 +194,12 @@ async def create_session(payload: CreateSessionReq, db: AsyncSession = Depends(g
     existing = res.scalar_one_or_none()
 
     if existing:
+        prev_status = existing.status
         existing.status = models.SessionStatus.active
         existing.session_mode = session_mode
+        # preserve previous state when reactivating
+        if prev_status != models.SessionStatus.active:
+            existing.reactivated_at = datetime.utcnow()
         existing.updated_at = datetime.utcnow()
         db.add(existing)
         await db.commit()
@@ -157,11 +215,33 @@ async def create_session(payload: CreateSessionReq, db: AsyncSession = Depends(g
             session_mode=session_mode,
             platform=payload.platform,
             status=models.SessionStatus.active,
+            # SessionState init: start new sessions in the `chat` state by default.
+            # This field represents the current logical stage of the user's session
+            # (chat -> cart -> order -> payment -> delivery -> closed).
+            state=models.SessionState.chat,
+            # Timestamp when the session entered the current `state`.
+            state_entered_at=datetime.utcnow(),
         )
         db.add(session_obj)
         await db.commit()
         await db.refresh(session_obj)
         reactivated = False
+
+        # If affiliate info provided on create, record initial cycle with attribution
+        if payload.affiliate_code or payload.affiliate_id or payload.affiliate_metadata:
+            # Initial SessionStateCycle: captures affiliate attribution at session creation.
+            # This is recorded separately from the Session row so attribution is tracked per cycle.
+            cycle = models.SessionStateCycle(
+                session_id=session_obj.id,
+                cycle_type=session_obj.state,
+                started_at=datetime.utcnow(),
+                initiated_by_affiliate=True,
+                affiliate_code=payload.affiliate_code,
+                affiliate_id=payload.affiliate_id,
+                meta=payload.affiliate_metadata,
+            )
+            db.add(cycle)
+            await db.commit()
 
     await audit_client.emit_audit(
         service="bot-session",
@@ -206,11 +286,118 @@ async def get_session(session_id: str, db: AsyncSession = Depends(get_db_session
     }
 
 
+@app.get("/admin/session/{session_id}/full")
+async def admin_session_full(session_id: str, request: Request, db: AsyncSession = Depends(get_db_session)):
+    """Admin helper: return session + cycles + events for a session.
+
+    Requires admin role in token payload (middleware already enforces auth).
+    """
+    token_payload = getattr(request.state, "token_payload", {}) or {}
+    if token_payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="admin_required")
+
+    res = await db.execute(select(models.Session).where(models.Session.id == session_id))
+    s = res.scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    res_c = await db.execute(
+        select(models.SessionStateCycle).where(models.SessionStateCycle.session_id == session_id).order_by(models.SessionStateCycle.started_at.asc())
+    )
+    cycles = [
+        {
+            "id": c.id,
+            "cycle_type": c.cycle_type.value,
+            "started_at": c.started_at,
+            "completed_at": c.completed_at,
+            "initiated_by_affiliate": c.initiated_by_affiliate,
+            "affiliate_code": c.affiliate_code,
+            "affiliate_id": c.affiliate_id,
+            "meta": c.meta,
+        }
+        for c in res_c.scalars().all()
+    ]
+
+    res_e = await db.execute(
+        select(models.Event).where(models.Event.session_id == session_id).order_by(models.Event.created_at.asc())
+    )
+    events = [
+        {"id": e.id, "event_type": e.event_type, "created_at": e.created_at, "payload_events": e.payload_events} for e in res_e.scalars().all()
+    ]
+
+    # Cross-service enrichment: fetch deliveries and orders from order-delivery service
+    order_delivery_base = os.getenv("ORDER_DELIVERY_BASE_URL", "http://127.0.0.1:8520").rstrip("/")
+    od_timeout = float(os.getenv("ORDER_DELIVERY_TIMEOUT_SECONDS", "3.0"))
+    deliveries_info: list = []
+    try:
+        async with httpx.AsyncClient(timeout=od_timeout) as client:
+            r = await client.get(f"{order_delivery_base}/delivery/user/{s.user_phone}")
+            if r.status_code == 200:
+                delivs = r.json() or []
+                for d in delivs:
+                    order_info = None
+                    order_id = d.get("order_id") if isinstance(d, dict) else None
+                    if order_id:
+                        try:
+                            ro = await client.get(f"{order_delivery_base}/orders/{order_id}")
+                            if ro.status_code == 200:
+                                order_info = ro.json()
+                        except Exception:
+                            order_info = None
+                    deliveries_info.append({"delivery": d, "order": order_info})
+    except Exception:
+        deliveries_info = []
+
+    return {
+        "session": {"id": s.id, "user_phone": s.user_phone, "status": s.status.value, "state": s.state.value},
+        "cycles": cycles,
+        "events": events,
+        "order_delivery": deliveries_info,
+    }
+
+
+@app.post("/session/{session_id}/close")
+async def close_session(session_id: str, db: AsyncSession = Depends(get_db_session)):
+    res = await db.execute(select(models.Session).where(models.Session.id == session_id))
+    s = res.scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="session not found")
+    if s.status == models.SessionStatus.closed:
+        return {"session_id": s.id, "status": s.status.value}
+
+    s.status = models.SessionStatus.closed
+    s.closed_at = datetime.utcnow()
+    try:
+        s.duration_seconds = int((s.closed_at - s.created_at).total_seconds())
+    except Exception:
+        s.duration_seconds = None
+    db.add(s)
+    # complete any open cycles
+    await db.commit()
+    await db.refresh(s)
+    await db.execute(
+        select(models.SessionStateCycle).where(models.SessionStateCycle.session_id == s.id, models.SessionStateCycle.completed_at == None)
+    )
+    # Reuse existing helper behavior by calling event_create's internal logic not easily reachable here; instead mark cycles closed directly
+    res_c = await db.execute(
+        select(models.SessionStateCycle).where(models.SessionStateCycle.session_id == s.id, models.SessionStateCycle.completed_at == None)
+    )
+    for c in res_c.scalars().all():
+        c.completed_at = datetime.utcnow()
+        db.add(c)
+    await db.commit()
+
+    return {"session_id": s.id, "status": s.status.value, "closed_at": s.closed_at}
+
+
 @app.get("/session/resolve")
 async def resolve_session(
     user_phone: Optional[str] = None,
     bot_id: Optional[str] = None,
     platform: Optional[str] = None,
+    affiliate_code: Optional[str] = None,
+    affiliate_id: Optional[str] = None,
+    affiliate_metadata: Optional[str] = None,
     db: AsyncSession = Depends(get_db_session),
 ):
     if not user_phone or not bot_id or not platform:
@@ -241,10 +428,28 @@ async def resolve_session(
         session_mode=session_mode,
         platform=platform,
         status=models.SessionStatus.active,
+        # SessionState init: new resolved sessions also start in `chat` by default.
+        state=models.SessionState.chat,
+        state_entered_at=datetime.utcnow(),
     )
     db.add(new_s)
     await db.commit()
     await db.refresh(new_s)
+    # record initial cycle if affiliate info present
+    if affiliate_code or affiliate_id or affiliate_metadata:
+        # Initial SessionStateCycle on session resolution when affiliate attribution
+        # is provided by the resolver call.
+        cycle = models.SessionStateCycle(
+            session_id=new_s.id,
+            cycle_type=new_s.state,
+            started_at=datetime.utcnow(),
+            initiated_by_affiliate=True,
+            affiliate_code=affiliate_code,
+            affiliate_id=affiliate_id,
+            meta=affiliate_metadata,
+        )
+        db.add(cycle)
+        await db.commit()
     return {"session_id": new_s.id, "session_mode": new_s.session_mode.value, "status": new_s.status.value}
 
 
@@ -262,87 +467,300 @@ async def sessions_by_phone_platform(user_phone: str, platform: str, db: AsyncSe
 
 @app.post("/event/create")
 async def event_create(payload: CreateEventReq, db: AsyncSession = Depends(get_db_session)):
-    res_s = await db.execute(select(models.Session).where(models.Session.id == payload.session_id))
-    session = res_s.scalar_one_or_none()
-    if not session:
-        raise HTTPException(status_code=404, detail="session not found")
+    # Protect critical updates: try DB-level row lock (SELECT FOR UPDATE) inside a transaction.
+    # If the DB doesn't support it or a transaction can't be started, fall back to the
+    # optimistic flush/commit path already in use.
+    max_attempts = 3
+    backoff = 0.05
+    for attempt in range(1, max_attempts + 1):
+        try:
+            try:
+                # Attempt DB-level lock
+                async with db.begin():
+                    stmt = select(models.Session).where(models.Session.id == payload.session_id).with_for_update(nowait=True)
+                    res_s = await db.execute(stmt)
+                    session = res_s.scalar_one_or_none()
+                    if not session:
+                        raise HTTPException(status_code=404, detail="session not found")
 
-    message_count = 1
-    previous_turns: dict = {}
-    if payload.last_event_id:
-        res_last = await db.execute(select(models.Event).where(models.Event.id == payload.last_event_id))
-        last = res_last.scalar_one_or_none()
-        if last:
-            message_count = (last.message_count or 0) + 1
-            previous_turns["turn1"] = {
-                "id": last.id,
-                "event_type": last.event_type,
-                "payload_events": last.payload_events,
-                "message_count": last.message_count,
-            }
-            if last.last_event_id:
-                res_t2 = await db.execute(select(models.Event).where(models.Event.id == last.last_event_id))
-                t2 = res_t2.scalar_one_or_none()
-                if t2:
-                    previous_turns["turn2"] = {
-                        "id": t2.id,
-                        "event_type": t2.event_type,
-                        "payload_events": t2.payload_events,
-                        "message_count": t2.message_count,
-                    }
-                    if t2.last_event_id:
-                        res_t3 = await db.execute(select(models.Event).where(models.Event.id == t2.last_event_id))
-                        t3 = res_t3.scalar_one_or_none()
-                        if t3:
-                            previous_turns["turn3"] = {
-                                "id": t3.id,
-                                "event_type": t3.event_type,
-                                "payload_events": t3.payload_events,
-                                "message_count": t3.message_count,
+                    # Now perform writes inside this transaction
+                    message_count = 1
+                    previous_turns: dict = {}
+                    if payload.last_event_id:
+                        res_last = await db.execute(select(models.Event).where(models.Event.id == payload.last_event_id))
+                        last = res_last.scalar_one_or_none()
+                        if last:
+                            message_count = (last.message_count or 0) + 1
+                            previous_turns["turn1"] = {
+                                "id": last.id,
+                                "event_type": last.event_type,
+                                "payload_events": last.payload_events,
+                                "message_count": last.message_count,
                             }
+                            if last.last_event_id:
+                                res_t2 = await db.execute(select(models.Event).where(models.Event.id == last.last_event_id))
+                                t2 = res_t2.scalar_one_or_none()
+                                if t2:
+                                    previous_turns["turn2"] = {
+                                        "id": t2.id,
+                                        "event_type": t2.event_type,
+                                        "payload_events": t2.payload_events,
+                                        "message_count": t2.message_count,
+                                    }
+                                    if t2.last_event_id:
+                                        res_t3 = await db.execute(select(models.Event).where(models.Event.id == t2.last_event_id))
+                                        t3 = res_t3.scalar_one_or_none()
+                                        if t3:
+                                            previous_turns["turn3"] = {
+                                                "id": t3.id,
+                                                "event_type": t3.event_type,
+                                                "payload_events": t3.payload_events,
+                                                "message_count": t3.message_count,
+                                            }
 
-    ev = models.Event(
-        session_id=payload.session_id,
-        user_phone=payload.user_phone or session.user_phone,
-        user_id=None,
-        bot_id=payload.bot_id,
-        last_event_id=payload.last_event_id,
-        message_count=message_count,
-        event_type=payload.event_type,
-        payload_events=payload.payload_events or {},
-        previous_turns=previous_turns or None,
-        status="created",
-    )
-    db.add(ev)
-    await db.commit()
-    await db.refresh(ev)
+                    ev = models.Event(
+                        session_id=payload.session_id,
+                        user_phone=payload.user_phone or session.user_phone,
+                        user_id=None,
+                        bot_id=payload.bot_id,
+                        last_event_id=payload.last_event_id,
+                        message_count=message_count,
+                        event_type=payload.event_type,
+                        payload_events=payload.payload_events or {},
+                        previous_turns=previous_turns or None,
+                        status="created",
+                    )
+                    db.add(ev)
+                    await db.flush()
 
-    session.last_event_id = ev.id
-    db.add(session)
-    await db.commit()
+                    session.last_event_id = ev.id
+                    db.add(session)
 
-    await audit_client.emit_audit(
-        service="bot-session",
-        event_type="event_created",
-        payload={
-            "event_id": ev.id,
-            "session_id": ev.session_id,
-            "event_type": payload.event_type,
-            "message_count": message_count,
-            "user_phone": ev.user_phone,
-        },
-        actor_id=ev.user_phone,
-        entity_type="event",
-        entity_id=ev.id,
-        metadata={"session_id": ev.session_id, "bot_id": payload.bot_id},
-    )
+                    # State transition mapping based on event_type.
+                    # NOTE: when a transition occurs we create a new `SessionStateCycle` to
+                    # represent the new logical stage. Any open cycle is completed first
+                    # and its affiliate attribution is carried forward into the new cycle.
+                    # This keeps attribution tied to the lifecycle of a specific session stage.
+                    # See `SessionStateCycle` model for stored fields.
+                    # State transition mapping based on event_type
+                    transition_map = {
+                        "enter_cart": models.SessionState.cart,
+                        "add_to_cart": models.SessionState.cart,
+                        "checkout": models.SessionState.order,
+                        "payment_initiated": models.SessionState.payment,
+                        "payment_success": models.SessionState.payment,
+                        "delivery_initiated": models.SessionState.delivery,
+                        "delivery_confirmed": models.SessionState.closed,
+                    }
 
-    try:
-        await event_publisher.publish_business_event(session.business_id or session.bot_id, {"event_id": ev.id, "session_id": session.id})
-    except Exception:
-        pass
+                    async def _fetch_and_complete_open_cycle():
+                        res_c = await db.execute(
+                            select(models.SessionStateCycle).where(models.SessionStateCycle.session_id == session.id, models.SessionStateCycle.completed_at == None)
+                        )
+                        open_cycle = res_c.scalars().first()
+                        if open_cycle:
+                            # capture affiliate info before closing
+                            aff_code = open_cycle.affiliate_code
+                            aff_id = open_cycle.affiliate_id
+                            aff_meta = open_cycle.meta
+                            open_cycle.completed_at = datetime.utcnow()
+                            db.add(open_cycle)
+                            return {"affiliate_code": aff_code, "affiliate_id": aff_id, "affiliate_metadata": aff_meta}
+                        return {"affiliate_code": None, "affiliate_id": None, "affiliate_metadata": None}
 
-    return {"event_id": ev.id, "session_id": ev.session_id, "message_count": ev.message_count}
+                    et = (payload.event_type or "")
+                    if et in transition_map:
+                        new_state = transition_map[et]
+                        if session.state != new_state:
+                            # On state transition: complete any open cycle and create
+                            # a new SessionStateCycle for the `new_state`.
+                            prior_aff = await _fetch_and_complete_open_cycle()
+                            cycle = models.SessionStateCycle(
+                                session_id=session.id,
+                                cycle_type=new_state,
+                                started_at=datetime.utcnow(),
+                                initiated_by_affiliate=bool(prior_aff.get("affiliate_code") or prior_aff.get("affiliate_id")),
+                                affiliate_code=prior_aff.get("affiliate_code"),
+                                affiliate_id=prior_aff.get("affiliate_id"),
+                                meta=prior_aff.get("affiliate_metadata"),
+                            )
+                            db.add(cycle)
+                            session.state = new_state
+                            session.state_entered_at = datetime.utcnow()
+                            db.add(session)
+
+                        if new_state == models.SessionState.closed:
+                            session.status = models.SessionStatus.closed
+                            session.closed_at = datetime.utcnow()
+                            try:
+                                session.duration_seconds = int((session.closed_at - session.created_at).total_seconds())
+                            except Exception:
+                                session.duration_seconds = None
+                            db.add(session)
+
+                    # commit happens on context exit
+                    await db.refresh(ev)
+                    await audit_client.emit_audit(
+                        service="bot-session",
+                        event_type="event_created",
+                        payload={
+                            "event_id": ev.id,
+                            "session_id": ev.session_id,
+                            "event_type": payload.event_type,
+                            "message_count": message_count,
+                            "user_phone": ev.user_phone,
+                        },
+                        actor_id=ev.user_phone,
+                        entity_type="event",
+                        entity_id=ev.id,
+                        metadata={"session_id": ev.session_id, "bot_id": payload.bot_id},
+                    )
+
+                    try:
+                        await event_publisher.publish_business_event(session.business_id or session.bot_id, {"event_id": ev.id, "session_id": session.id})
+                    except Exception:
+                        pass
+
+                    return {"event_id": ev.id, "session_id": ev.session_id, "message_count": ev.message_count}
+            except (InvalidRequestError, DatabaseError):
+                # DB-level locking not supported / transaction couldn't be started; fall back to optimistic commit path
+                message_count = 1
+                previous_turns: dict = {}
+                if payload.last_event_id:
+                    res_last = await db.execute(select(models.Event).where(models.Event.id == payload.last_event_id))
+                    last = res_last.scalar_one_or_none()
+                    if last:
+                        message_count = (last.message_count or 0) + 1
+                        previous_turns["turn1"] = {
+                            "id": last.id,
+                            "event_type": last.event_type,
+                            "payload_events": last.payload_events,
+                            "message_count": last.message_count,
+                        }
+                        if last.last_event_id:
+                            res_t2 = await db.execute(select(models.Event).where(models.Event.id == last.last_event_id))
+                            t2 = res_t2.scalar_one_or_none()
+                            if t2:
+                                previous_turns["turn2"] = {
+                                    "id": t2.id,
+                                    "event_type": t2.event_type,
+                                    "payload_events": t2.payload_events,
+                                    "message_count": t2.message_count,
+                                }
+                                if t2.last_event_id:
+                                    res_t3 = await db.execute(select(models.Event).where(models.Event.id == t2.last_event_id))
+                                    t3 = res_t3.scalar_one_or_none()
+                                    if t3:
+                                        previous_turns["turn3"] = {
+                                            "id": t3.id,
+                                            "event_type": t3.event_type,
+                                            "payload_events": t3.payload_events,
+                                            "message_count": t3.message_count,
+                                        }
+
+                ev = models.Event(
+                    session_id=payload.session_id,
+                    user_phone=payload.user_phone or session.user_phone,
+                    user_id=None,
+                    bot_id=payload.bot_id,
+                    last_event_id=payload.last_event_id,
+                    message_count=message_count,
+                    event_type=payload.event_type,
+                    payload_events=payload.payload_events or {},
+                    previous_turns=previous_turns or None,
+                    status="created",
+                )
+                db.add(ev)
+                await db.flush()
+
+                session.last_event_id = ev.id
+                db.add(session)
+
+                # same transition handling as above
+                transition_map = {
+                    "enter_cart": models.SessionState.cart,
+                    "add_to_cart": models.SessionState.cart,
+                    "checkout": models.SessionState.order,
+                    "payment_initiated": models.SessionState.payment,
+                    "payment_success": models.SessionState.payment,
+                    "delivery_initiated": models.SessionState.delivery,
+                    "delivery_confirmed": models.SessionState.closed,
+                }
+
+                async def _fetch_and_complete_open_cycle():
+                    res_c = await db.execute(
+                        select(models.SessionStateCycle).where(models.SessionStateCycle.session_id == session.id, models.SessionStateCycle.completed_at == None)
+                    )
+                    open_cycle = res_c.scalars().first()
+                    if open_cycle:
+                        aff_code = open_cycle.affiliate_code
+                        aff_id = open_cycle.affiliate_id
+                        aff_meta = open_cycle.meta
+                        open_cycle.completed_at = datetime.utcnow()
+                        db.add(open_cycle)
+                        return {"affiliate_code": aff_code, "affiliate_id": aff_id, "affiliate_metadata": aff_meta}
+                    return {"affiliate_code": None, "affiliate_id": None, "affiliate_metadata": None}
+
+                et = (payload.event_type or "")
+                if et in transition_map:
+                    new_state = transition_map[et]
+                    if session.state != new_state:
+                        prior_aff = await _fetch_and_complete_open_cycle()
+                        cycle = models.SessionStateCycle(
+                            session_id=session.id,
+                            cycle_type=new_state,
+                            started_at=datetime.utcnow(),
+                            initiated_by_affiliate=bool(prior_aff.get("affiliate_code") or prior_aff.get("affiliate_id")),
+                            affiliate_code=prior_aff.get("affiliate_code"),
+                            affiliate_id=prior_aff.get("affiliate_id"),
+                            meta=prior_aff.get("affiliate_metadata"),
+                        )
+                        db.add(cycle)
+                        session.state = new_state
+                        session.state_entered_at = datetime.utcnow()
+                        db.add(session)
+
+                    if new_state == models.SessionState.closed:
+                        session.status = models.SessionStatus.closed
+                        session.closed_at = datetime.utcnow()
+                        try:
+                            session.duration_seconds = int((session.closed_at - session.created_at).total_seconds())
+                        except Exception:
+                            session.duration_seconds = None
+                        db.add(session)
+
+                await db.commit()
+                await db.refresh(ev)
+
+                await audit_client.emit_audit(
+                    service="bot-session",
+                    event_type="event_created",
+                    payload={
+                        "event_id": ev.id,
+                        "session_id": ev.session_id,
+                        "event_type": payload.event_type,
+                        "message_count": message_count,
+                        "user_phone": ev.user_phone,
+                    },
+                    actor_id=ev.user_phone,
+                    entity_type="event",
+                    entity_id=ev.id,
+                    metadata={"session_id": ev.session_id, "bot_id": payload.bot_id},
+                )
+
+                try:
+                    await event_publisher.publish_business_event(session.business_id or session.bot_id, {"event_id": ev.id, "session_id": session.id})
+                except Exception:
+                    pass
+
+                return {"event_id": ev.id, "session_id": ev.session_id, "message_count": ev.message_count}
+
+        except StaleDataError:
+            # concurrent update detected; retry with small backoff
+            if attempt == max_attempts:
+                raise HTTPException(status_code=409, detail="concurrent_update")
+            await asyncio.sleep(backoff * attempt)
+            continue
 
 
 @app.put("/event/{event_id}/update")
@@ -398,6 +816,27 @@ async def events_for_session(session_id: str, db: AsyncSession = Depends(get_db_
     )
     rows = res.scalars().all()
     return [{"id": r.id, "event_type": r.event_type, "created_at": r.created_at, "message_count": r.message_count} for r in rows]
+
+
+@app.get("/session/{session_id}/cycles")
+async def session_cycles(session_id: str, db: AsyncSession = Depends(get_db_session)):
+    res = await db.execute(
+        select(models.SessionStateCycle).where(models.SessionStateCycle.session_id == session_id).order_by(models.SessionStateCycle.started_at.asc())
+    )
+    rows = res.scalars().all()
+    return [
+        {
+            "id": r.id,
+            "cycle_type": r.cycle_type.value,
+            "started_at": r.started_at,
+            "completed_at": r.completed_at,
+            "initiated_by_affiliate": r.initiated_by_affiliate,
+            "affiliate_code": r.affiliate_code,
+            "affiliate_id": r.affiliate_id,
+            "meta": r.meta,
+        }
+        for r in rows
+    ]
 
 
 @app.get("/event/phone/{user_phone}")

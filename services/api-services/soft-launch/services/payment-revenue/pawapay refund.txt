@@ -1,0 +1,351 @@
+Refunds
+Refunds allow you to return successfully collected funds back to the customer. The funds will be moved from your wallet in pawaPay to the customer’s mobile money wallet.
+In this guide, we’ll go through step by step on how to refund a deposit.
+If you haven’t already, check out the following information to set you up for success with this guide.
+What you should know
+Understand some considerations to take into account when working with mobile money.
+How to start
+Sort out API tokens and callbacks.
+​
+Initiating a refund
+Let’s start by hard-coding everything.
+1
+Initiate the refund
+
+Let’s send this payload to the initiate refund endpoint.
+    POST https://api.sandbox.pawapay.io/v2/refunds
+
+    {
+        "refundId": "f02b543c-541c-4f21-bbea-20d2d56063d6",
+        "depositId": "afb57b93-7849-49aa-babb-4c3ccbfe3d79"
+    }
+We ask you to generate a UUIDv4 refundId to uniquely identify this refund. This is so that you always have a reference to the refund you are initiating, even if you do not receive a response from us due to network errors. This allows you to always reconcile all payments between your system and pawaPay. You should store this refundId in your system before initiating the refund with pawaPay.
+The depositId refers to the deposit you are looking to refund.
+You will receive a response for the initiation.
+    {
+        "payoutId": "f02b543c-541c-4f21-bbea-20d2d56063d6",
+        "status": "ACCEPTED",
+        "created": "2025-05-15T07:38:56Z"
+    }
+The status shows whether this payout was ACCEPTED for processing or not. We will go through failure modes later in the guide.
+2
+The refund will be processed
+
+Refunds do not require any authorisation or other action from the customer to receive it. The refund is usually processed within a few seconds. The customer will get an SMS receipt informing them that they have received a refund.
+3
+Get the final status of the payment
+
+You will receive a callback from us to your configured callback URL.
+    {
+        "refundId": "64d4a574-5204-4700-bf75-acce936b8648",
+        "status": "COMPLETED",
+        "amount": "100.00",
+        "currency": "RWF",
+        "country": "RWA",
+        "recipient": {
+            "type": "MMO",
+            "accountDetails": {
+                "phoneNumber": "260973456789",
+                "provider": "MTN_MOMO_RWA"
+            }
+        },
+        "customerMessage": "Google One",
+        "created": "2025-05-15T07:38:56Z"
+    }
+The main thing to focus on here is the status which is COMPLETED indicating that the refund has been processed successfully.
+If you have not configured callbacks, you can always poll the check refund status endpoint for the final status of the payment.
+4
+And done!
+
+Congratulations! You have now made your very first refund with pawaPay. We made a call to pawaPay to initiate the refund. And we found out the final status of that refund. The customer has been refunded the full amount of their deposit.
+Next let’s take a look at partial refunds.
+​
+Partial refund
+Sometimes only a part of the original payment should get refunded. Let’s take a look at how to do that.
+1
+Partial refund
+
+Let’s send this payload to the initiate a partial refund endpoint.
+    POST https://api.sandbox.pawapay.io/v2/refunds
+
+    {
+        "refundId": "f7232951-ab27-4175-bb63-6e15a9516df6",
+        "depositId": "afb57b93-7849-49aa-babb-4c3ccbfe3d79",
+        "amount": "30",
+        "currency": "RWF"
+    }
+We are now specifying the amount and the currency of how much should be refunded. Otherwise everything stays the same. The request should be ACCEPTED and you will receive a callback once it’s processed.
+2
+Multiple refunds
+
+You can initiate multiple partial refunds as long as the total amount does not exceed the amount of the original deposit.
+If the total amount of all refunds exceeds the amount of the original deposit, the refund will be REJECTED.
+    {
+        "refundId": "bacec0ff-7e5b-4db7-bd2d-b49a9c6603e3",
+        "status": "REJECTED",
+        "rejectionReason": {
+            "rejectionCode": "AMOUNT_TOO_LARGE",
+            "rejectionMessage": "Amount should not be greater than 100"
+        }
+    }
+If a full refund (no amount specified) is initiated after a successfully processed partial refund, the remaining amount will be refunded.
+For example:
+Original deposit: 100 RWF
+Partial refund: 20 RWF
+Partial refund: 20 RWF
+Full refund (amount not specified on initiation): 100 - 20 - 20 = 60 RWF
+3
+And done!
+
+We’ve now done partial refunds as well.
+Let’s take a look at other considerations to make sure everything works smoothly.
+​
+Other considerations
+1
+One refund at a time
+
+For a single deposit, only one refund can be initiated at a time. If there is a refund that is PROCESSING, initiating a new refund will be rejected.
+    {
+        "refundId": "4dca0890-7da2-4337-b540-b883f43b877c",
+        "status": "REJECTED",
+        "rejectionReason": {
+            "rejectionCode":"REFUND_IN_PROGRESS",
+            "rejectionMessage": "Another refund transaction is already in progress"
+        }
+    }
+2
+Maximum amount
+
+Once the full amount of the original deposit has been refunded, refunds for that deposit will be rejected.
+    {
+        "refundId": "200e0f76-0a49-442e-8403-c58c45d22948",
+        "status": "REJECTED",
+        "rejectionReason": {
+            "rejectionCode":"DEPOSIT_ALREADY_REFUNDED",
+            "rejectionMessage": "Requested deposit has been already refunded"
+        }
+    }
+3
+Decimals in amount
+
+Not all providers support decimals in amounts. You can find which providers support them in the providers section.
+To dynamically support rounding the amount to refund, this information is exposed in active-configuration for each provider.
+    GET https://api.sandbox.pawapay.io/v2/active-conf?country=RWA&operationType=REFUND
+
+    {
+        "companyName": "DEMO",
+        "countries": [
+            {
+                "country": "RWA",
+                ...
+                "providers": [
+                    {
+                        "provider": "AIRTEL_RWA",
+                        ...
+                        "currencies": [
+                            {
+                                "currency": "RWF",
+                                ...
+                                "operationTypes": {
+                                    "REFUND": {
+                                        ...
+                                        "decimalsInAmount": "NONE",
+                                        ...
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "provider": "MTN_MOMO_RWA",
+                        ...
+                        "currencies": [
+                            {
+                                "currency": "RWF",
+                                ...
+                                "operationTypes": {
+                                    "REFUND": {
+                                        ...
+                                        "decimalsInAmount": "NONE",
+                                        ....
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        ],
+        ...
+    }
+The decimalsInAmount property shows whether the specific provider supports decimals in the amount when doing refunds. The possible values for it are TWO_PLACES and NONE. You can dynamically round the amount if decimals are not supported (NONE).
+​
+Handling enqueued refunds and provider availability
+Providers might have downtime in processing refunds. Let’s take a look at how to best handle cases when refund processing may be delayed or temporarily unavailable.
+1
+Checking if the provider is operational
+
+Providers may have downtime. We monitor providers performance and availability 24/7. For your operational and support teams, we have a status page. From there they can subscribe to get updates in email or slack for all the providers they are insterested in.
+To avoid the customer getting failed or delayed payouts, we’ve also exposed this information over API from the both the provider availability and active configuration endpoints. This way you can be up front with the customer that their refund might take more time to be delivered.
+Let’s use the provider availability endpoint here as it’s more common for refund use cases. We are filtering it to the specific country and operationType with the query parameters.
+    GET https://api.sandbox.pawapay.io//v2/availability?country=BEN&operationType=REFUND
+
+    [
+        {
+            "country": "BEN",
+            "providers": [
+                {
+                    "provider": "MOOV_BEN",
+                    "operationTypes": {
+                        "REFUND": "OPERATIONAL"
+                    }
+                },
+                {
+                    "provider": "MTN_MOMO_BEN",
+                    "operationTypes": {
+                        "REFUND": "DELAYED"
+                    }
+                }
+            ]
+        }
+    ]
+The values you might see are:
+OPERATIONAL - the provider is available and processing refunds normally.
+DELAYED - the provider is having downtime and all refund requests are being enqueued in pawaPay.
+CLOSED - the provider is having downtime and pawaPay is rejecting all refund requests.
+Based on the above information you can inform the customer that their refund will be delayed (DELAYED) or is not possible at the moment and they can try again later (CLOSED).
+You can validate the status of the provider and delay initiating refunds while the provider is unavailable (CLOSED).
+2
+Handling delayed processing
+
+We rarely close refunds processing. Mostly we switch off processing, but enqueue your refund requests to be processed when the provider is operational again.
+All refunds initiated when the status of the providers refunds is DELAYED will be ACCEPTED on initiation. They will then be moved to the ENQUEUED status. Our 24/7 payment operations team will be monitoring the provider for when their refunds service becomes operational again. When that happens, the refunds will get processed as usual.
+To find out whether a refund is enqueued, you can check refund status.
+    GET https://api.sandbox.pawapay.io/v2/payouts/37b250e0-3075-42c8-92a9-cad55b3d86c8
+
+    {
+        "status": "FOUND",
+        "data": {
+            "refundId": "37b250e0-3075-42c8-92a9-cad55b3d86c8",
+            "status": "ENQUEUED",
+            "amount": "100.00",
+            "currency": "XOF",
+            "country": "BEN",
+            "recipient": {
+                "type": "MMO",
+                "accountDetails": {
+                    "phoneNumber": "22951345789",
+                    "provider": "MTN_MOMO_BEN"
+                }
+            },
+            "customerMessage": "DEMO",
+            "created": "2025-05-28T06:28:29Z",
+        }
+    }
+You do not need to take any action to leave the payout for processing once the provider is operational again.
+​
+Handling failures on initiation
+Having implemented the above suggestions, refund initiations should never be rejected. Let’s take a look at a couple of edge cases to make sure everything is handled.
+1
+Handling HTTP 500 with failureCode UNKNOWN_ERROR
+
+The UNKNOWN_ERROR failureCode indicates that something unexpected has gone wrong when processing the payment. There is no status in the response in this case.
+It is not safe to assume the initiation has failed for this refund. You should verify the status of the refund using the check refund status endpoint. Only if the refund is NOT_FOUND should it be considered FAILED.
+We will take a look later in the guide, how to ensure consistency of payment statuses between your system and pawaPay.
+2
+And done!
+
+Initiating payouts should be handled now.
+Next, let’s take a look at payment failures that can happen during processing.
+​
+Handling processing failures
+1
+Handling failures during processing
+
+As the pawaPay API is asynchronous, you will get a refund callback with the final status of the refund. If the status of the refund is FAILED you can find further information about the failure from failureReason. It includes the failureCode and the failureMessage indicating what has gone wrong.
+The failureMessage from pawaPay API is meant for you and your support and operations teams. You are free to decide what message to show to the customer.
+Find all the failure codes and implement handling as you choose.
+We have standardised the numerous different failure codes and scenarios with all the different providers.
+The quality of the failure codes varies by provider. The UNSPECIFIED_FAILURE code indicates that the provider indicated a failure with the payment, but did not provide any specifics on the reason of the failure.
+In case there is a general failure, the UNKNOWN_ERROR failureCode would be returned.
+2
+And done!
+
+We have now also taken care of failures that can happen during payment processing. This way the customer knows what has happened and can take appropriate action to try again.
+Now let’s take a look at how to ensure consistency of statuses between you and pawaPay.
+​
+Ensuring consistency
+When working with financial APIs there are some considerations to take to ensure that you never think a payment has failed, when it is actually successful or vice versa. It is essential to keep systems in sync on the statuses of payments.
+Let’s take a look at some considerations and pseudocode to ensure consistency.
+1
+Defensive status handling
+
+All statuses should be checked defensively without assumptions.
+    if( status == "COMPLETED" ) {
+        myOrder.setRefundStatus(COMPLETED);
+    } else if ( status == "FAILED" ) {
+        myOrder.setRefundStatus(FAILED);
+    } else if  ( status == "PROCESSING") {
+        waitForProcessingToComplete();
+    } else if( status == "ENQUEUED" ) {
+        determineIfShouldBeCancelled();
+    } else {
+        //It is unclear what might have failed. Escalate for further investigation.
+        myOrder.setRefundStatus(NEEDS_ATTENTION);
+    }
+2
+Handling network errors and system crashes
+
+The key reason we require you to provide a refundId for each payment is to ensure that you can always ask us what is the status of a payment, even if you never get a response from us.
+You should always store this refundId in your system before initiating a refund.
+    var refundId = new UUIDv4();
+
+    //Let's store the refundId we will use to ensure we always have it available even if something dramatic happens
+    myOrder.setExternalRefundId(refundId).save();
+    myOrder.setRefundStatus(PENDING);
+
+    try {
+        var initiationResponse = pawaPay.initiateRefund(refundId, ...)
+    } catch (InterruptedException e) {
+        var checkResult = pawaPay.checkRefundStatus(payoutId);
+
+        if ( result.status == "FOUND" ) {
+            //The payment reached pawaPay. Check the status of it from the response.
+        } else if ( result.status == "NOT_FOUND" ) {
+            //The payment did not reach pawaPay. Safe to mark it as failed.
+            myOrder.setRefundStatus(FAILED);
+        } else {
+            //Unable to determine the status. Leave the payment as pending.
+            //We will create a status recheck cycle later for such cases.
+
+            //In case of a system crash, we should also leave the payment in pending status to be handled in the status recheck cycle.
+        }
+    }
+The important thing to notice here is that we only mark a payment as FAILED when there is a clear indication of its failure. We use the check refund status endpoint when in doubt whether the payment was ACCEPTED by pawaPay.
+3
+Implementing an automated reconciliation cycle
+
+Implementing the considerations listed above avoids almost all discrepancies of payment statuses between your system and pawaPay. When using callbacks to receive the final statuses of payments, issues like network connectivity, system downtime, and configuration errors might cause the callback not to be received by your system. To avoid keeping your customers waiting, we strongly recommend implementing a status recheck cycle.
+This might look something like the following.
+    //Run the job every few minutes.
+
+    var pendingRefunds = orders.getAllRefundsPendingForLongerThan15Minutes();
+
+    for ( refund in pendingRefunds ) {
+        var checkResult = pawaPay.checkRefundStatus(refund.getExternalRefundId);
+
+        if ( checkResult.status == "FOUND" ) {
+            //Determine if the payment is in a final status and handle accordingly
+            handleRefundStatus(checkResult.data);
+        } else if (checkResult.status == "NOT_FOUND" ) {
+            //The payment has never reached pawaPay. Can be failed safely.
+            invoice.setRefundStatus(FAILED);
+        } else {
+            //Something must have gone wrong. Leave for next cycle.
+        }
+    }
+Having followed the rest of the guide, with this simple reconciliation cycle, you should not have any inconsistencies between your system and pawaPay. Having these checks automated will take a load off your operations and support teams as well.
+​
+Payments in reconciliation
+When using pawaPay, you might find that a payment status is IN_RECONCILIATION. This means that there was a problem determining the correct final status of a payment. When using pawaPay all payments are reconciled by default and automatically - we validate all final statuses to ensure there are no discrepancies.
+When encountering payments that are IN_RECONCILIATION you do not need to take any action. The payment has already been sent to our automatic reconciliation engine and it’s final status will be determined soon. The reconciliation time varies by provider. Payments that turn out to be successful are reconciled faster.

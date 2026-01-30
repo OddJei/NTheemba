@@ -10,3 +10,4 @@ prometheus-client
 pytest
 pytest-asyncio
 python-multipart
+asyncpg==0.28.0

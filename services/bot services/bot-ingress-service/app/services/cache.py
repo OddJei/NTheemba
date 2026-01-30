@@ -37,6 +37,32 @@ class Cache:
         payload = json.dumps(value, ensure_ascii=False, default=str)
         await self._redis.set(key, payload, ex=ttl_seconds)
 
+    async def acquire_lock(self, key: str, ttl_seconds: int) -> bool:
+        """Best-effort distributed lock using Redis SET NX.
+
+        Returns True if lock acquired.
+        """
+
+        if not self._enabled:
+            return False
+        if self._read_only:
+            return False
+        inserted = await self._redis.set(key, "1", ex=ttl_seconds, nx=True)
+        return bool(inserted)
+
+    async def is_negative(self, key: str) -> bool:
+        if not self._enabled:
+            return False
+        raw = await self._redis.get(key)
+        return bool(raw)
+
+    async def set_negative(self, key: str, ttl_seconds: int) -> None:
+        if not self._enabled:
+            return
+        if self._read_only:
+            return
+        await self._redis.set(key, "1", ex=ttl_seconds)
+
 
 def cache_key_bot(phone: str) -> str:
     return f"cache:bot_by_phone:{phone}"

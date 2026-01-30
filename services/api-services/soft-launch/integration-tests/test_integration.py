@@ -1,5 +1,14 @@
 import time
 import httpx
+import pytest
+import os
+
+
+pytestmark = pytest.mark.integration
+
+
+if os.getenv("RUN_INTEGRATION") != "1":
+    pytest.skip("integration tests require running services; set RUN_INTEGRATION=1", allow_module_level=True)
 
 CATALOG = "http://127.0.0.1:8520"
 CART = "http://127.0.0.1:8530"

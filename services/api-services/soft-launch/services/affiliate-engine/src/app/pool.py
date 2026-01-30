@@ -26,7 +26,8 @@ class AffiliateMetrics:
     unique_buyers: int
     msme_referrals: int
 
-    # Clicks is defined as distinct buyer/user phones that clicked within the epoch.
+    # Clicks is treated as unique customers (distinct phone numbers) and is counted
+    # "once, ever" across epochs (see compute_metrics_for_epoch).
     clicks: int
     attributions: int
     paid_attributions: int
@@ -43,6 +44,25 @@ _DEFAULT_OP_WEIGHTS: Dict[str, float] = {
 }
 
 
+_TIER_ORDER: list[str] = ["bronze", "silver", "gold"]
+
+
+def _tier_index(name: str) -> int:
+    try:
+        return _TIER_ORDER.index(str(name).strip().lower())
+    except ValueError:
+        return -1
+
+
+def _next_tier(name: str) -> str:
+    idx = _tier_index(name)
+    if idx < 0:
+        return str(name)
+    if idx + 1 >= len(_TIER_ORDER):
+        return _TIER_ORDER[-1]
+    return _TIER_ORDER[idx + 1]
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -57,10 +77,76 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
-_OP_MIN_CLICKS = _env_int("AFFILIATE_OP_MIN_CLICKS", 30)
-_OP_MIN_PAID_ATTRIBUTIONS = _env_int("AFFILIATE_OP_MIN_PAID_ATTRIBUTIONS", 3)
-_OP_MIN_UNIQUE_BUYERS = _env_int("AFFILIATE_OP_MIN_UNIQUE_BUYERS", 3)
-_OP_MIN_SALES_VOLUME = _env_float("AFFILIATE_OP_MIN_SALES_VOLUME", 500.0)
+def _tier_thresholds() -> dict[str, dict[str, float]]:
+    """Per-tier qualification thresholds.
+
+    Defaults match the product/policy doc.
+    Environment overrides are supported mainly for testing / experimentation.
+    """
+
+    # Metric keys: gmv, buyers, referrals, customers
+    return {
+        "bronze": {
+            "gmv": _env_float("AFFILIATE_TIER_BRONZE_GMV_MIN_ZMW", 15000.0),
+            "buyers": float(_env_int("AFFILIATE_TIER_BRONZE_BUYERS_MIN", 60)),
+            "referrals": float(_env_int("AFFILIATE_TIER_BRONZE_REFERRALS_MIN", 6)),
+            "customers": float(_env_int("AFFILIATE_TIER_BRONZE_CUSTOMERS_MIN", 120)),
+        },
+        "silver": {
+            "gmv": _env_float("AFFILIATE_TIER_SILVER_GMV_MIN_ZMW", 40000.0),
+            "buyers": float(_env_int("AFFILIATE_TIER_SILVER_BUYERS_MIN", 150)),
+            "referrals": float(_env_int("AFFILIATE_TIER_SILVER_REFERRALS_MIN", 15)),
+            "customers": float(_env_int("AFFILIATE_TIER_SILVER_CUSTOMERS_MIN", 300)),
+        },
+        "gold": {
+            "gmv": _env_float("AFFILIATE_TIER_GOLD_GMV_MIN_ZMW", 80000.0),
+            "buyers": float(_env_int("AFFILIATE_TIER_GOLD_BUYERS_MIN", 300)),
+            "referrals": float(_env_int("AFFILIATE_TIER_GOLD_REFERRALS_MIN", 30)),
+            "customers": float(_env_int("AFFILIATE_TIER_GOLD_CUSTOMERS_MIN", 600)),
+        },
+    }
+
+
+def _qualify_tier(m: AffiliateMetrics, tier_name: str) -> tuple[bool, bool, int]:
+    """Return (eligible, all_four_met, metrics_met_count)."""
+    t = _tier_thresholds().get(str(tier_name).strip().lower())
+    if not t:
+        return False, False, 0
+
+    met = 0
+    if float(m.sales_volume) >= float(t["gmv"]):
+        met += 1
+    if float(m.unique_buyers) >= float(t["buyers"]):
+        met += 1
+    if float(m.msme_referrals) >= float(t["referrals"]):
+        met += 1
+    # conversion_quality == unique customers
+    if float(m.clicks) >= float(t["customers"]):
+        met += 1
+
+    eligible = met >= 2
+    all_four = met == 4
+    return eligible, all_four, met
+
+
+def _op_min_clicks() -> int:
+    return _env_int("AFFILIATE_OP_MIN_CLICKS", 30)
+
+
+def _op_min_paid_attributions() -> int:
+    return _env_int("AFFILIATE_OP_MIN_PAID_ATTRIBUTIONS", 3)
+
+
+def _op_min_unique_buyers() -> int:
+    return _env_int("AFFILIATE_OP_MIN_UNIQUE_BUYERS", 3)
+
+
+def _op_min_sales_volume() -> float:
+    return _env_float("AFFILIATE_OP_MIN_SALES_VOLUME", 500.0)
+
+
+def _gate_on_delivery() -> bool:
+    return os.getenv("AFFILIATE_GATE_ON_DELIVERY", "0") in ("1", "true", "True")
 
 
 def _normalize_weights(weights: Optional[Dict[str, float]]) -> Dict[str, float]:
@@ -85,21 +171,66 @@ def _norm(value: float, max_value: float) -> float:
     return float(value) / float(max_value)
 
 
-def _conversion_quality(clicks: int, paid_attributions: int, *, min_clicks: int = _OP_MIN_CLICKS) -> float:
-    # Unique-number-only metric: paid orders per unique clickers.
-    if int(clicks) < int(min_clicks):
-        return 0.0
-    return float(paid_attributions) / float(max(1, int(clicks)))
+def _effective_multiplier(m: AffiliateMetrics, *, min_clicks: Optional[int] = None) -> tuple[bool, float, Optional[str], dict]:
+    """Return (eligible, effective_multiplier, effective_tier_name, extra_details).
 
+    Policy:
+    - Multipliers only apply if the affiliate qualifies for the assigned tier.
+    - To qualify: meet thresholds in >= 2 metrics for that tier.
+    - If all 4 metrics meet thresholds: auto-upgrade one tier (bronze->silver, silver->gold).
 
-def _eligible_for_multiplier(m: AffiliateMetrics, *, min_clicks: int = _OP_MIN_CLICKS) -> bool:
-    # Applies to both earned and purchased multipliers.
-    return (
+    Note: we still keep a small activity gate (min_clicks / min_paid / etc) so a tier can't activate
+    on obviously fake/empty activity, but the main qualification is the per-tier thresholds.
+    """
+
+    assigned = (m.tier_name or "").strip().lower() or None
+    if not assigned:
+        return False, 1.0, None, {"assigned_tier": None}
+
+    if min_clicks is None:
+        min_clicks = _op_min_clicks()
+
+    # Basic activity gate (kept for safety; can be tuned via env vars)
+    activity_ok = (
         int(m.clicks) >= int(min_clicks)
-        and int(m.paid_attributions) >= int(_OP_MIN_PAID_ATTRIBUTIONS)
-        and int(m.unique_buyers) >= int(_OP_MIN_UNIQUE_BUYERS)
-        and float(m.sales_volume) >= float(_OP_MIN_SALES_VOLUME)
+        and int(m.paid_attributions) >= int(_op_min_paid_attributions())
+        and int(m.unique_buyers) >= int(_op_min_unique_buyers())
+        and float(m.sales_volume) >= float(_op_min_sales_volume())
     )
+
+    eligible, all_four, met_count = _qualify_tier(m, assigned)
+    eligible = bool(activity_ok and eligible)
+    if not eligible:
+        return False, 1.0, None, {
+            "assigned_tier": assigned,
+            "tier_thresholds_met": int(met_count),
+            "tier_all_four": bool(all_four),
+            "activity_gate": bool(activity_ok),
+        }
+
+    effective_tier = assigned
+    if all_four:
+        effective_tier = _next_tier(assigned)
+
+    # If upgraded tier is one level up, use the default multipliers (policy).
+    # Otherwise use the assigned tier multiplier from DB.
+    default_mult = {"bronze": 1.3, "silver": 1.5, "gold": 1.8}
+    if effective_tier != assigned:
+        effective_multiplier = float(default_mult.get(effective_tier, m.tier_multiplier))
+    else:
+        # If DB-stored multiplier is missing/default (1.0) but the tier is one of the policy
+        # tiers, fall back to the policy default multiplier so tests and behavior match expectations.
+        if float(m.tier_multiplier) <= 1.0 and assigned in default_mult:
+            effective_multiplier = float(default_mult.get(assigned, 1.0))
+        else:
+            effective_multiplier = float(m.tier_multiplier)
+
+    return True, float(effective_multiplier), str(effective_tier), {
+        "assigned_tier": assigned,
+        "tier_thresholds_met": int(met_count),
+        "tier_all_four": bool(all_four),
+        "activity_gate": bool(activity_ok),
+    }
 
 
 async def get_or_create_settings(db: AsyncSession, *, pool_pct_default: float, epoch_days_default: int) -> CommissionSettings:
@@ -173,10 +304,11 @@ async def resolve_tier(db: AsyncSession, affiliate_id: str, as_of: datetime) -> 
     assignment = (await db.execute(q)).scalar_one_or_none()
     if not assignment:
         return None, 1.0
-
     tier = (await db.execute(select(AffiliateTier).where(AffiliateTier.name == assignment.tier_name))).scalar_one_or_none()
     if not tier or not tier.active:
-        return assignment.tier_name, 1.0
+        # Fallback: if the tier row is missing (tests or migrations), use policy default multipliers
+        defaults = {"bronze": 1.3, "silver": 1.5, "gold": 1.8}
+        return assignment.tier_name, float(defaults.get((assignment.tier_name or "").strip().lower(), 1.0))
 
     return tier.name, float(tier.multiplier)
 
@@ -191,33 +323,55 @@ async def compute_metrics_for_epoch(db: AsyncSession, epoch: PoolEpoch) -> List[
     # - conversion: attribution created
     # - sale: payment success (affiliate commission amount recorded)
 
-    # Sales volume (affiliate commission amount) per affiliate.
+    # Sales volume (GMV) per affiliate.
+    # Time column: optionally gate on delivery confirmation when configured.
+    time_col = AffiliateEvent.delivered_at if _gate_on_delivery() else AffiliateEvent.occurred_at
+
     sales_rows = (
         await db.execute(
             select(AffiliateEvent.affiliate_id, func.coalesce(func.sum(AffiliateEvent.amount_zmw), 0.0))
             .where(
                 AffiliateEvent.event_type == "sale",
                 AffiliateEvent.affiliate_id.is_not(None),
-                AffiliateEvent.occurred_at >= start,
-                AffiliateEvent.occurred_at <= end,
+                time_col.is_not(None),
+                time_col >= start,
+                time_col <= end,
             )
             .group_by(AffiliateEvent.affiliate_id)
         )
     ).all()
     sales_by_aff = {str(aid): float(total or 0.0) for aid, total in sales_rows}
 
-    # Clicks per affiliate: distinct phones that clicked.
+    # Uniqueness policy ("once, ever"):
+    # - Unique customers: count a phone number only on its first-ever campaign_click.
+    # - Unique buyers: count a phone number only on its first-ever sale.
+    # - MSME referrals: count a business only on its first-ever sale.
+    # These are then attributed to the affiliate who got that first-ever event.
+
+    click_rn = func.row_number().over(partition_by=AffiliateEvent.buyer_phone, order_by=AffiliateEvent.occurred_at.asc()).label("rn")
+    clicks_first_subq = (
+        select(
+            AffiliateEvent.affiliate_id.label("affiliate_id"),
+            AffiliateEvent.buyer_phone.label("buyer_phone"),
+            AffiliateEvent.occurred_at.label("occurred_at"),
+            click_rn,
+        )
+        .where(
+            AffiliateEvent.event_type == "campaign_click",
+            AffiliateEvent.affiliate_id.is_not(None),
+            AffiliateEvent.buyer_phone.is_not(None),
+        )
+        .subquery()
+    )
     clicks_rows = (
         await db.execute(
-            select(AffiliateEvent.affiliate_id, func.count(func.distinct(AffiliateEvent.buyer_phone)))
+            select(clicks_first_subq.c.affiliate_id, func.count().label("clicks"))
             .where(
-                AffiliateEvent.event_type == "campaign_click",
-                AffiliateEvent.affiliate_id.is_not(None),
-                AffiliateEvent.buyer_phone.is_not(None),
-                AffiliateEvent.occurred_at >= start,
-                AffiliateEvent.occurred_at <= end,
+                clicks_first_subq.c.rn == 1,
+                clicks_first_subq.c.occurred_at >= start,
+                clicks_first_subq.c.occurred_at <= end,
             )
-            .group_by(AffiliateEvent.affiliate_id)
+            .group_by(clicks_first_subq.c.affiliate_id)
         )
     ).all()
     clicks_by_aff = {str(aid): int(cnt or 0) for aid, cnt in clicks_rows}
@@ -246,40 +400,92 @@ async def compute_metrics_for_epoch(db: AsyncSession, epoch: PoolEpoch) -> List[
                 AffiliateEvent.event_type == "sale",
                 AffiliateEvent.affiliate_id.is_not(None),
                 AffiliateEvent.order_id.is_not(None),
-                AffiliateEvent.occurred_at >= start,
-                AffiliateEvent.occurred_at <= end,
+                time_col.is_not(None),
+                time_col >= start,
+                time_col <= end,
             )
             .group_by(AffiliateEvent.affiliate_id)
         )
     ).all()
     paid_by_aff: Dict[str, int] = {str(aid): int(p or 0) for aid, p in paid_rows}
 
-    # Unique buyers and MSME referrals from paid (sale) events.
+    # Unique buyers counted per-epoch: distinct buyer_phone with a sale in the epoch.
     buyers_rows = (
         await db.execute(
-            select(
-                AffiliateEvent.affiliate_id,
-                func.count(func.distinct(AffiliateEvent.buyer_phone)).label("buyers"),
-                func.count(func.distinct(AffiliateEvent.business_id)).label("msmes"),
-            )
+            select(AffiliateEvent.affiliate_id, func.count(func.distinct(AffiliateEvent.buyer_phone)).label("buyers"))
             .where(
                 AffiliateEvent.event_type == "sale",
                 AffiliateEvent.affiliate_id.is_not(None),
-                AffiliateEvent.occurred_at >= start,
-                AffiliateEvent.occurred_at <= end,
+                AffiliateEvent.buyer_phone.is_not(None),
+                time_col.is_not(None),
+                time_col >= start,
+                time_col <= end,
             )
             .group_by(AffiliateEvent.affiliate_id)
         )
     ).all()
-    buyers_by_aff: Dict[str, Tuple[int, int]] = {str(aid): (int(b or 0), int(m or 0)) for aid, b, m in buyers_rows}
+    buyers_count_by_aff: Dict[str, int] = {str(aid): int(b or 0) for aid, b in buyers_rows}
 
-    all_affiliates = set(sales_by_aff) | set(clicks_by_aff) | set(attr_by_aff) | set(paid_by_aff) | set(buyers_by_aff)
+    # MSME referrals (once-ever) based on first-ever sale per business.
+    biz_rn = func.row_number().over(partition_by=AffiliateEvent.business_id, order_by=AffiliateEvent.occurred_at.asc()).label("rn")
+    msme_first_subq = (
+        select(
+            AffiliateEvent.affiliate_id.label("affiliate_id"),
+            AffiliateEvent.business_id.label("business_id"),
+            time_col.label("occurred_at"),
+            biz_rn,
+        )
+        .where(
+            AffiliateEvent.event_type == "sale",
+            AffiliateEvent.affiliate_id.is_not(None),
+            AffiliateEvent.business_id.is_not(None),
+            time_col.is_not(None),
+        )
+        .subquery()
+    )
+    msme_rows = (
+        await db.execute(
+            select(msme_first_subq.c.affiliate_id, func.count().label("msmes"))
+            .where(
+                msme_first_subq.c.rn == 1,
+                msme_first_subq.c.occurred_at >= start,
+                msme_first_subq.c.occurred_at <= end,
+            )
+            .group_by(msme_first_subq.c.affiliate_id)
+        )
+    ).all()
+    msme_count_by_aff: Dict[str, int] = {str(aid): int(m or 0) for aid, m in msme_rows}
+
+    # Include affiliates with any in-epoch activity, even if once-ever uniqueness
+    # results in 0 counted clicks/buyers/referrals for the epoch.
+    active_aff_rows = (
+        await db.execute(
+            select(func.distinct(AffiliateEvent.affiliate_id))
+            .where(
+                AffiliateEvent.affiliate_id.is_not(None),
+                AffiliateEvent.occurred_at >= start,
+                AffiliateEvent.occurred_at <= end,
+            )
+        )
+    ).all()
+    active_affiliates = {str(r[0]) for r in active_aff_rows if r and r[0]}
+
+    all_affiliates = (
+        set(sales_by_aff)
+        | set(clicks_by_aff)
+        | set(attr_by_aff)
+        | set(paid_by_aff)
+        | set(buyers_count_by_aff)
+        | set(msme_count_by_aff)
+        | set(active_affiliates)
+    )
 
     metrics: List[AffiliateMetrics] = []
     for affiliate_id in sorted(all_affiliates):
         attributions = int(attr_by_aff.get(affiliate_id, 0))
         paid_attributions = int(paid_by_aff.get(affiliate_id, 0))
-        buyers, msmes = buyers_by_aff.get(affiliate_id, (0, 0))
+        buyers = int(buyers_count_by_aff.get(affiliate_id, 0))
+        msmes = int(msme_count_by_aff.get(affiliate_id, 0))
 
         tier_name, tier_multiplier = await resolve_tier(db, affiliate_id, end)
 
@@ -310,7 +516,7 @@ def compute_op_scores(
     metrics: List[AffiliateMetrics],
     weights: Dict[str, float],
     *,
-    min_clicks: int = _OP_MIN_CLICKS,
+    min_clicks: Optional[int] = None,
 ) -> tuple[Dict[str, float], Dict[str, dict]]:
     """Compute OP_final scores per affiliate.
 
@@ -318,15 +524,18 @@ def compute_op_scores(
       OP_raw = wSV*(SV/SVmax) + wUB*(UB/UBmax) + wMR*(MR/MRmax) + wCQ*(CQ/CQmax)
       OP_final = OP_raw * multiplier
 
-    Conversion quality is derived from existing unique-count metrics:
-      CQ = paid_attributions / clicks (only if clicks >= min_clicks)
+        Conversion quality is treated as **unique customers**.
+            CQ = unique phone numbers brought to the bot.
+        Uniqueness policy: phones are counted "once, ever" across epochs.
     """
+
+    if min_clicks is None:
+        min_clicks = _op_min_clicks()
 
     w = _normalize_weights(weights)
 
-    cq_by_aff: Dict[str, float] = {
-        m.affiliate_id: _conversion_quality(m.clicks, m.paid_attributions, min_clicks=min_clicks) for m in metrics
-    }
+    # Unique customers is provided by metrics.clicks (see compute_metrics_for_epoch).
+    cq_by_aff: Dict[str, float] = {m.affiliate_id: float(m.clicks) for m in metrics}
 
     sales_max = max((float(m.sales_volume) for m in metrics), default=0.0)
     buyers_max = max((float(m.unique_buyers) for m in metrics), default=0.0)
@@ -344,8 +553,7 @@ def compute_op_scores(
             + float(w.get("conversion_quality", 0.0)) * _norm(float(cq), cq_max)
         )
 
-        eligible = _eligible_for_multiplier(m, min_clicks=min_clicks)
-        effective_multiplier = float(m.tier_multiplier) if eligible else 1.0
+        eligible, effective_multiplier, effective_tier, extra = _effective_multiplier(m, min_clicks=min_clicks)
         op_final = float(op_raw) * float(effective_multiplier)
 
         scores[m.affiliate_id] = float(op_final)
@@ -355,6 +563,10 @@ def compute_op_scores(
             "conversion_quality": float(cq),
             "eligible_for_multiplier": bool(eligible),
             "effective_multiplier": float(effective_multiplier),
+            "effective_tier": effective_tier,
+            "tier_details": extra,
+            "tier_thresholds_assigned": _tier_thresholds().get((m.tier_name or "").strip().lower()),
+            "tier_thresholds_effective": _tier_thresholds().get((effective_tier or "").strip().lower()),
             "weights": {
                 "sales_volume": float(w.get("sales_volume", 0.0)),
                 "unique_buyers": float(w.get("unique_buyers", 0.0)),

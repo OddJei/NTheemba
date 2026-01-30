@@ -1,0 +1,8 @@
+HTTP/1.1 401 Unauthorized
+date: Thu, 29 Jan 2026 14:09:37 GMT
+server: uvicorn
+content-length: 26
+content-type: application/json
+x-correlation-id: 3b079fef-54cf-47ce-9467-0fd4f7f8ac45
+
+{"detail":"missing_token"}
