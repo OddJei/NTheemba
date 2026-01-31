@@ -878,6 +878,20 @@ async def business_subscribe_and_pay(
             "currency": payload.currency or "ZMW",
         }
 
+        # Emit audit event for subscription initiation (immediately after creating subscription)
+        try:
+            await audit_client.emit_audit(
+                service="msme-engine",
+                event_type="subscription_initiated",
+                payload=payment_request,
+                actor_id=b.owner_id,
+                entity_type="business",
+                entity_id=b.id,
+                metadata={"correlation_id": correlation_id},
+            )
+        except Exception:
+            logger.exception("audit_emit_failed_subscription_initiated")
+
         # If caller provided payment details and plan is paid, call payment-revenue
         pr_result = None
         if plan == _PLAN_PAID and payload.amount_minor and payload.phone_number and payload.provider:
@@ -939,20 +953,6 @@ async def business_subscribe_and_pay(
             meta=payment_request,
         )
 
-        # Emit audit event for subscription initiation
-        try:
-            await audit_client.emit_audit(
-                service="msme-engine",
-                event_type="subscription_initiated",
-                payload=payment_request,
-                actor_id=b.owner_id,
-                entity_type="business",
-                entity_id=b.id,
-                metadata={"correlation_id": correlation_id},
-            )
-        except Exception:
-            logger.exception("audit_emit_failed_subscription_initiated")
-
         await _notify_in_app(
             user_id=b.owner_id,
             business_id=b.id,
@@ -962,15 +962,7 @@ async def business_subscribe_and_pay(
         )
 
         result = SubscriptionInitiateOut(subscription=_subscription_out(sub), payment_request=payment_request)
-            await _record_event(
-                db=db,
-                event_id=f"subscription_initiated:{b.id}:{uuid.uuid4().hex}",
-                event_type="subscription_initiated",
-                business_id=b.id,
-                source="business_service",
-                correlation_id=correlation_id,
-                meta=payment_request,
-            )
+        
         # Attach payment-revenue response when available.
         if pr_result is not None:
             result.payment_request["payment_revenue_response"] = pr_result
@@ -1049,15 +1041,6 @@ async def business_subscribe_and_pay(
                         logger.exception("audit_emit_failed_payment_pending")
         except Exception:
             # best-effort: do not fail the main flow if notification fails
-                        await _record_event(
-                            db=db,
-                            event_id=f"payment_success:{b.id}:{uuid.uuid4().hex}",
-                            event_type="payment_success",
-                            business_id=b.id,
-                            source="payment_service",
-                            correlation_id=correlation_id,
-                            meta={"plan": plan, "payment_response": pr_result},
-                        )
             logger.exception("notify_in_app_failed")
 
         return 201, result.model_dump(mode="json")
@@ -1066,15 +1049,6 @@ async def business_subscribe_and_pay(
     plan = _normalize_plan(payload.plan)
     if plan == _PLAN_PAID and payload.amount_minor and payload.phone_number and payload.provider:
         if not request.headers.get("Authorization"):
-                        await _record_event(
-                            db=db,
-                            event_id=f"payment_pending:{b.id}:{uuid.uuid4().hex}",
-                            event_type="payment_pending",
-                            business_id=b.id,
-                            source="payment_service",
-                            correlation_id=correlation_id,
-                            meta={"plan": plan, "payment_response": pr_result},
-                        )
             raise HTTPException(status_code=401, detail="authorization_required_for_payment")
 
     status, body = await idempotent_execute(db=db, scope=scope_for("POST", "/business/{id}/subscribe_and_pay"), key=x_idempotency_key, run=_run)
