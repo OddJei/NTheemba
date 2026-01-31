@@ -939,6 +939,20 @@ async def business_subscribe_and_pay(
             meta=payment_request,
         )
 
+        # Emit audit event for subscription initiation
+        try:
+            await audit_client.emit_audit(
+                service="msme-engine",
+                event_type="subscription_initiated",
+                payload=payment_request,
+                actor_id=b.owner_id,
+                entity_type="business",
+                entity_id=b.id,
+                metadata={"correlation_id": correlation_id},
+            )
+        except Exception:
+            logger.exception("audit_emit_failed_subscription_initiated")
+
         await _notify_in_app(
             user_id=b.owner_id,
             business_id=b.id,
@@ -960,6 +974,20 @@ async def business_subscribe_and_pay(
         # Attach payment-revenue response when available.
         if pr_result is not None:
             result.payment_request["payment_revenue_response"] = pr_result
+
+            # Emit audit event for the payment attempt/result returned by payment-revenue
+            try:
+                await audit_client.emit_audit(
+                    service="msme-engine",
+                    event_type="subscription_payment_attempt",
+                    payload={"payment_response": pr_result},
+                    actor_id=b.owner_id,
+                    entity_type="business",
+                    entity_id=b.id,
+                    metadata={"correlation_id": correlation_id},
+                )
+            except Exception:
+                logger.exception("audit_emit_failed_payment_attempt")
 
         # Send immediate user-facing notification depending on payment outcome.
         try:
@@ -985,6 +1013,19 @@ async def business_subscribe_and_pay(
                         payload={"plan": plan, "message": "Congratulations — payment received and subscription is active."},
                         correlation_id=correlation_id,
                     )
+                    # Emit audit: payment succeeded
+                    try:
+                        await audit_client.emit_audit(
+                            service="msme-engine",
+                            event_type="payment_success",
+                            payload={"plan": plan, "payment_response": pr_result},
+                            actor_id=b.owner_id,
+                            entity_type="business",
+                            entity_id=b.id,
+                            metadata={"correlation_id": correlation_id},
+                        )
+                    except Exception:
+                        logger.exception("audit_emit_failed_payment_success")
                 else:
                     await _notify_in_app(
                         user_id=b.owner_id,
@@ -993,6 +1034,19 @@ async def business_subscribe_and_pay(
                         payload={"plan": plan, "message": "Payment pending — we'll notify you when it's confirmed."},
                         correlation_id=correlation_id,
                     )
+                    # Emit audit: payment pending
+                    try:
+                        await audit_client.emit_audit(
+                            service="msme-engine",
+                            event_type="payment_pending",
+                            payload={"plan": plan, "payment_response": pr_result},
+                            actor_id=b.owner_id,
+                            entity_type="business",
+                            entity_id=b.id,
+                            metadata={"correlation_id": correlation_id},
+                        )
+                    except Exception:
+                        logger.exception("audit_emit_failed_payment_pending")
         except Exception:
             # best-effort: do not fail the main flow if notification fails
                         await _record_event(

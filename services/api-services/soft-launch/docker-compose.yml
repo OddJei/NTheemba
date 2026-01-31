@@ -21,6 +21,12 @@ services:
       PG_DB: ntheemba
       PG_SCHEMA: msme_engine
       NOTIFICATION_BASE_URL: http://notification:8570
+      # Ensure audit events are sent to the centralized audit-service in the compose network
+      AUDIT_SERVICE_URL: http://audit-service:8290
+      AUDIT_EMIT_ENABLED: "true"
+      # Forward important service logs (WARNING+) to audit-service as `python_log` events
+      AUDIT_FORWARD_LOGS_ENABLED: "true"
+      AUDIT_FORWARD_LOGS_LEVEL: "WARNING"
     ports:
       - "8500:8500"
     networks:
