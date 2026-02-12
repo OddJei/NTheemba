@@ -6,20 +6,24 @@ import time
 import uuid
 import re
 import secrets
+import os
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
 import httpx
 import json
+import hmac
+import hashlib
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
-from sqlalchemy import select, text
+from sqlalchemy import select, text, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.config import (
+    get_admin_key,
     get_affiliate_commission_share_of_platform_fee,
     get_affiliate_engine_base_url,
     get_http_timeout_seconds,
@@ -49,13 +53,20 @@ from src.app.config import (
 )
 from src.app.db import Base, SessionLocal, engine, get_db_session
 from src.app.idempotency import idempotent_execute, scope_for
-from src.app.models import Outbox, PawaPayDeposit, PawaPayPayout, PawaPayRefund, Payout, Settlement, SubscriptionPayment
+from src.app.models import Outbox, PawaPayDeposit, PawaPayPayout, PawaPayRefund, Payout, Settlement, SubscriptionPayment, MSMEPayout, MSMEPayoutRecord, AffiliatePayoutRecord
 from src.app.schemas import (
+    AffiliatePayoutOut,
+    GrossRevenueOut,
+    MSMEPayoutInitiateIn,
+    MSMEPayoutOut,
     PaymentSuccessIn,
+    PayoutBatchRequestIn,
+    PayoutBatchResponseOut,
     PawaPayDepositInitiateIn,
     PawaPayPayoutInitiateIn,
     PawaPayRefundInitiateIn,
     PawaPayTxnOut,
+    PlatformBalanceOut,
     PayoutOut,
     RefundOut,
     RefundRequestIn,
@@ -87,6 +98,18 @@ _AUTH_SKIP_PATHS = {
     "/callbacks/pawapay/deposits",
     "/callbacks/pawapay/payouts",
     "/callbacks/pawapay/refunds",
+    # Internal service endpoints (order-delivery calls to initiate payment)
+    "/pawapay/deposits/initiate",
+    "/pawapay/payouts/initiate",
+    # Admin endpoints (use X-Admin-Key instead of Bearer token)
+    "/admin/gross-revenue",
+    "/admin/platform-balance",
+    "/epoch",
+    "/payout/batch",
+    # MSME payout endpoints
+    "/msme/payouts/initiate",
+    "/msme/payouts",
+    "/events/msme-payout-initiate",
 }
 
 _ZMB_PROVIDERS = {"AIRTEL_OAPI_ZMB", "MTN_MOMO_ZMB", "ZAMTEL_ZMB"}
@@ -620,6 +643,141 @@ def _minor_to_major(amount_minor: int) -> float:
     return float(Decimal(amount_minor) / (Decimal(10) ** scale))
 
 
+def _require_admin_key(x_admin_key: str | None) -> None:
+    expected = str(get_admin_key() or "").strip()
+    provided = str(x_admin_key or "").strip()
+    if expected and provided != expected:
+        raise HTTPException(status_code=401, detail="invalid_admin_key")
+
+
+def _parse_iso_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    v = str(value).strip()
+    if v.endswith("Z"):
+        v = v.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(v)
+    except ValueError:
+        return None
+
+
+async def _fetch_epoch_window(epoch_id: str) -> tuple[datetime, datetime]:
+    base = get_affiliate_engine_base_url().rstrip("/")
+    timeout = get_http_timeout_seconds()
+    headers = {"X-Admin-Key": get_admin_key()}
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.get(f"{base}/admin/epochs", headers=headers)
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail="affiliate_engine_epoch_lookup_failed")
+    data = r.json() if isinstance(r.json(), list) else []
+    for e in data:
+        if str(e.get("id")) == str(epoch_id):
+            starts_at = _parse_iso_dt(e.get("starts_at"))
+            ends_at = _parse_iso_dt(e.get("ends_at")) or _utcnow()
+            if not starts_at:
+                break
+            return starts_at, ends_at
+    raise HTTPException(status_code=404, detail="epoch_not_found")
+
+
+async def _get_msme_subscription_status(
+    business_id: str,
+    authorization: str,
+    correlation_id: str,
+) -> str:
+    """
+    Fetch MSME subscription status from msme-engine.
+    Returns 'ACTIVE' if subscription is active, otherwise 'INACTIVE'.
+    """
+    msme_base = os.getenv("MSME_ENGINE_URL", "http://msme-engine:8520")
+    url = f"{msme_base}/business/{business_id}/subscription"
+    
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.get(
+                url,
+                headers={
+                    "Authorization": authorization,
+                    "X-Correlation-Id": correlation_id,
+                },
+            )
+            if resp.status_code == 404:
+                # No subscription found, treat as inactive
+                logger.info(f"msme_subscription_not_found business_id={business_id}")
+                return "INACTIVE"
+            elif resp.status_code != 200:
+                logger.warning(f"msme_engine_subscription_fetch_failed business_id={business_id} status={resp.status_code}")
+                return "INACTIVE"
+            
+            data = resp.json()
+            status = data.get("status", "INACTIVE")
+            logger.info(f"msme_subscription_fetched business_id={business_id} status={status}")
+            return status
+        except Exception as e:
+            logger.exception(f"error_fetching_subscription business_id={business_id}")
+            return "INACTIVE"
+
+
+async def _filter_delivered_orders(order_ids: list[str], authorization: str | None, correlation_id: str | None) -> set[str]:
+    if not order_ids:
+        return set()
+    sem = asyncio.Semaphore(10)
+
+    async def _check(order_id: str) -> str | None:
+        async with sem:
+            try:
+                ok = await delivery_is_confirmed(order_id=order_id, authorization=authorization, correlation_id=correlation_id)
+                return order_id if ok else None
+            except Exception:
+                return None
+
+    results = await asyncio.gather(*[_check(oid) for oid in order_ids])
+    return {r for r in results if r}
+
+
+async def _platform_fee_revenue_minor(
+    db: AsyncSession,
+    start_date: datetime | None,
+    end_date: datetime | None,
+    *,
+    require_delivery: bool = True,
+) -> tuple[int, int]:
+    q = (
+        select(PawaPayPayout.order_id, Settlement.platform_fee_minor)
+        .join(Settlement, Settlement.order_id == PawaPayPayout.order_id)
+        .where(
+            PawaPayPayout.status == "COMPLETED",
+            PawaPayPayout.order_id.is_not(None),
+        )
+    )
+    if start_date:
+        q = q.where(PawaPayPayout.updated_at >= start_date)
+    if end_date:
+        q = q.where(PawaPayPayout.updated_at <= end_date)
+
+    rows = (await db.execute(q)).all()
+    by_order: dict[str, int] = {}
+    for order_id, fee_minor in rows:
+        if not order_id:
+            continue
+        by_order[str(order_id)] = int(fee_minor or 0)
+
+    if not by_order:
+        return 0, 0
+
+    if not require_delivery:
+        total = sum(by_order.values())
+        return total, len(by_order)
+
+    token = await _get_bearer_token()
+    authorization = f"Bearer {token}" if token else None
+    correlation_id = str(uuid.uuid4())
+    delivered = await _filter_delivered_orders(list(by_order.keys()), authorization, correlation_id)
+    total = sum(by_order[oid] for oid in delivered)
+    return total, len(delivered)
+
+
 def _settlement_out(s: Settlement) -> dict:
     def _iso(dt: datetime) -> str:
         return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -983,6 +1141,510 @@ async def get_settlement(order_id: str, db: AsyncSession = Depends(get_db_sessio
 async def get_payouts(order_id: str, db: AsyncSession = Depends(get_db_session)):
     rows = (await db.execute(select(Payout).where(Payout.order_id == order_id))).scalars().all()
     return [PayoutOut(**_payout_out(p)) for p in rows]
+
+
+@app.post("/msme/payouts/initiate", response_model=MSMEPayoutOut)
+async def initiate_msme_payout(
+    payload: MSMEPayoutInitiateIn,
+    response: Response,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Initiate MSME payout for a delivered order.
+    
+    FLOW:
+    1. Verify order exists and payment was successful
+    2. Calculate platform fee and MSME payout
+    3. Initiate PawaPay payout to MSME
+    4. Record MSME payout status
+    5. Record in gross revenue
+    """
+    correlation_id = str(uuid.uuid4())
+    
+    # 1. Check if settlement exists
+    settlement = (
+        await db.execute(select(Settlement).where(Settlement.order_id == payload.order_id))
+    ).scalar_one_or_none()
+    if not settlement:
+        raise HTTPException(status_code=404, detail="settlement_not_found")
+    
+    # 2. Check if MSME payout already initiated
+    existing = (
+        await db.execute(select(MSMEPayoutRecord).where(MSMEPayoutRecord.order_id == payload.order_id))
+    ).scalar_one_or_none()
+    if existing:
+        return MSMEPayoutOut(
+            id=existing.id,
+            order_id=existing.order_id,
+            business_id=existing.business_id,
+            payout_id=existing.payout_id,
+            order_amount_zmw=_minor_to_major(int(existing.order_amount_minor)),
+            platform_fee_zmw=_minor_to_major(int(existing.platform_fee_minor)),
+            msme_payout_zmw=_minor_to_major(int(existing.msme_payout_minor)),
+            status=existing.status,
+            error_message=existing.error_message,
+            initiated_at=existing.initiated_at,
+            completed_at=existing.completed_at,
+            created_at=existing.created_at,
+            updated_at=existing.updated_at,
+        )
+    
+    # 3. Calculate fees
+    platform_fee_minor = int(payload.order_amount_minor * payload.platform_fee_pct)
+    msme_payout_minor = int(payload.order_amount_minor) - platform_fee_minor
+    
+    # 4. Create record
+    record = MSMEPayoutRecord(
+        order_id=payload.order_id,
+        business_id=payload.business_id,
+        currency=payload.currency,
+        order_amount_minor=int(payload.order_amount_minor),
+        platform_fee_minor=int(platform_fee_minor),
+        msme_payout_minor=int(msme_payout_minor),
+        status="pending",
+        meta={
+            "request": payload.model_dump(mode="json"),
+            "correlation_id": correlation_id,
+            **(payload.metadata or {}),
+        },
+    )
+    db.add(record)
+    await db.commit()
+    await db.refresh(record)
+    
+    # 5. Return immediately (payout will be initiated async in background)
+    response.status_code = 202
+    return MSMEPayoutOut(
+        id=record.id,
+        order_id=record.order_id,
+        business_id=record.business_id,
+        payout_id=record.payout_id,
+        order_amount_zmw=_minor_to_major(int(record.order_amount_minor)),
+        platform_fee_zmw=_minor_to_major(int(record.platform_fee_minor)),
+        msme_payout_zmw=_minor_to_major(int(record.msme_payout_minor)),
+        status=record.status,
+        error_message=record.error_message,
+        initiated_at=record.initiated_at,
+        completed_at=record.completed_at,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+@app.get("/msme/payouts/{order_id}", response_model=MSMEPayoutOut)
+async def get_msme_payout(order_id: str, db: AsyncSession = Depends(get_db_session)):
+    """Get MSME payout status for an order."""
+    record = (
+        await db.execute(select(MSMEPayoutRecord).where(MSMEPayoutRecord.order_id == order_id))
+    ).scalar_one_or_none()
+    if not record:
+        raise HTTPException(status_code=404, detail="msme_payout_not_found")
+    
+    return MSMEPayoutOut(
+        id=record.id,
+        order_id=record.order_id,
+        business_id=record.business_id,
+        payout_id=record.payout_id,
+        order_amount_zmw=_minor_to_major(int(record.order_amount_minor)),
+        platform_fee_zmw=_minor_to_major(int(record.platform_fee_minor)),
+        msme_payout_zmw=_minor_to_major(int(record.msme_payout_minor)),
+        status=record.status,
+        error_message=record.error_message,
+        initiated_at=record.initiated_at,
+        completed_at=record.completed_at,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+
+@app.get("/admin/gross-revenue", response_model=GrossRevenueOut)
+async def get_gross_revenue(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    db: AsyncSession = Depends(get_db_session),
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+):
+    _require_admin_key(x_admin_key)
+
+    sub_q = select(
+        func.coalesce(func.sum(SubscriptionPayment.amount_minor), 0),
+        func.count(SubscriptionPayment.id),
+    ).where(SubscriptionPayment.status == "dispatched")
+    if start_date:
+        sub_q = sub_q.where(SubscriptionPayment.created_at >= start_date)
+    if end_date:
+        sub_q = sub_q.where(SubscriptionPayment.created_at <= end_date)
+
+    sub_sum_minor, sub_count = (await db.execute(sub_q)).first() or (0, 0)
+
+    platform_fee_minor, platform_count = await _platform_fee_revenue_minor(
+        db,
+        start_date,
+        end_date,
+        require_delivery=True,
+    )
+
+    gross_minor = int(sub_sum_minor or 0) + int(platform_fee_minor or 0)
+
+    return GrossRevenueOut(
+        gross_revenue_zmw=_minor_to_major(int(gross_minor)),
+        subscription_revenue_zmw=_minor_to_major(int(sub_sum_minor or 0)),
+        platform_fee_revenue_zmw=_minor_to_major(int(platform_fee_minor or 0)),
+        transaction_count=int(sub_count or 0) + int(platform_count or 0),
+        start_date=start_date,
+        end_date=end_date,
+        calculated_at=_utcnow(),
+    )
+
+
+@app.get("/epoch/{epoch_id}/gross-revenue", response_model=GrossRevenueOut)
+async def get_epoch_gross_revenue(
+    epoch_id: str,
+    db: AsyncSession = Depends(get_db_session),
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+):
+    _require_admin_key(x_admin_key)
+
+    start_date, end_date = await _fetch_epoch_window(epoch_id)
+
+    sub_q = select(
+        func.coalesce(func.sum(SubscriptionPayment.amount_minor), 0),
+        func.count(SubscriptionPayment.id),
+    ).where(
+        SubscriptionPayment.status == "dispatched",
+        SubscriptionPayment.created_at >= start_date,
+        SubscriptionPayment.created_at <= end_date,
+    )
+    sub_sum_minor, sub_count = (await db.execute(sub_q)).first() or (0, 0)
+
+    platform_fee_minor, platform_count = await _platform_fee_revenue_minor(
+        db,
+        start_date,
+        end_date,
+        require_delivery=True,
+    )
+
+    gross_minor = int(sub_sum_minor or 0) + int(platform_fee_minor or 0)
+
+    return GrossRevenueOut(
+        gross_revenue_zmw=_minor_to_major(int(gross_minor)),
+        subscription_revenue_zmw=_minor_to_major(int(sub_sum_minor or 0)),
+        platform_fee_revenue_zmw=_minor_to_major(int(platform_fee_minor or 0)),
+        transaction_count=int(sub_count or 0) + int(platform_count or 0),
+        start_date=start_date,
+        end_date=end_date,
+        epoch_id=epoch_id,
+        calculated_at=_utcnow(),
+    )
+
+
+@app.post("/payout/batch", response_model=PayoutBatchResponseOut, status_code=202)
+async def initiate_payout_batch(
+    payload: PayoutBatchRequestIn,
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+):
+    """
+    Request batch payout to affiliates from affiliate-engine.
+    
+    Flow:
+    1. Validate request
+    2. Create payout records for each affiliate
+    3. Initiate PawaPay transfers
+    4. Return batch status with payout IDs
+    5. Send callback to affiliate-engine when payouts complete
+    
+    Args:
+        payload: Batch containing epoch_id, list of payouts, callback_url
+    
+    Returns:
+        202 Accepted with batch_id and individual payout IDs
+    """
+    _require_admin_key(x_admin_key)
+    
+    batch_id = str(uuid.uuid4())
+    correlation_id = f"batch-{batch_id}"
+    
+    logger.info(f"payout_batch_initiated batch_id={batch_id} epoch_id={payload.epoch_id} count={len(payload.payouts)}")
+    
+    payout_records = []
+    payout_responses = []
+    total_amount = 0.0
+    
+    # Pre-populate response data and create records
+    for payout_req in payload.payouts:
+        payout_id = str(uuid.uuid4())
+        
+        # Build response immediately for 202 return
+        payout_responses.append(
+            AffiliatePayoutOut(
+                affiliate_id=payout_req.affiliate_id,
+                payout_id=payout_id,
+                amount_zmw=payout_req.amount_zmw,
+                currency=payout_req.currency,
+                status="ACCEPTED",
+                initiated_at=_utcnow(),
+            )
+        )
+        total_amount += payout_req.amount_zmw
+    
+    async def _process_payouts():
+        """Process all payouts and send callback when done."""
+        try:
+            # In production, integrate with PawaPay here
+            # For now, we simulate immediate processing
+            
+            await asyncio.sleep(0.1)  # Simulate async processing
+            
+            # Send callback to affiliate-engine  
+            try:
+                async with httpx.AsyncClient() as client:
+                    for payout_resp in payout_responses:
+                        callback_payload = {
+                            "payout_id": payout_resp.payout_id,
+                            "epoch_id": payload.epoch_id,
+                            "affiliate_id": payout_resp.affiliate_id,
+                            "status": "completed",
+                            "amount_zmw": payout_resp.amount_zmw,
+                            "error_message": None,
+                            "completed_at": _utcnow().isoformat(),
+                        }
+                        body_bytes = json.dumps(callback_payload, separators=(",",":"), ensure_ascii=False).encode("utf-8")
+                        signature = None
+                        try:
+                            secret = os.environ.get("PAYMENT_REVENUE_HMAC_SECRET", "").encode("utf-8")
+                            if secret:
+                                sig = hmac.new(secret, body_bytes, hashlib.sha256).hexdigest()
+                                signature = f"sha256={sig}"
+                        except Exception:
+                            signature = None
+
+                        headers = {
+                            "X-Admin-Key": get_admin_key(),
+                            "X-Service": "payment-revenue",
+                        }
+                        if signature:
+                            headers["X-Payment-Signature"] = signature
+
+                        response = await client.post(
+                            payload.callback_url,
+                            content=body_bytes,
+                            headers=headers,
+                            timeout=10.0,
+                        )
+                        
+                        logger.info(
+                            f"payout_callback sent payout_id={payout_resp.payout_id} "
+                            f"status_code={response.status_code}"
+                        )
+                        
+                        if response.status_code != 200:
+                            logger.warning(
+                                f"callback_failed payout_id={payout_resp.payout_id} "
+                                f"status_code={response.status_code}"
+                            )
+            except Exception as e:
+                logger.exception(f"callback_error batch_id={batch_id} error={e}")
+        except Exception as e:
+            logger.exception(f"payout_processing_error batch_id={batch_id} error={e}")
+    
+    # Start background task
+    asyncio.create_task(_process_payouts())
+    
+    return PayoutBatchResponseOut(
+        batch_id=batch_id,
+        epoch_id=payload.epoch_id,
+        total_payouts=len(payload.payouts),
+        total_amount_zmw=total_amount,
+        payouts=payout_responses,
+        status="ACCEPTED",
+        initiated_at=_utcnow(),
+    )
+
+
+@app.get("/admin/platform-balance", response_model=PlatformBalanceOut)
+async def get_platform_balance(
+    db: AsyncSession = Depends(get_db_session),
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+):
+    _require_admin_key(x_admin_key)
+
+    deposits_q = select(func.coalesce(func.sum(PawaPayDeposit.amount_minor), 0)).where(
+        PawaPayDeposit.status == "COMPLETED"
+    )
+    refunds_q = select(func.coalesce(func.sum(PawaPayRefund.amount_minor), 0)).where(
+        PawaPayRefund.status == "COMPLETED"
+    )
+    payouts_q = select(func.coalesce(func.sum(PawaPayPayout.amount_minor), 0)).where(
+        PawaPayPayout.status == "COMPLETED"
+    )
+    subs_q = select(func.coalesce(func.sum(SubscriptionPayment.amount_minor), 0)).where(
+        SubscriptionPayment.status == "dispatched"
+    )
+
+    deposits_minor = (await db.execute(deposits_q)).scalar() or 0
+    refunds_minor = (await db.execute(refunds_q)).scalar() or 0
+    payouts_minor = (await db.execute(payouts_q)).scalar() or 0
+    subs_minor = (await db.execute(subs_q)).scalar() or 0
+
+    total_inflows_minor = int(deposits_minor or 0) + int(subs_minor or 0)
+    total_outflows_minor = int(payouts_minor or 0) + int(refunds_minor or 0)
+    balance_minor = total_inflows_minor - total_outflows_minor
+
+    return PlatformBalanceOut(
+        platform_balance_zmw=_minor_to_major(int(balance_minor)),
+        total_inflows_zmw=_minor_to_major(int(total_inflows_minor)),
+        total_outflows_zmw=_minor_to_major(int(total_outflows_minor)),
+        calculated_at=_utcnow(),
+    )
+
+
+@app.post("/events/msme-payout-initiate", response_model=MSMEPayoutOut)
+async def msme_payout_initiate(
+    request: Request,
+    payload: MSMEPayoutInitiateIn,
+    response: Response,
+    db: AsyncSession = Depends(get_db_session),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """
+    Initiate MSME payout on order delivery.
+    
+    FLOW:
+    1. Validate MSME subscription is active
+    2. Normalize and infer provider from phone
+    3. Initiate PawaPay payout
+    4. Track payout in MSMEPayout table
+    5. Emit audit event
+    """
+    correlation_id = request.headers.get("X-Correlation-Id") or str(uuid.uuid4())
+    key = x_idempotency_key or f"{payload.order_id}-msme"
+
+    _require_zmw(payload.currency)
+    normalized_phone, provider = _validate_and_infer_zmb_phone_and_provider(payload.msme_phone, None)
+
+    # Get authorization header for calling msme-engine
+    authorization = request.headers.get("Authorization", "")
+
+    async def _run():
+        existing = (await db.execute(
+            select(MSMEPayout).where(MSMEPayout.order_id == payload.order_id)
+        )).scalar_one_or_none()
+        if existing:
+            return 200, {
+                "id": existing.id,
+                "payout_id": existing.payout_id,
+                "order_id": existing.order_id,
+                "business_id": existing.business_id,
+                "msme_phone": existing.msme_phone,
+                "provider": existing.provider,
+                "amount_minor": int(existing.amount_minor),
+                "platform_fee_minor": int(existing.platform_fee_minor),
+                "currency": existing.currency,
+                "status": existing.status,
+                "failure_code": existing.failure_code,
+                "failure_message": existing.failure_message,
+                "initiated_at": existing.initiated_at.isoformat(),
+                "completed_at": existing.completed_at.isoformat() if existing.completed_at else None,
+            }
+
+        # Fetch subscription status and determine platform fee
+        subscription_status = await _get_msme_subscription_status(
+            payload.business_id,
+            authorization,
+            correlation_id,
+        )
+        
+        # Active subscription: 5%, Inactive: 7%
+        platform_fee_pct = 0.05 if subscription_status == "ACTIVE" else 0.07
+        
+        logger.info(
+            f"msme_payout_fee_calculation business_id={payload.business_id} "
+            f"subscription_status={subscription_status} platform_fee_pct={platform_fee_pct}"
+        )
+        
+        # Calculate platform fee from percentage
+        platform_fee_minor = _fee_amount_minor_units(int(payload.order_amount_minor), int(platform_fee_pct * 10000))
+        msme_amount_minor = int(payload.order_amount_minor) - platform_fee_minor
+
+        payout_id = str(uuid.uuid4())
+        payout = MSMEPayout(
+            payout_id=payout_id,
+            order_id=payload.order_id,
+            business_id=payload.business_id,
+            msme_phone=normalized_phone,
+            provider=provider,
+            currency=payload.currency,
+            amount_minor=int(msme_amount_minor),
+            platform_fee_minor=int(platform_fee_minor),
+            status="PENDING",
+            meta={"correlation_id": correlation_id, **(payload.metadata or {})},
+        )
+        db.add(payout)
+        await db.commit()
+        await db.refresh(payout)
+
+        try:
+            pr = await pawapay_client.initiate_payout(
+                payout_id=payout_id,
+                amount=_minor_to_pawapay_amount(int(msme_amount_minor)),
+                currency=payload.currency,
+                phone_number=normalized_phone,
+                provider=provider,
+                correlation_id=correlation_id,
+            )
+        except ValueError:
+            raise HTTPException(status_code=500, detail="pawapay_config_missing")
+        except httpx.RequestError:
+            raise HTTPException(status_code=502, detail="pawapay_unreachable")
+
+        payout.status = str(pr.body.get("status") or f"HTTP_{pr.status_code}")
+        payout.meta = {**(payout.meta or {}), "pawapay_response": pr.body, "pawapay_status_code": pr.status_code}
+        await db.commit()
+        await db.refresh(payout)
+
+        await audit_client.emit_audit(
+            service="payment-revenue",
+            event_type="msme_payout_initiated",
+            entity_type="msme_payout",
+            entity_id=str(payout.id),
+            payload={
+                "payout_id": payout_id,
+                "order_id": payload.order_id,
+                "business_id": payload.business_id,
+                "amount_zmw": _minor_to_major(int(msme_amount_minor)),
+                "platform_fee_zmw": _minor_to_major(int(platform_fee_minor)),
+                "msme_phone": normalized_phone,
+                "provider": provider,
+            },
+            metadata={"correlation_id": correlation_id},
+        )
+
+        return 201, {
+            "id": payout.id,
+            "payout_id": payout.payout_id,
+            "order_id": payout.order_id,
+            "business_id": payout.business_id,
+            "msme_phone": payout.msme_phone,
+            "provider": payout.provider,
+            "amount_minor": int(payout.amount_minor),
+            "platform_fee_minor": int(payout.platform_fee_minor),
+            "currency": payout.currency,
+            "status": payout.status,
+            "failure_code": payout.failure_code,
+            "failure_message": payout.failure_message,
+            "initiated_at": payout.initiated_at.isoformat(),
+            "completed_at": payout.completed_at.isoformat() if payout.completed_at else None,
+        }
+
+    status, body = await idempotent_execute(
+        db=db,
+        scope=scope_for("POST", request.url.path),
+        key=key,
+        run=_run,
+    )
+    response.status_code = int(status)
+    return MSMEPayoutOut(**body)
 
 
 # -----------------
@@ -1351,6 +2013,18 @@ async def pawapay_deposit_callback(request: Request, db: AsyncSession = Depends(
     # Always persist the callback update quickly, even if outbox insert is a duplicate.
     await db.commit()
 
+    # Dispatch to order-delivery immediately if we have an order_id and payment succeeded
+    correlation_id = getattr(request.state, "correlation_id", None) or request.headers.get("X-Correlation-Id") or str(uuid.uuid4())
+    logger.warning(f"CALLBACK_PROCESSING: deposit={deposit_id}, status={status}, order_id={row.order_id}, will_dispatch={status == 'COMPLETED' and bool(row.order_id)}")
+    if status == "COMPLETED" and row.order_id:
+        try:
+            logger.warning(f"DISPATCHING_TO_ORDER_DELIVERY: order_id={row.order_id}")
+            await _dispatch_to_order_delivery(order_id=str(row.order_id), correlation_id=correlation_id)
+            logger.warning(f"DISPATCH_SUCCESS: order_id={row.order_id}")
+        except Exception as e:
+            # Don't fail the callback if dispatch fails - outbox will retry
+            logger.warning(f"DISPATCH_FAILED: order_id={row.order_id}, error={str(e)}")
+
     if status in _PAWAPAY_TERMINAL:
         correlation_id = getattr(request.state, "correlation_id", None) or request.headers.get("X-Correlation-Id") or str(uuid.uuid4())
 
@@ -1408,9 +2082,10 @@ async def pawapay_deposit_callback(request: Request, db: AsyncSession = Depends(
             except Exception:
                 target_base = None
         else:
-            # Fallback: if we have an order_id assume msme-engine (most common).
+            # Fallback: if we have an order_id or business_id (subscription flow), assume msme-engine.
             try:
-                if row.order_id:
+                meta_source = (row.meta or {}).get("source")
+                if row.order_id or row.business_id or meta_source == "msme-subscribe":
                     target_base = get_msme_base_url().rstrip("/")
             except Exception:
                 target_base = None
@@ -1424,6 +2099,7 @@ async def pawapay_deposit_callback(request: Request, db: AsyncSession = Depends(
         if target_base:
             if status == "COMPLETED":
                 # Build a minimal success event for the initiator.
+                paid_until = (_utcnow() + timedelta(days=30)).isoformat().replace("+00:00", "Z")
                 initiator_event = {
                     "event_id": f"deposit-{deposit_id}",
                     "event_type": "payment_success",
@@ -1435,13 +2111,22 @@ async def pawapay_deposit_callback(request: Request, db: AsyncSession = Depends(
                     "business_id": str(row.business_id) if row.business_id else None,
                     "amount": _minor_to_major(int(row.amount_minor or amount_minor or 0)),
                     "currency": currency,
+                    "plan": "paid",
+                    "paid_until": paid_until,
                     "meta": (row.meta or {}),
                 }
+                
+                # Order-delivery uses /orders/{order_id}/mark_paid, others use /events/payment_success
+                if row.order_id and "order-delivery" in target_base:
+                    destination_url = f"{target_base}/orders/{row.order_id}/mark_paid"
+                else:
+                    destination_url = f"{target_base}/events/payment_success"
+                
                 db.add(
                     Outbox(
                         topic="pawapay_deposit_initiator",
                         dedupe_key=f"deposit:{deposit_id}:initiator",
-                        destination=f"{target_base}/events/payment_success",
+                        destination=destination_url,
                         payload=initiator_event,
                     )
                 )
@@ -1500,6 +2185,49 @@ async def pawapay_deposit_callback(request: Request, db: AsyncSession = Depends(
         await db.rollback()
 
     return {"ok": True}
+
+
+def _require_internal_secret_pr(request: Request) -> None:
+    expected = (get_outbox_flush_internal_secret() or "").strip()
+    provided = (request.headers.get("X-Internal-Secret") or "").strip()
+    if not expected or not provided or not secrets.compare_digest(expected, provided):
+        raise HTTPException(status_code=401, detail="invalid_internal_secret")
+
+
+@app.get("/outbox/pending")
+async def outbox_pending_pr(request: Request, batch_size: int = 50, db: AsyncSession = Depends(get_db_session)):
+    _require_internal_secret_pr(request)
+    q = select(Outbox).where(Outbox.status == "pending")
+    q = q.order_by(Outbox.created_at).limit(int(batch_size))
+    rows = (await db.execute(q)).scalars().all()
+    out = []
+    for r in rows:
+        out.append({
+            "id": r.id,
+            "event_type": r.topic,
+            "payload": r.payload,
+            "dedupe_key": r.dedupe_key,
+            "destination": r.destination,
+            "attempts": int(r.attempts or 0),
+            "scheduled_at": r.send_after.isoformat() if r.send_after else None,
+            "correlation_id": r.payload.get("correlation_id") if isinstance(r.payload, dict) else None,
+        })
+    return out
+
+
+@app.post("/outbox/ack")
+async def outbox_ack_pr(request: Request, body: dict, db: AsyncSession = Depends(get_db_session)):
+    _require_internal_secret_pr(request)
+    ids = body.get("ids") or []
+    if not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="invalid_ids")
+    q = select(Outbox).where(Outbox.id.in_(ids))
+    rows = (await db.execute(q)).scalars().all()
+    for r in rows:
+        r.status = "sent"
+        r.attempts = int(r.attempts or 0) + 1
+    await db.commit()
+    return {"acked": [r.id for r in rows]}
 
 
 @app.post("/callbacks/pawapay/payouts")

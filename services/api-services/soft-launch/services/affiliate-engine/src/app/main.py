@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import secrets
 import string
 import uuid
@@ -20,7 +21,6 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.config import get_admin_key, get_epoch_days_default, get_pool_pct_default, get_catalog_base_url, get_msme_base_url, skip_link_target_validation
 from src.app.config import (
     get_admin_key,
     get_affiliate_default_whatsapp_number,
@@ -31,6 +31,7 @@ from src.app.config import (
     get_msme_base_url,
     get_notification_base_url,
     get_notification_timeout_seconds,
+    get_payment_revenue_base_url,
     get_pool_pct_default,
     skip_link_target_validation,
     get_pg_schema,
@@ -46,12 +47,15 @@ from src.app.models import (
     AffiliateEarning,
     AffiliateEvent,
     AffiliateLink,
+    AffiliateMetricSnapshot,
     AffiliateToken,
     AffiliateTier,
     AffiliateTierAssignment,
+    AffiliateTierSetting,
     CommissionSettings,
     PoolAllocation,
     PoolEpoch,
+    Outbox,
 )
 from src.app.pool import (
     close_epoch_and_allocate,
@@ -60,9 +64,12 @@ from src.app.pool import (
     compute_weighted_scores,
     compute_op_scores,
     ensure_default_tiers,
+    ensure_default_tier_settings,
     get_or_create_settings,
     get_or_open_epoch,
     get_open_epoch,
+    AffiliateMetrics,
+    get_qualified_tiers,
 )
 from src.app.schemas import OrderDeliveredEvent
 from src.app.schemas import (
@@ -88,10 +95,17 @@ from src.app.schemas import (
     EpochSetGrossRevenue,
     TierOut,
     TierAssign,
+    TierThreshold,
+    TierThresholdUpdate,
     PoolStanding,
     PoolStandingsOut,
     PoolAllocationOut,
     AffiliateEventOut,
+    ProjectedPayoutOut,
+    MetricSnapshotOut,
+    MetricHistoryOut,
+    PayoutStatusCallback,
+    SessionCycleCreatedEvent,
 )
 
 from fastapi import Depends
@@ -100,6 +114,64 @@ from contextlib import asynccontextmanager
 from src.app.events import OrderCreatedEvent
 from src.app import audit_client
 from src.app import security
+
+
+@app.get("/outbox/pending")
+async def outbox_pending_aff(request: Request):
+    expected = (os.environ.get("OUTBOX_INTERNAL_SECRET") or "").strip()
+    provided = (request.headers.get("X-Internal-Secret") or "").strip()
+    if expected and (not provided or not secrets.compare_digest(expected, provided)):
+        raise HTTPException(status_code=401, detail="invalid_internal_secret")
+
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as db:
+        q = select(Outbox).where(Outbox.status == "pending")
+        # Only return items ready to be sent
+        q = q.where((Outbox.send_after == None) | (Outbox.send_after <= now))
+        res = await db.execute(q)
+        rows = res.scalars().all()
+
+    out = []
+    for r in rows:
+        out.append(
+            {
+                "id": r.id,
+                "event_type": r.topic,
+                "payload": r.payload,
+                "dedupe_key": r.dedupe_key,
+                "destination": r.destination,
+                "attempts": r.attempts,
+                "scheduled_at": (r.send_after.isoformat() if r.send_after else None),
+                "correlation_id": None,
+            }
+        )
+
+    return out
+
+
+@app.post("/outbox/ack")
+async def outbox_ack_aff(request: Request, body: dict):
+    expected = (os.environ.get("OUTBOX_INTERNAL_SECRET") or "").strip()
+    provided = (request.headers.get("X-Internal-Secret") or "").strip()
+    if expected and (not provided or not secrets.compare_digest(expected, provided)):
+        raise HTTPException(status_code=401, detail="invalid_internal_secret")
+
+    ids = body.get("ids") or []
+    if not ids:
+        return {"acked": []}
+
+    async with get_db_session() as db:
+        res = await db.execute(select(Outbox).where(Outbox.id.in_(ids)))
+        rows = res.scalars().all()
+        acked = []
+        for r in rows:
+            r.status = "sent"
+            r.updated_at = datetime.now(timezone.utc)
+            acked.append(r.id)
+        if acked:
+            await db.commit()
+
+    return {"acked": acked}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -133,6 +205,7 @@ async def _ensure_schema_and_defaults() -> None:
             epoch_days_default=get_epoch_days_default(),
         )
         await ensure_default_tiers(db)
+        await ensure_default_tier_settings(db)
         await get_or_open_epoch(db, pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days))
 
 
@@ -193,6 +266,7 @@ _AUTH_SKIP_PATHS = {
     "/docs",
     "/docs/index.html",
     "/redoc",
+    "/callbacks/payout-status",
 }
 
 # Prefix-based public routes (e.g. affiliate click landing/resolve endpoints).
@@ -282,6 +356,7 @@ async def ingest_order_delivered(request: Request, payload: OrderDeliveredEvent)
     marks corresponding `AffiliateAttribution` as `delivered`.
     """
     updated = 0
+    attr = None
     async with get_db_session() as db:
         # Update matching sale events
         res = await db.execute(
@@ -300,6 +375,21 @@ async def ingest_order_delivered(request: Request, payload: OrderDeliveredEvent)
 
         if updated or attr:
             await db.commit()
+
+    # Emit audit event when attribution is marked as delivered
+    if attr:
+        audit_client.emit_audit_sync(
+            service="affiliate-engine",
+            event_type="affiliate_attribution_delivered",
+            payload={
+                "order_id": payload.order_id,
+                "affiliate_id": attr.affiliate_id,
+                "delivered_at": payload.occurred_at.isoformat(),
+            },
+            entity_type="affiliate_attribution",
+            entity_id=attr.id,
+            metadata={"correlation_id": getattr(request.state, "correlation_id", None)},
+        )
 
     return {"updated_events": updated, "attribution_updated": bool(attr)}
 
@@ -333,7 +423,7 @@ async def admin_debug_epoch_scores(epoch_id: str, db: AsyncSession = Depends(get
     settings_row = (await db.execute(select(CommissionSettings).where(CommissionSettings.id == 1))).scalar_one_or_none()
     weights = (settings_row.weights if settings_row else None)
 
-    scores, details = compute_op_scores(metrics, weights)
+    scores, details = await compute_op_scores(db, metrics, weights)
 
     # Serialize metrics dataclasses to plain dicts
     metrics_out = []
@@ -347,6 +437,7 @@ async def admin_debug_epoch_scores(epoch_id: str, db: AsyncSession = Depends(get
                 "clicks": m.clicks,
                 "attributions": m.attributions,
                 "paid_attributions": m.paid_attributions,
+                "session_cycles": m.session_cycles,
                 "tier_name": m.tier_name,
                 "tier_multiplier": m.tier_multiplier,
             }
@@ -838,6 +929,8 @@ async def create_affiliate(
     )
     if status_code != 200:
         raise HTTPException(status_code=status_code, detail="unexpected_status")
+    if isinstance(body, AffiliateOut):
+        return body
     return AffiliateOut(**body)
 
 
@@ -1380,13 +1473,14 @@ async def ingest_order_created(
     db: AsyncSession = Depends(db_session),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ) -> dict:
-    # If there's no affiliate_code, nothing to do.
-    if not payload.affiliate_code:
-        return {"status": "ignored", "reason": "no_affiliate_code"}
+    # If there's no affiliate_code or affiliate_id, nothing to do.
+    if not payload.affiliate_code and not payload.affiliate_id:
+        return {"status": "ignored", "reason": "no_affiliate_identifier"}
 
     attribution_payload = AttributionCreate(
         event_id=payload.event_id,
         affiliate_code=payload.affiliate_code,
+        affiliate_id=payload.affiliate_id,
         order_id=payload.order_id,
         business_id=payload.business_id,
         correlation_id=payload.correlation_id,
@@ -1401,7 +1495,65 @@ async def ingest_order_created(
             db=db,
             x_idempotency_key=None,
         )
+        # Emit audit event for order created and attribution
+        audit_client.emit_audit_sync(
+            service="affiliate-engine",
+            event_type="affiliate_attribution_created",
+            payload={
+                "order_id": payload.order_id,
+                "affiliate_id": payload.affiliate_id,
+                "affiliate_code": payload.affiliate_code,
+                "business_id": payload.business_id,
+            },
+            entity_type="affiliate_attribution",
+            entity_id=result.id,
+            metadata={"correlation_id": payload.correlation_id},
+        )
         return 200, {"status": "ok", "attribution": result.model_dump()}
+
+    status_code, body = await idempotent_execute(
+        db=db,
+        scope=scope_for("POST", request.url.path),
+        key=x_idempotency_key or payload.event_id,
+        run=_run,
+    )
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail="unexpected_status")
+    return body
+
+
+@app.post("/events/session-cycle-created")
+async def ingest_session_cycle_created(
+    request: Request,
+    payload: SessionCycleCreatedEvent,
+    db: AsyncSession = Depends(db_session),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> dict:
+    if not payload.affiliate_id:
+        return {"status": "ignored", "reason": "no_affiliate_id"}
+
+    async def _run():
+        await _record_event(
+            db,
+            AffiliateEvent(
+                event_id=payload.event_id,
+                affiliate_id=str(payload.affiliate_id),
+                event_type="session_cycle_created",
+                occurred_at=payload.occurred_at,
+                source=payload.producer,
+                correlation_id=payload.correlation_id,
+                buyer_phone=payload.user_phone,
+                session_id=payload.session_id,
+                order_id=None,
+                business_id=payload.business_id,
+                meta={
+                    "cycle_id": payload.cycle_id,
+                    "cycle_state": payload.cycle_state,
+                    "meta": payload.meta,
+                },
+            ),
+        )
+        return 200, {"status": "ok"}
 
     status_code, body = await idempotent_execute(
         db=db,
@@ -1597,7 +1749,7 @@ async def pool_standings(db: AsyncSession = Depends(db_session)) -> PoolStanding
 
     epoch = await get_or_open_epoch(db, pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days))
     metrics = await compute_metrics_for_epoch(db, epoch)
-    scores, details = compute_op_scores(metrics, settings.weights)
+    scores, details = await compute_op_scores(db, metrics, settings.weights)
 
     pool_amount = float(epoch.gross_revenue_zmw) * float(settings.pool_pct)
     payouts = compute_payouts(scores, pool_amount)
@@ -1615,7 +1767,7 @@ async def pool_standings(db: AsyncSession = Depends(db_session)) -> PoolStanding
             clicks=int(m.clicks),
             attributions=int(m.attributions),
             paid_attributions=int(m.paid_attributions),
-            conversion_quality=float(details.get(m.affiliate_id, {}).get("conversion_quality", 0.0)),
+            session_cycles=int(m.session_cycles),
             op_raw=float(details.get(m.affiliate_id, {}).get("op_raw", 0.0)),
             op_final=float(details.get(m.affiliate_id, {}).get("op_final", 0.0)),
             eligible_for_multiplier=bool(details.get(m.affiliate_id, {}).get("eligible_for_multiplier", False)),
@@ -1648,6 +1800,307 @@ async def pool_standings_stream() -> StreamingResponse:
     import asyncio
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+@app.get("/affiliates/{affiliate_id}/projected-payout", response_model=ProjectedPayoutOut)
+async def get_projected_payout(
+    affiliate_id: str,
+    db: AsyncSession = Depends(db_session),
+    x_token: Optional[str] = Header(default=None, alias="X-Affiliate-Token"),
+) -> ProjectedPayoutOut:
+    """
+    Calculate real-time projected payout for current epoch.
+    
+    Returns affiliate's current metrics, weighted score, tier qualification,
+    and projected payout amount if the epoch ended today.
+    """
+    # 1. Verify affiliate exists
+    affiliate = (await db.execute(select(Affiliate).where(Affiliate.id == affiliate_id))).scalar_one_or_none()
+    if not affiliate:
+        raise HTTPException(status_code=404, detail="affiliate_not_found")
+    
+    # 2. Get current open epoch
+    epoch = await get_open_epoch(db)
+    if not epoch:
+        raise HTTPException(status_code=404, detail="no_open_epoch")
+    
+    # 3. Get settings
+    settings = await get_or_create_settings(
+        db,
+        pool_pct_default=get_pool_pct_default(),
+        epoch_days_default=get_epoch_days_default(),
+    )
+    
+    # 4. Fetch affiliate metrics for current epoch
+    metrics_list = await compute_metrics_for_epoch(db, epoch)
+    affiliate_metrics = next(
+        (m for m in metrics_list if m.affiliate_id == affiliate_id),
+        None
+    )
+    
+    if not affiliate_metrics:
+        # Affiliate has no activity yet
+        affiliate_metrics = AffiliateMetrics(
+            affiliate_id=affiliate_id,
+            sales_volume=0.0,
+            unique_buyers=0,
+            msme_referrals=0,
+            clicks=0,
+            attributions=0,
+            paid_attributions=0,
+            session_cycles=0,
+            tier_name=None,
+            tier_multiplier=1.0,
+        )
+    
+    # 5. Get gross revenue
+    gross_revenue = float(epoch.gross_revenue_zmw or 0.0)
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{get_payment_revenue_base_url()}/epoch/{epoch.id}/gross-revenue",
+                headers={"X-Admin-Key": get_admin_key()},
+                timeout=5.0,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                gross_revenue = float(data.get("gross_revenue_zmw", 0.0))
+    except Exception as e:
+        logger.debug(f"Failed to fetch gross revenue: {e}")
+
+    # 6. Calculate projected payout using current epoch metrics
+    pool_amount = gross_revenue * float(settings.pool_pct)
+    if all(m.affiliate_id != affiliate_id for m in metrics_list):
+        metrics_list.append(affiliate_metrics)
+
+    scores, details = await compute_op_scores(db, metrics_list, settings.weights)
+    payouts = compute_payouts(scores, pool_amount)
+
+    weighted_score = float(scores.get(affiliate_id, 0.0))
+    projected_payout = float(payouts.get(affiliate_id, 0.0))
+    detail = details.get(affiliate_id, {})
+    effective_tier = detail.get("effective_tier")
+    tier_multiplier = float(detail.get("effective_multiplier", 1.0))
+    qualified_tiers = await get_qualified_tiers(db, affiliate_metrics)
+
+    # 7. Calculate affiliate share
+    affiliate_share_pct = (projected_payout / pool_amount * 100) if pool_amount > 0 else 0.0
+    epoch_ends_at = epoch.ends_at or (epoch.starts_at + timedelta(days=int(settings.epoch_days)))
+    
+    return ProjectedPayoutOut(
+        affiliate_id=affiliate_id,
+        epoch_id=epoch.id,
+        epoch_ends_at=epoch_ends_at,
+        # Metrics
+        sales_volume=float(affiliate_metrics.sales_volume),
+        unique_buyers=int(affiliate_metrics.unique_buyers),
+        msme_referrals=int(affiliate_metrics.msme_referrals),
+        clicks=int(affiliate_metrics.clicks),
+        attributions=int(affiliate_metrics.attributions),
+        paid_attributions=int(affiliate_metrics.paid_attributions),
+        session_cycles=int(affiliate_metrics.session_cycles),
+        # Scoring
+        weighted_score=weighted_score,
+        # Tier qualification
+        qualified_tiers=qualified_tiers,
+        effective_tier=effective_tier,
+        tier_multiplier=float(tier_multiplier),
+        # Payout calculation
+        gross_revenue_zmw=gross_revenue,
+        pool_pct=float(settings.pool_pct),
+        pool_amount_zmw=pool_amount,
+        affiliate_share_pct=affiliate_share_pct,
+        projected_payout_zmw=projected_payout,
+    )
+
+
+@app.get("/affiliates/{affiliate_id}/metrics/history", response_model=MetricHistoryOut)
+async def get_affiliate_metrics_history(
+    affiliate_id: str,
+    limit: int = 12,
+    db: AsyncSession = Depends(db_session),
+    x_token: Optional[str] = Header(default=None, alias="X-Affiliate-Token"),
+):
+    """
+    Get historical metric snapshots for an affiliate across epochs.
+    
+    Returns:
+    - List of metric snapshots ordered by epoch (newest first)
+    - Each snapshot contains:
+      - All 7 metrics (sales_volume, unique_buyers, msme_referrals, clicks, attributions, paid_attributions, session_cycles)
+      - Weighted score, tier qualification, projected payout
+    - Total snapshot count
+    
+    Args:
+        affiliate_id: Affiliate ID
+        limit: Maximum snapshots to return (default 12, i.e., 1 year of months)
+    """
+    # Verify affiliate exists
+    affiliate = (await db.execute(select(Affiliate).where(Affiliate.id == affiliate_id))).scalar_one_or_none()
+    if not affiliate:
+        raise HTTPException(status_code=404, detail="affiliate_not_found")
+
+    # Fetch metric snapshots ordered by epoch start time (newest first)
+    query = (
+        select(AffiliateMetricSnapshot)
+        .where(AffiliateMetricSnapshot.affiliate_id == affiliate_id)
+        .order_by(AffiliateMetricSnapshot.recorded_at.desc())
+        .limit(limit)
+    )
+    snapshots = (await db.execute(query)).scalars().all()
+
+    # Build response
+    snapshot_outs = [MetricSnapshotOut.model_validate(s) for s in snapshots]
+    
+    date_range = None
+    if snapshots:
+        date_range = (snapshots[-1].recorded_at, snapshots[0].recorded_at)
+
+    return MetricHistoryOut(
+        affiliate_id=affiliate_id,
+        snapshots=snapshot_outs,
+        total_snapshots=len(snapshot_outs),
+        date_range=date_range,
+    )
+
+
+@app.get("/affiliates/{affiliate_id}/metrics/snapshot/{epoch_id}", response_model=MetricSnapshotOut)
+async def get_affiliate_metric_snapshot(
+    affiliate_id: str,
+    epoch_id: str,
+    db: AsyncSession = Depends(db_session),
+    x_token: Optional[str] = Header(default=None, alias="X-Affiliate-Token"),
+):
+    """
+    Get metric snapshot for an affiliate at a specific epoch.
+    
+    Returns all 7 metrics, scoring, tier qualification, and payout projection for that epoch.
+    
+    Args:
+        affiliate_id: Affiliate ID
+        epoch_id: Epoch ID
+    """
+    snapshot = (
+        await db.execute(
+            select(AffiliateMetricSnapshot).where(
+                (AffiliateMetricSnapshot.affiliate_id == affiliate_id)
+                & (AffiliateMetricSnapshot.epoch_id == epoch_id)
+            )
+        )
+    ).scalar_one_or_none()
+
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="metric_snapshot_not_found")
+
+    return MetricSnapshotOut.model_validate(snapshot)
+
+
+@app.get("/admin/metrics/epoch/{epoch_id}", response_model=list[MetricSnapshotOut])
+async def admin_get_epoch_metrics(
+    epoch_id: str,
+    db: AsyncSession = Depends(db_session),
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+):
+    """
+    [ADMIN] Get all metric snapshots for an epoch (all affiliates).
+    
+    Returns:
+    - Metric snapshots for all affiliates in the epoch
+    - Ordered by weighted_score (highest first)
+    
+    Useful for:
+    - Validating epoch calculations
+    - Auditing affiliate scores
+    - Understanding pool allocation
+    """
+    _require_admin(x_admin_key)
+
+    query = (
+        select(AffiliateMetricSnapshot)
+        .where(AffiliateMetricSnapshot.epoch_id == epoch_id)
+        .order_by(AffiliateMetricSnapshot.weighted_score.desc())
+    )
+    snapshots = (await db.execute(query)).scalars().all()
+
+    return [MetricSnapshotOut.model_validate(s) for s in snapshots]
+
+
+# ------------------- Callback Handlers -------------------
+
+
+@app.post("/callbacks/payout-status")
+async def handle_payout_status_callback(
+    payload: PayoutStatusCallback,
+    db: AsyncSession = Depends(db_session),
+):
+    """
+    Receive payout status updates from payment-revenue service.
+    
+    Updates allocation status, records transactions, and emits audit events.
+    
+    Called when PawaPay completes or fails a payout batch.
+    """
+    allocation = (
+        await db.execute(
+            select(PoolAllocation).where(PoolAllocation.payout_id == payload.payout_id)
+        )
+    ).scalar_one_or_none()
+
+    if not allocation:
+        allocation = (
+            await db.execute(
+                select(PoolAllocation).where(
+                    PoolAllocation.affiliate_id == payload.affiliate_id,
+                    PoolAllocation.epoch_id == payload.epoch_id,
+                )
+            )
+        ).scalar_one_or_none()
+
+        if allocation:
+            allocation.payout_id = payload.payout_id
+
+    if not allocation:
+        logger.warning(
+            f"payout_callback_allocation_not_found payout_id={payload.payout_id} "
+            f"affiliate_id={payload.affiliate_id} epoch_id={payload.epoch_id}"
+        )
+        return {"status": "ok"}  # Still return 200 to prevent retry loops
+
+    # Update payout status
+    allocation.payout_status = payload.status  # completed, failed
+    allocation.payout_completed_at = payload.completed_at
+
+    if payload.status == "failed":
+        allocation.payout_error = payload.error_message
+        logger.error(
+            f"affiliate_payout_failed affiliate_id={allocation.affiliate_id} "
+            f"payout_id={payload.payout_id} error={payload.error_message}"
+        )
+    else:
+        logger.info(
+            f"affiliate_payout_completed affiliate_id={allocation.affiliate_id} "
+            f"amount_zmw={payload.amount_zmw}"
+        )
+
+    await db.commit()
+
+    # Emit audit event
+    await audit_client.emit_audit(
+        service="affiliate-engine",
+        event_type="affiliate_payout_completed",
+        entity_type="pool_allocation",
+        entity_id=allocation.id,
+        payload={
+            "payout_id": payload.payout_id,
+            "affiliate_id": allocation.affiliate_id,
+            "epoch_id": allocation.epoch_id,
+            "amount_zmw": payload.amount_zmw,
+            "status": payload.status,
+            "error": payload.error_message,
+        },
+    )
+
+    return {"status": "ok"}
 
 
 # ------------------- Admin endpoints -------------------
@@ -1813,3 +2266,72 @@ async def admin_list_allocations(
         )
         for a in rows
     ]
+
+
+@app.get("/admin/tier-settings", response_model=list[TierThreshold])
+async def get_tier_settings(
+    db: AsyncSession = Depends(db_session),
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+) -> list[TierThreshold]:
+    """Get all affiliate tier threshold settings.
+    
+    Returns the current tier thresholds configured for affiliate qualification.
+    Can be adjusted by admins to change qualification criteria at runtime without code deployment.
+    """
+    _require_admin(x_admin_key)
+    rows = (await db.execute(select(AffiliateTierSetting).order_by(AffiliateTierSetting.tier_name))).scalars().all()
+    return [
+        TierThreshold(
+            tier_name=r.tier_name,
+            gmv_min=float(r.gmv_min),
+            buyers_min=int(r.buyers_min),
+            referrals_min=int(r.referrals_min),
+            session_cycles_min=int(r.session_cycles_min),
+            min_metrics_required=int(r.min_metrics_required),
+        )
+        for r in rows
+    ]
+
+
+@app.put("/admin/tier-settings/{tier_name}", response_model=TierThreshold)
+async def update_tier_setting(
+    tier_name: str,
+    update: TierThresholdUpdate,
+    db: AsyncSession = Depends(db_session),
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+) -> TierThreshold:
+    """Update threshold settings for a specific affiliate tier.
+    
+    Allows runtime adjustment of tier qualification criteria without code deployment.
+    Only provided fields will be updated; omitted fields retain their current values.
+    """
+    _require_admin(x_admin_key)
+    tier_name_normalized = tier_name.strip().lower()
+    
+    # Fetch existing setting
+    result = await db.execute(
+        select(AffiliateTierSetting).where(
+            func.lower(AffiliateTierSetting.tier_name) == tier_name_normalized
+        )
+    )
+    setting = result.scalar_one_or_none()
+    if not setting:
+        raise HTTPException(status_code=404, detail=f"tier_not_found: {tier_name}")
+    
+    # Update only provided fields
+    update_data = update.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        if value is not None:
+            setattr(setting, field, value)
+    
+    await db.commit()
+    await db.refresh(setting)
+    
+    return TierThreshold(
+        tier_name=setting.tier_name,
+        gmv_min=float(setting.gmv_min),
+        buyers_min=int(setting.buyers_min),
+        referrals_min=int(setting.referrals_min),
+        session_cycles_min=int(setting.session_cycles_min),
+        min_metrics_required=int(setting.min_metrics_required),
+    )

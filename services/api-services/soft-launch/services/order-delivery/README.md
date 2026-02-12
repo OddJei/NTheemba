@@ -38,6 +38,7 @@ python -m src.app.outbox_dispatcher
 Orders:
 - `POST /orders/create`
 - `GET /orders/{order_id}`
+- `POST /orders/{order_id}/initiate_payment`
 - `POST /orders/{order_id}/mark_paid`
 
 Delivery:
@@ -46,6 +47,19 @@ Delivery:
 - `GET /delivery/order/{order_id}`
 - `POST /delivery/{delivery_id}/confirm`
 - `GET /delivery/user/{user_phone}`
+
+## Payment initiation flow
+1) Create an order: `POST /orders/create`
+2) Initiate payment: `POST /orders/{order_id}/initiate_payment`
+	- Body: `phoneNumber`, `provider`, `currency`
+	- Calls payment-revenue `/pawapay/deposits/initiate`
+3) payment-revenue receives pawaPay callback and calls:
+	- `POST /orders/{order_id}/mark_paid`
+
+## Auth notes
+- All endpoints require a Bearer token from MSME Engine **except**:
+  - `GET /health`, `GET /metrics`
+  - `POST /orders/{order_id}/mark_paid` (service-to-service callback)
 
 ## Notes
 - Delivery codes are generated server-side and returned once from `/delivery/initiate/{order_id}`.

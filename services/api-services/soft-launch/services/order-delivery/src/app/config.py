@@ -67,3 +67,33 @@ def get_internal_service_secret() -> str:
     # Shared secret for internal service-to-service calls.
     # If set, callers may include header: X-Internal-Secret: <secret>
     return os.getenv("INTERNAL_SERVICE_SECRET", "")
+
+
+def get_payment_revenue_base_url() -> str:
+    # Payment Revenue service (Soft Launch)
+    return os.getenv("PAYMENT_REVENUE_BASE_URL", "http://127.0.0.1:8590")
+
+
+def get_payment_revenue_timeout_seconds() -> float:
+    try:
+        return float(os.getenv("PAYMENT_REVENUE_TIMEOUT_SECONDS", "5.0"))
+    except ValueError:
+        return 5.0
+
+
+def get_outbox_dispatch_enabled() -> bool:
+    return os.getenv("OUTBOX_DISPATCH_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+
+
+def get_outbox_dispatch_interval_seconds() -> float:
+    try:
+        return float(os.getenv("OUTBOX_DISPATCH_INTERVAL_SECONDS", "2.0"))
+    except ValueError:
+        return 2.0
+
+
+def get_outbox_dispatch_batch_size() -> int:
+    try:
+        return int(os.getenv("OUTBOX_DISPATCH_BATCH_SIZE", "50"))
+    except ValueError:
+        return 50

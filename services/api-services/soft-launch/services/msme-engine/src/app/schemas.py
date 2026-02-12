@@ -57,6 +57,12 @@ class UserLookupOut(BaseModel):
     is_active: bool
 
 
+class UserPhoneLookupOut(BaseModel):
+    """User details with associated business (if linked)."""
+    user: "UserOut"
+    business: Optional["BusinessOut"] = None
+
+
 class UserUpdate(BaseModel):
     username: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -90,7 +96,8 @@ class BusinessRegister(BaseModel):
     referred_by_msme_code: Optional[str] = None
 
     subscription_plan: Optional[str] = None
-    delivery_locations: Optional[dict[str, Any]] = None
+    # delivery_locations: mapping of town -> metadata (e.g. {"Lusaka": {"price_minor": 2500, "currency":"ZMW"}})
+    delivery_locations: Optional[dict[str, dict[str, Any]]] = None
     tags: Optional[list[str]] = None
 
 
@@ -105,7 +112,7 @@ class BusinessOut(BaseModel):
     referred_by_msme_code: Optional[str]
     subscription_plan: Optional[str]
     subscription_expiry: Optional[datetime]
-    delivery_locations: Optional[dict[str, Any]]
+    delivery_locations: Optional[dict[str, dict[str, Any]]]
     tags: Optional[list[str]]
     is_active: bool
     created_at: datetime
@@ -124,9 +131,21 @@ class BusinessUpdate(BaseModel):
     logo_url: Optional[str] = None
     affiliate_code: Optional[str] = None
     referred_by_msme_code: Optional[str] = None
-    delivery_locations: Optional[dict[str, Any]] = None
+    delivery_locations: Optional[dict[str, dict[str, Any]]] = None
     tags: Optional[list[str]] = None
     is_active: Optional[bool] = None
+
+
+class DeliveryLocationsUpdate(BaseModel):
+    """Request model for updating delivery locations with per-town metadata.
+
+    Example:
+    {
+      "Lusaka": {"price_minor": 2500, "currency": "ZMW", "available": True},
+      "Ndola": {"price_minor": 3000}
+    }
+    """
+    delivery_locations: dict[str, dict[str, Any]]
 
 
 class SubscribeRequest(BaseModel):
@@ -180,6 +199,12 @@ class BusinessEntitlementsOut(BaseModel):
 
     # Transaction fee percentage charged by platform (e.g. 0.07 == 7%)
     transaction_fee_pct: float
+
+
+class BusinessPhoneLookupOut(BaseModel):
+    """Business lookup by phone - returns both user and business details."""
+    business: BusinessOut
+    owner: UserOut
 
 
 # ---- Events ----

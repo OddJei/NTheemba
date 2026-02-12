@@ -12,5 +12,6 @@ pytest-asyncio
 python-multipart
 boto3
 Pillow
+webdavclient3
 
 asyncpg==0.28.0

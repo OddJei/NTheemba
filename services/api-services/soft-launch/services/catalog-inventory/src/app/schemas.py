@@ -73,9 +73,24 @@ class ProductOut(BaseModel):
     currency: str
     image_url: str | None
     tags: list[str] | None
+    media_urls: list[dict] | None
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class MediaUpload(BaseModel):
+    """Response for media upload."""
+    url: str
+    filename: str
+    uploaded_at: datetime
+    is_default: bool
+
+
+class MediaUploadBatch(BaseModel):
+    """Response for batch media upload."""
+    uploaded: list[MediaUpload]
+    total: int
 
 
 # ---- Variants ----

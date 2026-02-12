@@ -67,3 +67,19 @@ class DeliveryConfirmIn(OrmBaseModel):
 
 class StatusOut(OrmBaseModel):
     status: str
+
+
+class PaymentInitiateIn(OrmBaseModel):
+    phone_number: str = Field(alias="phoneNumber")
+    provider: Optional[str] = None
+    currency: str = "ZMW"
+
+
+class PaymentStatusOut(OrmBaseModel):
+    external_id: str
+    status: str
+    amount_minor: int
+    currency: str
+    provider: str
+    phone_number: str
+    meta: dict[str, Any] = Field(default_factory=dict)

@@ -1,0 +1,270 @@
+🧠 Core Architecture: Tree + Event Session Manager
+🔸 Purpose
+Maintain stateless services
+
+Persist session state, tree progression, and event history
+
+Enable dynamic bot behavior across public, MSME, affiliate, and staff modes
+
+🔸 Strategy (No backend yet)
+We can implement the bot layer now and keep it stable by treating ICE as the only contract boundary.
+
+- Bot-layer services MUST depend only on:
+  - Redis streams/lanes (`ingress:incoming`, `bot:lane:{bot_type}`, `reply:requests`, `outbound:requests`)
+  - Redis cache shapes (`cache:session:*`, `cache:order_draft:*` + `schema_version`, `hydrated_at`, `stale`)
+  - ICE bot-facing API contract (hydrate/reserve/confirm) and async streams (`ice:preload`, `ice:hydrated`, `oob:audit`)
+- Bot-layer services MUST NOT call future backend services directly.
+
+This makes it possible to build each service independently and implement ICE last to consolidate all integrations.
+
+🔸 Phased Implementation Plan (Independent Services → ICE Consolidation)
+
+Phase 1 — Define contracts (docs-first)
+- Freeze message schemas and stream names used by the bot layer.
+- Freeze ICE bot-facing endpoint shapes and error codes.
+
+Phase 2 — Implement bot layer services independently
+- Ingress: normalize + enrich + publish to `bot:lane:{bot_type}` and persist `ingress:resolved_payload`.
+- Default Bot + Custom Bot: consume lanes, run tree/handlers, emit `reply:requests`.
+- Intent: consume `intent:requests`, publish `intent:results`.
+- Reply: consume `reply:requests`, publish `outbound:requests`.
+- Outbound: consume `outbound:requests`, deliver to providers, emit `outbound:receipts`.
+
+During this phase, the bot layer can operate against a mocked/stubbed ICE contract (same request/response shapes), without any real backend.
+
+Phase 3 — Implement ICE last (consolidation point)
+- Implement ICE bot-facing endpoints/streams exactly as documented.
+- Start in “stub mode” (internal temporary store) to satisfy hydration/reserve/confirm.
+- Later add/replace backend adapters inside ICE when real backend services are ready, without changing bot-layer services.
+
+🧱 Layered Breakdown
+1. Bot Ingress Service
+Consumes: `ingress:incoming` Redis stream (normalized raw inbound)
+
+Validates: payload structure, sender ID, channel
+
+Resolves:
+
+Bot type: default (public/register) or custom (customer/staff)
+
+Mode: MSME, affiliate, staff
+
+Enriches:
+
+MSME/affiliate metadata
+
+Bot session details
+
+Tree state from event_session_manager
+
+Publishes (primary): to `bot:lane:{bot_type}`
+- Example lanes: `bot:lane:default`, `bot:lane:custom`
+Persists (audit/replay): to `ingress:resolved_payload`
+On failure: `ingress:dlq`
+
+2. Bot Intent Service
+Consumes: `intent:requests` (emitted by bot services only when intent_required=true)
+
+Validates: enriched payload
+
+Resolves Intent:
+
+Primary: Gemini
+
+Fallbacks: rule-based, last node context
+
+Publishes: to `intent:results` (correlate by `event_id`)
+
+3. Default Bot Service
+Consumes: `bot:lane:default`
+
+Validates: payload and intent
+
+Performs:
+
+Maps intent to tree node
+
+Activates subtree
+
+Updates current_node:{session_id}
+
+Stores tree in intent_tree:{session_id}
+
+Publishes: to `reply:requests`
+
+4. Custom Bot Service
+Consumes: `bot:lane:custom`
+
+Same as default, but scoped to MSME/staff logic
+
+Uses MSME-specific tree and handlers
+
+Publishes: to `reply:requests`
+
+5. Reply Service (single canonical service)
+Consumes: `reply:requests`
+
+Validates: reply payload
+
+Generates: Gemini-based reply
+
+Publishes: to `outbound:requests`
+
+6. Outbound / Delivery Service
+Consumes: `outbound:requests`
+Delivers: WhatsApp/SMS/HTTP via provider adapters
+Publishes: `outbound:receipts` and `outbound:dlq`
+
+======================================================================================================================================================================
+# ✅ Bot Architecture Guide (Draft)
+
+## 1. Ingress Service
+
+### Responsibilities
+- **Message Reception**  
+  - Listens for incoming messages (WhatsApp, SMS, Webchat).  
+  - Normalizes into a standard payload format while **preserving channel metadata**.  
+  - Example:
+  ```json
+  {
+    "bot_id": "msme_123",
+    "user_id": "cust_456",
+    "affiliate_id": "aff_789",
+    "channel": "whatsapp",
+    "message": "I want 3 books",
+    "timestamp": "2025-12-20T21:20:00Z",
+    "session_context": { ...cached data from ICE... }
+  }
+  ```
+
+- **Validation**  
+  - Confirms message validity.  
+  - Resolves bot instance + user identity.  
+  - Verifies JWT/session tokens.
+
+- **Session Resolution**  
+  - On first call, triggers ICE to preload MSME profile, customer context, and affiliate attribution.  
+  - ICE caches this data for downstream use.
+
+- **Payload Construction**  
+  - Builds a canonical enriched envelope.
+  - Publishes (primary) to `bot:lane:{bot_type}` for low-latency bot execution.
+  - Persists the same envelope to `ingress:resolved_payload` for audit/replay/analytics.
+
+- **Routing**  
+  - Chooses `bot_type` and publishes to the matching lane.
+  - Default lane: `bot:lane:default`
+  - Custom lane: `bot:lane:custom`
+
+- **Logging + Metrics**  
+  - Logs every message for audit.  
+  - Tracks latency, errors, and channel usage.
+
+---
+
+## 2. Custom Bot Service
+
+### Responsibilities
+- **Payload Reception**  
+  - Consumes canonical enriched envelopes from `bot:lane:custom`.  
+  - Validates structure and affiliate attribution.  
+  - Passes payload to Order Object Builder.
+
+- **Order Object Builder (OOB)**  
+  - Builds/updates Order Object from each message.  
+  - Detects missing fields and calls handlers.  
+  - Applies corrections (quantity, delivery, payment).  
+  - Maintains state in Redis.  
+  - Example schema:
+  ```json
+  {
+    "items": [{ "product_id": "123", "name": "Solar Panel A", "qty": 2 }],
+    "delivery": { "area": "Kitwe", "fee": 50 },
+    "payment": { "method": "mobile_money", "status": "pending" },
+    "contact": { "name": "James", "phone": "097xxxxxxx" },
+    "affiliate_context": { "affiliate_id": "aff_789", "msme_id": "biz_456" },
+    "metadata": { "session_id": "sess_abc123" }
+  }
+  ```
+
+- **Handlers**  
+  - `handle_items.py` → add/update/remove products.  
+  - `handle_delivery_area.py` → update delivery location.  
+  - `handle_payment_method.py` → update payment.  
+  - `handle_contact_info.py` → update name + phone.  
+  - `handle_corrections.py` → apply mid‑route changes.
+
+- **Reply Generator**  
+  - Produces confirmations, clarifications, and correction updates.  
+  - Publishes reply requests to `reply:requests`.
+
+- **Event Emitter**  
+  - Emits lifecycle events (`order_created`, `order_updated`, `order_confirmed`).  
+  - Logged via ICE.
+
+- **Integration with ICE**  
+  - Catalog lookup, stock validation.  
+  - Payment initiation/verification.  
+  - Notification dispatch.  
+  - Event logging + persistence.
+
+- **Logging + Metrics**  
+  - Logs every Order Object update.  
+  - Tracks handler usage and customer flow patterns.
+
+---
+
+## 3. Order Object Schema
+
+### Core Fields
+```json
+{
+  "items": [
+    { "product_id": "123", "name": "Solar Panel A", "quantity": 2, "price": 500 }
+  ],
+  "delivery": { "area": "Kitwe", "fee": 50, "status": "pending" },
+  "payment": { "method": "mobile_money", "status": "pending", "transaction_id": null },
+  "contact": { "name": "James Chisulo", "phone": "097xxxxxxx" },
+  "affiliate_context": { "affiliate_id": "aff_789", "msme_id": "biz_456" },
+  "metadata": { "session_id": "sess_abc123", "created_at": "...", "updated_at": "..." }
+}
+```
+
+### Schema Rules
+- **Items**: product list with ID, name, quantity, price.  
+- **Delivery**: area, fee, status.  
+- **Payment**: method, status, transaction ID.  
+- **Contact**: customer name + phone.  
+- **Affiliate Context**: attribution via JWT.  
+- **Metadata**: session ID, timestamps.
+
+### Update Logic
+- Every new message updates the Order Object.  
+- Handlers apply corrections.  
+- ICE ensures persistence + caching.  
+- Only `current_event` evolves downstream; metadata remains stable.
+
+---
+
+## 4. Reply Service (single) and Outbound Service
+
+Reply Service:
+- Consumes `reply:requests`.
+- Renders templates first; uses Gemini NLG only when needed.
+- Publishes channel-ready payloads to `outbound:requests`.
+
+Outbound / Delivery Service:
+- Consumes `outbound:requests`.
+- Sends via provider adapters.
+- Emits `outbound:receipts` for delivery tracking and `outbound:dlq` for failed sends.
+
+---
+
+# ✅ In Short
+- **Ingress Service** = front door + session resolver.  
+- **Custom Bot Service** = customer‑facing order engine.  
+- **Order Object Schema** = backbone of the system, ensuring consistency and resilience.  
+- **ICE** = abstraction + cache, shielding bot services from backend changes.  
+
+Flow summary:
+`ingress:incoming` → Ingress → `bot:lane:{bot_type}` (+ `ingress:resolved_payload`) → Bot Service → `reply:requests` → Reply Service → `outbound:requests` → Outbound → providers (+ `outbound:receipts`)

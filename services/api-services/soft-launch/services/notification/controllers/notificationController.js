@@ -1,8 +1,6 @@
 const crypto = require('crypto');
 
 const { loadDb, saveDb } = require('../storage/db');
-const { sendSMS } = require('../services/smsService');
-const { sendEmail } = require('../services/emailService');
 
 function _newId() {
   return `ntf_${crypto.randomBytes(12).toString('hex')}`;
@@ -34,62 +32,45 @@ async function sendNotification(req, res) {
     channel: normalizedChannel,
     template: template || null,
     payload: payload ?? null,
-    status: 'created',
+    status: 'pending',
     error_message: null,
+    retry_count: 0,
     created_at: createdAt,
-    sent_at: null
+    sent_at: null,
+    failed_at: null,
+    next_retry_at: null
   };
 
+  // Basic validation per channel
+  if (normalizedChannel === 'sms') {
+    const to = payload && payload.to ? payload.to : undefined;
+    const recipients = payload && Array.isArray(payload.recipients) ? payload.recipients : undefined;
+    const message = payload && payload.message ? payload.message : undefined;
+    
+    if (!message || (!to && (!recipients || !recipients.length))) {
+      return res.status(400).json({ detail: 'sms requires message and to/recipients' });
+    }
+  } else if (normalizedChannel === 'email') {
+    const to = payload && payload.to ? payload.to : undefined;
+    const subject = payload && payload.subject ? payload.subject : undefined;
+    const message = payload && payload.message ? payload.message : undefined;
+    const html = payload && payload.html ? payload.html : undefined;
+    
+    if (!to || !subject || (!message && !html)) {
+      return res.status(400).json({ detail: 'email requires to, subject, and message or html' });
+    }
+  } else if (!(normalizedChannel === 'in_app' || normalizedChannel === 'inapp')) {
+    return res.status(400).json({ detail: 'unsupported channel' });
+  }
+
+  // Persist to queue (no immediate send)
   const db = loadDb();
   db.notifications.push(record);
   saveDb(db);
 
-  try {
-    if (normalizedChannel === 'sms') {
-      const to = payload && payload.to ? payload.to : undefined;
-      const recipients = payload && Array.isArray(payload.recipients) ? payload.recipients : undefined;
-      const message = payload && payload.message ? payload.message : undefined;
-      await sendSMS({ to, recipients, message });
-    } else if (normalizedChannel === 'email') {
-      const to = payload && payload.to ? payload.to : undefined;
-      const subject = payload && payload.subject ? payload.subject : undefined;
-      const message = payload && payload.message ? payload.message : undefined;
-      const html = payload && payload.html ? payload.html : undefined;
-      if (!to || !subject || (!message && !html)) {
-        throw new Error('missing_email_payload');
-      }
-      await sendEmail({ to, subject, text: message, html });
-    } else if (normalizedChannel === 'in_app' || normalizedChannel === 'inapp') {
-      // Soft-launch: store as an in-app notification record only.
-      // Mark as sent immediately (no external delivery).
-    } else {
-      return res.status(400).json({ detail: 'unsupported channel' });
-    }
-
-    // update record status
-    const db2 = loadDb();
-    const idx = db2.notifications.findIndex((n) => n.id === id);
-    if (idx >= 0) {
-      db2.notifications[idx].status = 'sent';
-      db2.notifications[idx].sent_at = _nowIso();
-      saveDb(db2);
-      return res.status(201).json(db2.notifications[idx]);
-    }
-
-    return res.status(201).json({ ...record, status: 'sent', sent_at: _nowIso() });
-  } catch (err) {
-    const msg = err && err.message ? err.message : String(err);
-    const db2 = loadDb();
-    const idx = db2.notifications.findIndex((n) => n.id === id);
-    if (idx >= 0) {
-      db2.notifications[idx].status = 'failed';
-      db2.notifications[idx].error_message = msg;
-      saveDb(db2);
-      return res.status(201).json(db2.notifications[idx]);
-    }
-
-    return res.status(201).json({ ...record, status: 'failed', error_message: msg });
-  }
+  // Return immediately with pending status
+  // Background worker will process and send async
+  return res.status(201).json(record);
 }
 
 function getNotification(req, res) {

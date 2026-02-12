@@ -200,3 +200,86 @@ class PawaPayRefund(Base):
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class MSMEPayout(Base):
+    __tablename__ = "msme_payouts"
+    __table_args__ = (UniqueConstraint("payout_id", name="uq_msme_payout_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    payout_id: Mapped[str] = mapped_column(String(64), index=True)
+    order_id: Mapped[str] = mapped_column(String(64), index=True)
+    business_id: Mapped[str] = mapped_column(String(64), index=True)
+
+    msme_phone: Mapped[str] = mapped_column(String(20))
+    provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    currency: Mapped[str] = mapped_column(String(8), default="ZMW")
+    amount_minor: Mapped[int] = mapped_column(Integer)  # Amount paid to MSME
+    platform_fee_minor: Mapped[int] = mapped_column(Integer, default=0)  # Fee retained by platform
+
+    status: Mapped[str] = mapped_column(String(32), default="PENDING")  # PENDING, PROCESSING, COMPLETED, FAILED
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(String(256), nullable=True)
+
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    initiated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MSMEPayoutRecord(Base):
+    __tablename__ = "msme_payout_records"
+    __table_args__ = (UniqueConstraint("order_id", name="uq_msme_payout_order"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    order_id: Mapped[str] = mapped_column(String(64), index=True)
+    business_id: Mapped[str] = mapped_column(String(64), index=True)
+    payout_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    currency: Mapped[str] = mapped_column(String(8), default="ZMW")
+    order_amount_minor: Mapped[int] = mapped_column(Integer)  # Full order amount
+    platform_fee_minor: Mapped[int] = mapped_column(Integer)  # Platform fee (retained)
+    msme_payout_minor: Mapped[int] = mapped_column(Integer)  # Amount sent to MSME
+
+    status: Mapped[str] = mapped_column(String(32), default="pending")  # pending|processing|completed|failed
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    initiated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AffiliatePayoutRecord(Base):
+    """Record of affiliate payout initiated by affiliate-engine."""
+    
+    __tablename__ = "affiliate_payout_records"
+    __table_args__ = (
+        UniqueConstraint("payout_id", name="uq_affiliate_payout_id"),
+        UniqueConstraint("batch_id", "affiliate_id", name="uq_affiliate_payout_batch_aff"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    
+    payout_id: Mapped[str] = mapped_column(String(36), unique=True)  # Unique payout ID
+    batch_id: Mapped[str] = mapped_column(String(36))  # Batch this payout belongs to
+    epoch_id: Mapped[str] = mapped_column(String(36), index=True)
+    affiliate_id: Mapped[str] = mapped_column(String(36), index=True)
+    
+    # Amount
+    amount_minor: Mapped[int] = mapped_column(Integer)  # Amount in minor units (cents)
+    currency: Mapped[str] = mapped_column(String(8), default="ZMW")
+    
+    # Status
+    status: Mapped[str] = mapped_column(String(50), default="PENDING")  # PENDING|COMPLETED|FAILED
+    failure_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    
+    # Metadata
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    
+    # Timestamps
+    initiated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

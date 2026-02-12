@@ -1,0 +1,157 @@
+Absolutely, James. Here's a full simulation of the **inbound and outbound payloads** for each of the three core services in your bot architecture:
+
+- **Ingress Service**
+- **Intent Service**
+- **Bot Service** (Default or Custom—same structure, different trees/handlers)
+
+Each service receives a payload, enriches or transforms it, and publishes a new version downstream. Only the `current_event` block evolves; all other metadata remains stable.
+
+---
+
+## 1️⃣ Ingress Service
+
+### 📥 Inbound Payload (from channel)
+```json
+{
+  "request_id": "req_00123",
+  "to": "ntb_default",
+  "from": "097xxxxxxx",
+  "message": "I want to buy a solar panel",
+  "meta": {
+    "platform": "wa"
+  }
+}
+```
+
+### 📤 Outbound Payload (to resolved_payload queue)
+```json
+{
+  "request_id": "req_00123",
+  "message": "I want to buy a solar panel",
+  "to": "ntb_default",
+  "from": "097xxxxxxx",
+  "meta": {
+    "platform": "wa",
+    "bot": {
+      "bot_id": "ntb_default",
+      "is_default": true,
+      "business": {
+        "business_id": "biz_456",
+        "name": "SolarTech Zambia"
+      },
+      "bot_owner": {
+        "user_id": "usr_789",
+        "name": "Mukanzu Royd",
+        "role": "owner"
+      }
+    },
+    "user": {
+      "user_id": "usr_123",
+      "name": "James Chisulo",
+      "role": "public",
+      "phone": "097xxxxxxx"
+    },
+    "session": {
+      "session_id": "sess_abc123",
+      "session_mode": "public",
+      "bot_type": "default",
+      "current_node": "browse_catalogue",
+      "platform": "wa"
+    },
+    "previous_events": [
+      { "event_id": "evt_001", "message": "Hi", "node": "start" },
+      { "event_id": "evt_002", "message": "Show me products", "node": "serve_categories" }
+    ],
+    "current_event": {
+      "event_id": "evt_003",
+      "timestamp": "2025-10-22T18:02:00Z",
+      "status": "pending",
+      "current_node": "browse_catalogue",
+      "possible_next_nodes": {
+        "select_category": "serve_products",
+        "view_cart": "inspect_cart_item"
+      }
+    }
+  }
+}
+```
+
+---
+
+## 2️⃣ Intent Service
+
+### 📥 Inbound Payload (from resolved_payload queue)
+Same as Ingress outbound payload.
+
+### 📤 Outbound Payload (to default_queue or custom_queue)
+```json
+{
+  ...,
+  "meta": {
+    ...,
+    "current_event": {
+      "event_id": "evt_003",
+      "timestamp": "2025-10-22T18:02:00Z",
+      "status": "pending",
+      "current_node": "browse_catalogue",
+      "possible_next_nodes": {
+        "select_category": "serve_products",
+        "view_cart": "inspect_cart_item"
+      },
+      "intent": "select_category",
+      "next_node": "serve_products",
+      "intent_confidence": 0.92
+    }
+  }
+}
+```
+
+---
+
+## 3️⃣ Bot Service (Default or Custom)
+
+### 📥 Inbound Payload (from default_queue or custom_queue)
+Same as Intent outbound payload.
+
+### 📤 Outbound Payload (to reply_queue)
+```json
+{
+  ...,
+  "meta": {
+    ...,
+    "current_event": {
+      "event_id": "evt_003",
+      "timestamp": "2025-10-22T18:02:00Z",
+      "status": "pending",
+      "current_node": "serve_products",
+      "possible_next_nodes": {
+        "select_category": "serve_products",
+        "view_cart": "inspect_cart_item"
+      },
+      "intent": "select_category",
+      "next_node": "serve_products",
+      "intent_confidence": 0.92,
+      "node_executed": "serve_products",
+      "action_status": "success",
+      "tree_state": {
+        "selected_category": "Solar",
+        "product_list": ["Solar Panel A", "Solar Panel B"]
+      }
+    }
+  }
+}
+```
+
+---
+
+## 🧠 Summary
+
+| Service        | Inbound Source         | Outbound Target         | Enrichment Focus |
+|----------------|------------------------|--------------------------|------------------|
+| Ingress        | Channel (wa/sms/web)   | `resolved_payload` queue | Full metadata + current_event stub |
+| Intent         | `resolved_payload`     | `default_queue` / `custom_queue` | `intent`, `next_node`, `confidence` |
+| Bot (Default/Custom) | `default_queue` / `custom_queue` | `reply_queue` | `node_executed`, `tree_state`, `action_status` |
+
+---
+
+Would you like to now simulate how the Reply Service consumes this and generates the final outbound message, or define the schema for `tree_state` per node type?

@@ -1,7 +1,7 @@
 import uuid
 import enum
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, Enum, Text, UniqueConstraint, Index, JSON
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, Enum, Text, UniqueConstraint, Index, JSON, CheckConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from .db import Base
@@ -116,20 +116,25 @@ class Event(Base):
 
 class SessionStateCycle(Base):
     __tablename__ = "session_state_cycles"
+    __table_args__ = (
+        CheckConstraint(
+            "(initiated_by_affiliate AND affiliate_id IS NOT NULL) OR (NOT initiated_by_affiliate AND affiliate_id IS NULL)",
+            name="chk_session_state_cycles_affiliate_id",
+        ),
+    )
 
     id = Column(String, primary_key=True, default=gen_uuid)
     # Records one lifecycle 'cycle' for a session (e.g. chat -> cart -> order).
     # Fields:
-    # - `cycle_type`: the `SessionState` this cycle represents
+    # - `cycle_state`: the `SessionState` this cycle represents
     # - `started_at` / `completed_at`: timestamps for the cycle
     # - `initiated_by_affiliate` + `affiliate_*` / `meta`: attribution captured
     #   when the cycle was started (copied forward when transitions occur).
     session_id = Column(String, ForeignKey("sessions.id"), nullable=False)
-    cycle_type = Column(Enum(SessionState), nullable=False)
+    cycle_state = Column(Enum(SessionState), nullable=False, default=SessionState.chat)
     started_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
-    initiated_by_affiliate = Column(Boolean, default=False, nullable=False)
-    affiliate_code = Column(String, nullable=True)
+    initiated_by_affiliate = Column(Boolean, default=True, nullable=False)
     affiliate_id = Column(String, nullable=True)
     meta = Column(JSON().with_variant(JSONB, "postgresql"), nullable=True)
 

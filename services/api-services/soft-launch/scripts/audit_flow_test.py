@@ -1,72 +1,143 @@
-import time
-import uuid
-
+"""Comprehensive audit test - all catalog-inventory operations"""
 import httpx
+import uuid
+import time
+import subprocess
 
+def run_sql(query):
+    """Execute SQL and return result."""
+    result = subprocess.run([
+        "docker", "exec", "soft-launch-postgres-1",
+        "psql", "-U", "postgres", "-d", "ntheemba", "-c", query
+    ], capture_output=True, text=True)
+    return result.stdout
 
-def main() -> None:
-    base = "http://localhost:8500"
+# Setup
+username = f"audit_full_test_{uuid.uuid4().hex[:8]}"
+email = f"{username}@example.com"
 
-    suffix = uuid.uuid4().hex[:8]
-    user = {
-        "username": f"testowner_{suffix}",
-        "email": f"owner_{suffix}@test.com",
-        "phone": f"+260999{suffix[:6]}",
-        "password": "Test123!",
-    }
+print("="*70)
+print("COMPREHENSIVE AUDIT EVENT TEST - Catalog-Inventory Service")
+print("="*70)
 
-    r = httpx.post(f"{base}/auth/register", json=user, timeout=15)
-    print("register", r.status_code)
-    r.raise_for_status()
-    user_id = r.json()["id"]
+# Register and login
+print("\n1. Setting up test user...")
+reg_resp = httpx.post("http://localhost:8500/auth/register", json={
+    "username": username,
+    "email": email,
+    "password": "Test@12345",
+    "phone": "+260970000001",
+}, timeout=30)
+reg_resp.raise_for_status()
 
-    biz = {
-        "name": f"Test MSME {suffix}",
-        "owner_user_id": user_id,
-        "location": "Lusaka",
-        "category": "retail",
-        "subscription_plan": "free",
-    }
-    r = httpx.post(f"{base}/business/register", json=biz, timeout=15)
-    print("business_register", r.status_code)
-    r.raise_for_status()
+login_resp = httpx.post("http://localhost:8500/auth/login", json={
+    "identifier": username,
+    "password": "Test@12345",
+}, timeout=30)
+login_resp.raise_for_status()
+token = login_resp.json()["access_token"]
+headers = {"Authorization": f"Bearer {token}"}
+business_id = "5181949d-729e-4d2c-8827-5fe6265f3052"
+print(f"   ✓ Test user ready: {email}")
 
-    obj = r.json()
-    business_id = obj["business"]["id"]
-    print("business_id", business_id)
+# Test 1: Category creation
+print("\n2. Testing CATEGORY_CREATED audit event...")
+cat_resp = httpx.post("http://localhost:8520/catalog/category", headers=headers, json={
+    "business_id": business_id,
+    "name": f"Audit Test Cat {int(time.time())}",
+    "description": "Testing category audit"
+}, timeout=30)
+cat_resp.raise_for_status()
+category_id = cat_resp.json()["id"]
+print(f"   ✓ Category created: {category_id}")
+time.sleep(1)
 
-    login = {"identifier": user["email"], "password": user["password"]}
-    r = httpx.post(f"{base}/auth/login", json=login, timeout=15)
-    print("login", r.status_code)
-    r.raise_for_status()
-    token = r.json()["access_token"]
+# Test 2: Product creation
+print("\n3. Testing PRODUCT_CREATED audit event...")
+prod_resp = httpx.post("http://localhost:8520/catalog/product", headers=headers, json={
+    "business_id": business_id,
+    "category_id": category_id,
+    "name": f"Audit Test Product {int(time.time())}",
+    "description": "Testing product audit",
+    "price": 10000,
+    "tags": ["test", "audit"]
+}, timeout=30)
+prod_resp.raise_for_status()
+product_id = prod_resp.json()["id"]
+print(f"   ✓ Product created: {product_id}")
+time.sleep(1)
 
-    sub = {
-        "plan": "paid",
-        "amount_minor": 1000,
-        "phone_number": user["phone"],
-        "provider": "pawa",
-        "currency": "ZMW",
-    }
+# Test 3: Variant creation
+print("\n4. Testing VARIANT_CREATED audit event...")
+variant_resp = httpx.post(f"http://localhost:8520/catalog/product/{product_id}/variant", headers=headers, json={
+    "sku": f"AUDIT-SKU-{uuid.uuid4().hex[:8].upper()}",
+    "name": "Standard",
+    "price_override": 10000
+}, timeout=30)
+variant_resp.raise_for_status()
+variant_id = variant_resp.json()["id"]
+print(f"   ✓ Variant created: {variant_id}")
+time.sleep(1)
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "X-Correlation-Id": f"audit-test-{suffix}",
-    }
+# Test 4: Inventory update
+print("\n5. Testing INVENTORY_UPDATED audit event...")
+inv_resp = httpx.post("http://localhost:8520/inventory/update", headers=headers, json={
+    "variant_id": variant_id,
+    "delta": 50,
+    "reason": "Testing inventory audit"
+}, timeout=30)
+inv_resp.raise_for_status()
+print(f"   ✓ Inventory updated")
+time.sleep(2)
 
-    r = httpx.post(
-        f"{base}/business/{business_id}/subscribe_and_pay",
-        json=sub,
-        headers=headers,
-        timeout=15,
-    )
-    print("subscribe_and_pay", r.status_code)
-    print(r.text)
+# Verify all audit events
+print("\n" + "="*70)
+print("AUDIT EVENT VERIFICATION")
+print("="*70)
 
-    # Give async audit emits a moment
-    time.sleep(1.5)
-    print("done")
+query = """
+SELECT 
+    event_type,
+    payload->>'category_id' as category_id,
+    payload->>'product_id' as product_id,
+    payload->>'variant_id' as variant_id,
+    created_at
+FROM audit_service.audit_logs 
+WHERE service = 'catalog-inventory' 
+  AND event_type IN ('category_created', 'product_created', 'variant_created', 'inventory_updated')
+ORDER BY created_at DESC 
+LIMIT 10;
+"""
 
+print("\nRecent catalog-inventory audit events:")
+print(run_sql(query))
 
-if __name__ == "__main__":
-    main()
+# Summary count by event type
+print("\nEvent type summary (last 5 minutes):")
+summary_query = """
+SELECT 
+    event_type, 
+    COUNT(*) as count
+FROM audit_service.audit_logs 
+WHERE service = 'catalog-inventory' 
+  AND created_at > NOW() - INTERVAL '5 minutes'
+GROUP BY event_type
+ORDER BY count DESC;
+"""
+print(run_sql(summary_query))
+
+print("\n" + "="*70)
+print("✅ COMPREHENSIVE AUDIT TEST COMPLETE!")
+print("="*70)
+print(f"""
+Test Results:
+  - Category ID:  {category_id}
+  - Product ID:   {product_id}
+  - Variant ID:   {variant_id}
+  
+All 4 audit event types should be visible above:
+  ✓ category_created
+  ✓ product_created
+  ✓ variant_created
+  ✓ inventory_updated
+""")

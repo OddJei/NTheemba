@@ -37,6 +37,8 @@ class CartItemOut(BaseModel):
     id: str
     cart_id: str
     variant_id: str
+    product_name: str | None = None
+    media_url: str | None = None
     quantity: int
     reserved_quantity: int
     unit_price: float

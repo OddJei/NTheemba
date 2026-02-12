@@ -16,6 +16,10 @@ Use these ports for local development (override via each service's `PORT` / `*_B
 | Notification | 8570 | http://127.0.0.1:8570 |
 | Payment + Revenue | 8590 | http://127.0.0.1:8590 |
 
+## Common flow walkthrough
+
+- Register user → register business → subscribe & pay: `docs/register-business-subscribe-pay.md`
+
 ## Folder layout
 
 - `api-services/soft-launch/services/*` — service stubs with `design/` and `src/` placeholders.

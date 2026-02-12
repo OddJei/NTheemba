@@ -1,0 +1,303 @@
+Public Mode: Three‑Turn Payload Journey (End‑to‑End)
+
+Context
+- Channel: WhatsApp (platform = "wa")
+- Queues/Streams (split by bot_type at Ingress):
+  - default lane: incoming_messages → resolved_payload_default → default_queue → reply_default_queue → outbound
+  - custom lane:  incoming_messages → resolved_payload_custom  → custom_queue  → reply_custom_queue  → outbound
+- Redis keys (examples):
+  - session:{session_id}
+  - intent_tree:{session_id}
+  - node_state:{session_id}
+
+Actors
+- Bot Ingress Service: validates and enriches the raw inbound payload
+- Bot Intent Service: resolves intent, entities, next_node via Gemini
+- Default Bot Service: selects node, runs handler, updates tree/session
+- Bot Reply Service: generates final user‑facing reply and publishes outbound
+
+Conventions
+- ISO timestamps (UTC). Example: 2025-10-29T12:00:00Z
+- Idempotency: request_id is unique per inbound message and is the idempotency key; services must be replay‑safe
+- Confidence threshold: MIN_INTENT_CONF = 0.70
+- Session timeout: 30 minutes (1800s)
+ - session_mode values:
+   - default bot: public (no roles) or registered (roles include msme/affiliate)
+   - custom bot: staff (roles include staff) or customer (anyone else)
+ - Single-session policy: exactly one session per (user_phone, bot_id, platform); toggle status active/inactive instead of creating multiples; no concurrent sessions
+ - Capabilities in ingress:
+   - session_event.ingress.capabilities = channel message features present in this event (e.g., ["text","image"]) 
+   - session_event.ingress.allowed_actions = allowed user actions from Capability & Mode Service for the current session_mode
+
+---
+Turn 1 — First message (fresh session, greeting to browse)
+1) Inbound → incoming_messages
+- Example inbound (from channel adapter):
+  {
+    "request_id": "req_0001",
+    "message": "Hi, what can I do here?",
+    "to": "ntb_default",
+    "from": "097xxxxxxx",
+    "timestamp": "2025-10-29T12:00:00Z",
+    "meta": { "platform": "wa"/"sms" }
+  }
+
+2) Bot Ingress Service (consume incoming_messages)
+- Validate envelope (hard fail if missing): request_id, event_id, message (or attachments), to, from, timestamp, meta.platform ∈ {"wa","sms"}
+- Idempotency: if request_id already processed, skip side effects and optionally ack
+
+- Resolve bot (Bot Session Service)
+  - Input: payload.to (bot phone)
+  - GET /bot/by-phone/{to}
+    - If phone == platform default (e.g., 260952675580), treat as default bot
+    - If found and active: bot_type ∈ {default, custom}, return bot_details, business_details, owner_details
+    - If not found and creation is allowed: POST /bot/create then return details; otherwise return error
+  - Enrich: meta.bot = { bot_details, business_details, owner_details }
+
+- Resolve user and session_mode (Auth Service)
+  - Determine lookup strategy by bot type
+    - If bot_type == "custom":
+      - Extract business_id from meta.bot.business_details.id
+      - Lookup user by (business_id, payload.from)
+        - Example: GET /auth/users/lookup?phone={from}&business_id={business_id}
+      - If user found and roles include "staff" → session_mode = staff
+      - Else → session_mode = customer
+      - Enrich meta.user with: { id, phone, roles, authenticated: user_found, business_id, locale }
+    - If bot_type == "default":
+      - Lookup user by payload.from only
+        - Example: GET /auth/users/lookup?phone={from}
+      - If user found and roles intersect { "msme", "affiliate" } → session_mode = registered
+      - Else → session_mode = public
+      - Enrich meta.user with: { id?, phone, roles or ["public"], authenticated: user_found, locale }
+
+- Resolve capabilities for session_mode (Capability & Mode Service)
+  - Map session_mode → capability-mode name:
+    - public → "public"
+    - registered → "registered_user"
+    - customer → "customer"
+    - staff → "staff_only"
+  - Fetch capabilities by mode name (preferred):
+    - GET /capabilities/by-mode-name/{name} → { mode: { id, name, requires_auth, description }, capabilities: [{ action, target }] }
+  - Enrich ingress:
+    - meta.session_event.ingress.allowed_actions = map(capabilities[].action)
+    - meta.session_event.ingress.mode = session_mode
+    - meta.session_event.ingress.mode_id = response.mode.id
+
+- Resolve or activate user session (User-Bot Session Service)
+  - Uniqueness key: (user_phone = from, bot_id, platform = meta.platform)
+  - If a session exists:
+    - If status == inactive OR inactivity > 1800s: set status = active; preserve started_at; update last_active_at = now; reactivated = true
+    - Else: reuse as-is; reactivated = false
+    - Always reuse the same session_id (no new record)
+  - If no session exists: create session with status = active; set started_at and last_active_at; reactivated = false
+  - Return: { session_id, status: "active", started_at, last_active_at, last_event_id, reactivated }
+  - Fetch previous events by last_event_id (bounded: last 20 or 24h)
+
+- Normalize text & enrich ingress
+  - meta.session_event.ingress = {
+      normalized_text: "hi, what can i do here?",
+      attachments: [],
+      capabilities: ["text"],
+      received_at: "2025-10-29T12:00:00Z",
+      user_session: { session_id, started_at, last_active_at },
+      previous_events_count: 0
+    }
+  - meta.previous_events = [] (top-level, not duplicated in ingress)
+
+- Persist and publish
+  - Write session envelope to Redis: session:{session_id}; init intent_tree:{session_id}
+  - Publish enriched payload to resolved_payload_default (for default bot_type) or resolved_payload_custom (for custom)
+
+- Enriched payload (diff focus):
+  meta: {
+    platform: "wa",
+    bot: {
+        bot_details:{},
+        business_details:{},
+        owner_details:{}
+    },
+  user: { user_id: "usr_abc", phone: "097xxxxxxx", roles: ["public"], authenticated: false, locale: "en-ZM" },
+    session: {
+      session_id: "sess_abc123",
+      session_mode: "public",
+      bot_type: "default",
+      current_node: null,
+      started_at: "2025-10-29T12:00:00Z",
+      last_active_at: "2025-10-29T12:00:00Z",
+      reset_requested: false
+    },
+    previous_events: [],
+    session_event: {
+      event_id: "evt_0001",
+      started_at: "2025-10-29T12:00:00Z",
+      ingress: {
+        normalized_text: "hi, what can i do here?",
+        attachments: [],
+        capabilities: ["text"],
+        allowed_actions: ["browse_products","place_orders","track_orders"],
+        mode: "public",
+        mode_id: "mode_public",
+        received_at: "2025-10-29T12:00:00Z",
+        user_session: { session_id: "sess_abc123", started_at: "2025-10-29T12:00:00Z", last_active_at: "2025-10-29T12:00:00Z" },
+        previous_events_count: 0
+      }
+    }
+  }
+
+3) Intent Default Service (consume resolved_payload_default)
+- Calls Gemini; result → intent: "greeting" (0.94), entities: {}
+- Optionally suggests next_node: "welcome"
+- Publishes to default_queue (bot_type=default)
+
+  session_event.intent: {
+    intent: "greeting",
+    confidence: 0.94,
+    entities: {},
+    next_node: "welcome",
+    language: "en",
+    model: "gemini-1.5-pro"
+  }
+
+4) Default Bot Service (consume default_queue)
+- Lifecycle check: new session (no current_node) → root context
+- Guardrails: confidence >= 0.70; next_node allowed; if not, choose default greeting node
+- Node selection: selected_node = "welcome"
+ - Handler actions: produce welcome text + short menu (greeting/help/registration/browse_catalogue), filtered by session_event.ingress.allowed_actions
+- Update tree state: intent_tree:{session_id} current_node = "welcome"
+- Publish to reply_queue
+
+  session_event.handler: {
+    selected_node: "welcome",
+    tree: "public",
+    validation_errors: [],
+    transitions: ["welcome -> choose_next_intent"],
+    has_more: false,
+    next_offset: null
+  }
+
+5) Reply Default Service (consume reply_default_queue)
+- Builds reply (text template), ensures channel formatting
+- Publishes outbound (WhatsApp)
+
+  session_event.reply: {
+    reply_type: "text",
+    text: "Welcome to NTheemba 👋. You can register, browse the catalogue, or place an order. What would you like to do?",
+    media: [],
+    buttons: ["Register", "Browse", "Order"],
+    channel_overrides: {}
+  }
+
+---
+Turn 2 — User chooses to browse catalogue
+1) Inbound → incoming_messages
+  message: "Show me categories"
+  event_id: "evt_0002"; timestamp: 12:01:00Z
+
+2) Bot Ingress → resolved_payload_default
+- Validates; same session_id; updates last_active_at
+- Appends minimal item to previous_events
+- Enriches ingress.normalized_text
+
+3) Bot Intent Service
+- Gemini resolves intent: "browse_catalogue" (0.91); next_node: "serve_categories"
+- Publishes to default_queue
+
+4) Default Bot Service
+- Lifecycle: session active; current_node="welcome" (from Turn 1)
+- Guardrails: next_node reachable; confidence OK
+- Node selection: selected_node = "serve_categories"
+- Handler:
+  - Calls Catalog API (dev base URL http://127.0.0.1:9101)
+    - Endpoint: /categories/all (dev) OR /categories?limit=10&offset=0
+  - Normalizes response; may cache 300s
+  - Prepares a list of top categories
+- Update tree state: intent_tree current_node = "serve_categories"
+- Publish to reply_queue
+
+  session_event.handler: {
+    selected_node: "serve_categories",
+    tree: "public",
+    validation_errors: [],
+    transitions: ["serve_categories -> select_category"],
+    has_more: false,
+    next_offset: null
+  }
+
+5) Reply Default Service
+- Reply with categories list and selection hints
+
+  session_event.reply: {
+    reply_type: "text",
+    text: "Here are our categories: 1) Solar 2) Accessories 3) Lighting… Reply with a number to pick.",
+    media: [],
+    buttons: ["1", "2", "3"],
+    channel_overrides: {}
+  }
+
+---
+Turn 3 — User selects a category (e.g., "1")
+1) Inbound → incoming_messages
+  message: "1"
+  event_id: "evt_0003"; timestamp: 12:02:00Z
+
+2) Bot Ingress → resolved_payload_default
+- Validates; session active; updates last_active_at
+- Adds previous_event entry for Turn 2
+- Normalizes text -> "1"
+
+3) Bot Intent Service
+- Interprets intent: "browse_catalogue" (continue) + entity category_index=1
+- Suggests next_node: "select_category"
+- Publishes to default_queue
+
+4) Default Bot Service
+- Lifecycle: still active; current_node = "serve_categories"
+- Guardrails: next_node reachable; confidence OK
+- Node selection: selected_node = "select_category"
+- Handler:
+  - Interprets index; resolve category_id for index 1
+  - Writes selection into node_state:{session_id}
+  - Transition candidate: "serve_products"
+- Update tree state: intent_tree current_node = "select_category"
+- Publish to reply_queue
+
+  session_event.handler: {
+    selected_node: "select_category",
+    tree: "public",
+    validation_errors: [],
+    transitions: ["select_category -> serve_products"],
+    has_more: false,
+    next_offset: null
+  }
+
+5) Bot Reply Service
+- Replies confirming selection and prompting next step
+
+  session_event.reply: {
+    reply_type: "text",
+    text: "You selected: Solar. Would you like to view products? (Yes/No)",
+    media: [],
+    buttons: ["Yes", "No"],
+    channel_overrides: {}
+  }
+
+---
+Cross‑cutting guardrails & behaviors
+- Root detection:
+  - If reset_requested or inactivity > 1800s → treat as new; root entry (greeting/help/registration/browse_catalogue/order)
+  - If current_node is null and confidence low → greet/help
+- Reachability:
+  - Only accept next_node if reachable from current_node in the IntentTree; else default/fallback
+- Idempotency:
+  - Duplicate request_id → skip side effects (e.g., don’t re‑add to cart)
+- Validation:
+  - Missing required context → ask clarifying question and avoid advancing node
+- Pagination:
+  - limit ∈ [1, 50], default 10; offset ≥ 0; reset stale offsets
+ - Sessions:
+   - Enforce single session per (user_phone, bot_id, platform); reactivate existing session_id (status=active) rather than creating a new one; allow explicit deactivation on logout/reset
+- Telemetry:
+  - Record received_at, resolved_at, handled_at, replied_at; track latencies and errors;
+  - Log chosen transitions and selected_node for audit/replay
+
+End of three‑turn journey.

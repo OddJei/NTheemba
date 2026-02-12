@@ -196,3 +196,31 @@ class IdempotencyRecord(Base):
     response_json: Mapped[dict] = mapped_column(SqliteJson)
 
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PaymentInitiation(Base):
+    __tablename__ = "payment_initiations"
+    __table_args__ = (Index("ix_payment_initiations_business", "business_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    deposit_id: Mapped[str] = mapped_column(String(200), index=True)
+    business_id: Mapped[str] = mapped_column(String(36), index=True)
+    subscription_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    affiliate_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    metadata: Mapped[dict | None] = mapped_column(SqliteJson, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OutboxEvent(Base):
+    __tablename__ = "outbox_events"
+    __table_args__ = (Index("ix_outbox_event_type", "event_type"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    event_type: Mapped[str] = mapped_column(String(100), index=True)
+    payload: Mapped[dict | None] = mapped_column(SqliteJson, nullable=True)
+    target: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    scheduled_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

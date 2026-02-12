@@ -24,4 +24,5 @@ class OrderCreatedEvent(BaseModel):
     user_id: Optional[str] = None
 
     affiliate_code: Optional[str] = None
+    affiliate_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None

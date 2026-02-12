@@ -1,0 +1,31 @@
+registration
+├── start_registration
+│   └── explain_registration_benefits
+│   └── choose_user_type
+│       ├── affiliate_flow
+│       │   ├── submit_name
+│       │   ├── submit_phone_number
+│       │   ├── confirm_details
+│       │   ├── validate_user
+│       │   └── create_account
+│       │       └── registration_success
+│       └── msme_flow
+│           ├── submit_name
+│           ├── submit_phone_number
+│           ├── confirm_details
+│           ├── collect_business_info
+│           │   ├── submit_business_name
+│           │   ├── submit_business_type
+│           │   ├── submit_location
+│           │   └── submit_establishment_year
+│           ├── select_subscription_plan
+│           ├── select_payment_method
+│           │   ├── choose_zamtel_money
+│           │   ├── choose_mtn_money
+│           │   └── choose_airtel_money
+│           ├── trigger_subscription_payment
+│           │   ├── initiate_mobile_money_transaction
+│           │   └── verify_payment_status
+│           ├── validate_user
+│           └── create_account
+│               └── registration_success

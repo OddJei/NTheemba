@@ -1,0 +1,44 @@
+# TEST DATA IDs - For ICE E2E Tests
+# Generated: 2026-02-05
+# Database: ntheemba (localhost:5432)
+
+=== MSME BUSINESSES ===
+# Use these business IDs for testing MSME bot flows
+ID: 942a458c-da6d-473c-85b3-2c1cdebed0a2, Name: Acme Traders, Code: ACME2026
+ID: 343217d3-f153-4cb9-b920-ca31bd357bbb, Name: Test MSME One, Code: string
+
+=== AFFILIATES ===
+# No active affiliates found in affiliate_engine schema
+
+=== USERS ===
+# Use these user IDs and phone numbers for testing
+ID: 5ab15423-9a92-4ed7-9cb7-468c902cbc51, Username: acme_owner_01, Phone: +260971000001, Business: 942a458c-da6d-473c-85b3-2c1cdebed0a2
+ID: 6772b128-3df3-4614-bc72-02db872e9ed7, Username: test_owner_01, Phone: string, Business: 343217d3-f153-4cb9-b920-ca31bd357bbb
+ID: d0bef0dd-7e48-4276-a3d9-99c5b61d1446, Username: test_affiliate_01, Phone: 260971000201, Business: None
+
+=== CATALOG PRODUCTS ===
+# No products found in catalog_inventory schema (tables not yet populated)
+
+=== RECOMMENDED TEST VALUES ===
+# Use these in your E2E tests (tests/integration/test_e2e_flows.py)
+
+Primary Test Business: 942a458c-da6d-473c-85b3-2c1cdebed0a2 (Acme Traders)
+Primary Test User: 5ab15423-9a92-4ed7-9cb7-468c902cbc51 (acme_owner_01)
+Primary Test Phone: +260971000001
+Business Code: ACME2026
+
+Secondary Test Business: 343217d3-f153-4cb9-b920-ca31bd357bbb (Test MSME One)
+Secondary Test User: 6772b128-3df3-4614-bc72-02db872e9ed7 (test_owner_01)
+
+
+=== NEWLY ADDED PRODUCTS ===
+ID: 3a7a62c9-af8b-46e8-896d-fdeb522fea95, Name: Maize Flour 25kg, SKU: ACME-001, Price: 250.0
+ID: 611e468e-f387-45cb-8e94-e799bf060fab, Name: Rice 10kg, SKU: ACME-002, Price: 180.0
+ID: a14987f0-e65d-48b3-a12f-531c602777df, Name: Cooking Oil 5L, SKU: ACME-003, Price: 120.0
+ID: 4d8b1b0a-7645-4498-814d-6cab18ad06b9, Name: Sugar 2kg, SKU: ACME-004, Price: 45.0
+ID: 7046bfd3-2999-41c1-bec7-9225094ec5a7, Name: Salt 1kg, SKU: ACME-005, Price: 15.0
+
+=== NEWLY ADDED AFFILIATES ===
+ID: 9b3800d5-ff53-4446-8e26-64ae143a2510, Name: John Banda, Code: AFF-JB001, Phone: +260971000301
+ID: 6b78ab0e-268d-43c7-9ae4-589ce682096d, Name: Mary Phiri, Code: AFF-MP002, Phone: +260971000302
+ID: 1fcccdca-beb0-4508-ad73-4f60a1e652d4, Name: David Mwale, Code: AFF-DM003, Phone: +260971000303

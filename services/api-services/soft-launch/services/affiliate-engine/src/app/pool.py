@@ -12,7 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.models import (
     AffiliateTier,
     AffiliateTierAssignment,
+    AffiliateTierSetting,
     AffiliateEvent,
+    AffiliateMetricSnapshot,
     CommissionSettings,
     PoolAllocation,
     PoolEpoch,
@@ -31,6 +33,7 @@ class AffiliateMetrics:
     clicks: int
     attributions: int
     paid_attributions: int
+    session_cycles: int
 
     tier_name: Optional[str]
     tier_multiplier: float
@@ -40,7 +43,7 @@ _DEFAULT_OP_WEIGHTS: Dict[str, float] = {
     "sales_volume": 0.5,
     "unique_buyers": 0.2,
     "msme_referrals": 0.2,
-    "conversion_quality": 0.1,
+    "session_cycles": 0.1,
 }
 
 
@@ -77,56 +80,70 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
-def _tier_thresholds() -> dict[str, dict[str, float]]:
-    """Per-tier qualification thresholds.
+async def _tier_thresholds(db: AsyncSession) -> dict[str, dict[str, float]]:
+    """Per-tier qualification thresholds persisted in the DB.
 
-    Defaults match the product/policy doc.
-    Environment overrides are supported mainly for testing / experimentation.
+    Falls back to defaults if the settings table is empty.
     """
+    rows = (await db.execute(select(AffiliateTierSetting))).scalars().all()
+    if rows:
+        return {
+            str(r.tier_name).strip().lower(): {
+                "gmv": float(r.gmv_min),
+                "buyers": float(r.buyers_min),
+                "referrals": float(r.referrals_min),
+                "session_cycles": float(r.session_cycles_min),
+                "min_metrics_required": int(r.min_metrics_required),
+            }
+            for r in rows
+        }
 
-    # Metric keys: gmv, buyers, referrals, customers
+    # Metric keys: gmv, buyers, referrals, session_cycles
     return {
         "bronze": {
-            "gmv": _env_float("AFFILIATE_TIER_BRONZE_GMV_MIN_ZMW", 15000.0),
-            "buyers": float(_env_int("AFFILIATE_TIER_BRONZE_BUYERS_MIN", 60)),
+            "gmv": _env_float("AFFILIATE_TIER_BRONZE_GMV_MIN_ZMW", 1000.0),
+            "buyers": float(_env_int("AFFILIATE_TIER_BRONZE_BUYERS_MIN", 20)),
             "referrals": float(_env_int("AFFILIATE_TIER_BRONZE_REFERRALS_MIN", 6)),
-            "customers": float(_env_int("AFFILIATE_TIER_BRONZE_CUSTOMERS_MIN", 120)),
+            "session_cycles": float(_env_int("AFFILIATE_TIER_BRONZE_SESSION_CYCLES_MIN", 120)),
+            "min_metrics_required": float(_env_int("AFFILIATE_TIER_BRONZE_METRICS_REQUIRED", 4)),
         },
         "silver": {
-            "gmv": _env_float("AFFILIATE_TIER_SILVER_GMV_MIN_ZMW", 40000.0),
-            "buyers": float(_env_int("AFFILIATE_TIER_SILVER_BUYERS_MIN", 150)),
+            "gmv": _env_float("AFFILIATE_TIER_SILVER_GMV_MIN_ZMW", 2667.0),
+            "buyers": float(_env_int("AFFILIATE_TIER_SILVER_BUYERS_MIN", 50)),
             "referrals": float(_env_int("AFFILIATE_TIER_SILVER_REFERRALS_MIN", 15)),
-            "customers": float(_env_int("AFFILIATE_TIER_SILVER_CUSTOMERS_MIN", 300)),
+            "session_cycles": float(_env_int("AFFILIATE_TIER_SILVER_SESSION_CYCLES_MIN", 300)),
+            "min_metrics_required": float(_env_int("AFFILIATE_TIER_SILVER_METRICS_REQUIRED", 3)),
         },
         "gold": {
-            "gmv": _env_float("AFFILIATE_TIER_GOLD_GMV_MIN_ZMW", 80000.0),
-            "buyers": float(_env_int("AFFILIATE_TIER_GOLD_BUYERS_MIN", 300)),
+            "gmv": _env_float("AFFILIATE_TIER_GOLD_GMV_MIN_ZMW", 5334.0),
+            "buyers": float(_env_int("AFFILIATE_TIER_GOLD_BUYERS_MIN", 100)),
             "referrals": float(_env_int("AFFILIATE_TIER_GOLD_REFERRALS_MIN", 30)),
-            "customers": float(_env_int("AFFILIATE_TIER_GOLD_CUSTOMERS_MIN", 600)),
+            "session_cycles": float(_env_int("AFFILIATE_TIER_GOLD_SESSION_CYCLES_MIN", 600)),
+            "min_metrics_required": float(_env_int("AFFILIATE_TIER_GOLD_METRICS_REQUIRED", 2)),
         },
     }
 
 
-def _qualify_tier(m: AffiliateMetrics, tier_name: str) -> tuple[bool, bool, int]:
-    """Return (eligible, all_four_met, metrics_met_count)."""
-    t = _tier_thresholds().get(str(tier_name).strip().lower())
-    if not t:
-        return False, False, 0
+def _qualify_tier(m: AffiliateMetrics, thresholds: dict[str, float]) -> tuple[bool, bool, int, int]:
+    """Return (eligible, all_four_met, metrics_met_count, metrics_required)."""
+    if not thresholds:
+        return False, False, 0, 0
 
     met = 0
-    if float(m.sales_volume) >= float(t["gmv"]):
+    if float(m.sales_volume) >= float(thresholds.get("gmv", 0.0)):
         met += 1
-    if float(m.unique_buyers) >= float(t["buyers"]):
+    if float(m.unique_buyers) >= float(thresholds.get("buyers", 0.0)):
         met += 1
-    if float(m.msme_referrals) >= float(t["referrals"]):
+    if float(m.msme_referrals) >= float(thresholds.get("referrals", 0.0)):
         met += 1
-    # conversion_quality == unique customers
-    if float(m.clicks) >= float(t["customers"]):
+    # session_cycles metric
+    if float(m.session_cycles) >= float(thresholds.get("session_cycles", 0.0)):
         met += 1
 
-    eligible = met >= 2
+    required = int(thresholds.get("min_metrics_required", 2))
+    eligible = met >= required
     all_four = met == 4
-    return eligible, all_four, met
+    return eligible, all_four, met, required
 
 
 def _op_min_clicks() -> int:
@@ -154,10 +171,12 @@ def _normalize_weights(weights: Optional[Dict[str, float]]) -> Dict[str, float]:
         return dict(_DEFAULT_OP_WEIGHTS)
 
     # Backwards-compat: older configs used a direct "clicks" weight.
-    # We interpret that as the weight for conversion quality (paid_attributions / clicks).
+    # We interpret that as the weight for session_cycles if provided.
     w = dict(weights)
-    if "conversion_quality" not in w and "clicks" in w:
-        w["conversion_quality"] = float(w.get("clicks", 0.0))
+    if "session_cycles" not in w and "conversion_quality" in w:
+        w["session_cycles"] = float(w.get("conversion_quality", 0.0))
+    if "session_cycles" not in w and "clicks" in w:
+        w["session_cycles"] = float(w.get("clicks", 0.0))
     for k, v in _DEFAULT_OP_WEIGHTS.items():
         w.setdefault(k, float(v))
     return w
@@ -171,41 +190,34 @@ def _norm(value: float, max_value: float) -> float:
     return float(value) / float(max_value)
 
 
-def _effective_multiplier(m: AffiliateMetrics, *, min_clicks: Optional[int] = None) -> tuple[bool, float, Optional[str], dict]:
+def _effective_multiplier(
+    m: AffiliateMetrics,
+    *,
+    min_clicks: Optional[int] = None,
+    thresholds_by_tier: Optional[dict[str, dict[str, float]]] = None,
+) -> tuple[bool, float, Optional[str], dict]:
     """Return (eligible, effective_multiplier, effective_tier_name, extra_details).
 
     Policy:
     - Multipliers only apply if the affiliate qualifies for the assigned tier.
-    - To qualify: meet thresholds in >= 2 metrics for that tier.
+    - To qualify: meet the tier's required metrics count.
     - If all 4 metrics meet thresholds: auto-upgrade one tier (bronze->silver, silver->gold).
 
-    Note: we still keep a small activity gate (min_clicks / min_paid / etc) so a tier can't activate
-    on obviously fake/empty activity, but the main qualification is the per-tier thresholds.
+    Note: eligibility is strictly based on the 4 metric thresholds.
     """
 
     assigned = (m.tier_name or "").strip().lower() or None
     if not assigned:
         return False, 1.0, None, {"assigned_tier": None}
 
-    if min_clicks is None:
-        min_clicks = _op_min_clicks()
-
-    # Basic activity gate (kept for safety; can be tuned via env vars)
-    activity_ok = (
-        int(m.clicks) >= int(min_clicks)
-        and int(m.paid_attributions) >= int(_op_min_paid_attributions())
-        and int(m.unique_buyers) >= int(_op_min_unique_buyers())
-        and float(m.sales_volume) >= float(_op_min_sales_volume())
-    )
-
-    eligible, all_four, met_count = _qualify_tier(m, assigned)
-    eligible = bool(activity_ok and eligible)
+    thresholds = (thresholds_by_tier or {}).get(assigned, {})
+    eligible, all_four, met_count, required = _qualify_tier(m, thresholds)
     if not eligible:
         return False, 1.0, None, {
             "assigned_tier": assigned,
             "tier_thresholds_met": int(met_count),
+            "tier_metrics_required": int(required),
             "tier_all_four": bool(all_four),
-            "activity_gate": bool(activity_ok),
         }
 
     effective_tier = assigned
@@ -228,6 +240,7 @@ def _effective_multiplier(m: AffiliateMetrics, *, min_clicks: Optional[int] = No
     return True, float(effective_multiplier), str(effective_tier), {
         "assigned_tier": assigned,
         "tier_thresholds_met": int(met_count),
+        "tier_metrics_required": int(required),
         "tier_all_four": bool(all_four),
         "activity_gate": bool(activity_ok),
     }
@@ -265,6 +278,54 @@ async def ensure_default_tiers(db: AsyncSession) -> None:
         if name in existing_names:
             continue
         db.add(AffiliateTier(name=name, multiplier=float(mult), price_zmw=float(price), active=True))
+        changed = True
+
+    if changed:
+        await db.commit()
+
+
+async def ensure_default_tier_settings(db: AsyncSession) -> None:
+    defaults = {
+        "bronze": {
+            "gmv_min": 1000.0,
+            "buyers_min": 20,
+            "referrals_min": 6,
+            "session_cycles_min": 120,
+            "min_metrics_required": 4,
+        },
+        "silver": {
+            "gmv_min": 2667.0,
+            "buyers_min": 50,
+            "referrals_min": 15,
+            "session_cycles_min": 300,
+            "min_metrics_required": 3,
+        },
+        "gold": {
+            "gmv_min": 5334.0,
+            "buyers_min": 100,
+            "referrals_min": 30,
+            "session_cycles_min": 600,
+            "min_metrics_required": 2,
+        },
+    }
+
+    existing = (await db.execute(select(AffiliateTierSetting))).scalars().all()
+    existing_names = {t.tier_name for t in existing}
+
+    changed = False
+    for name, values in defaults.items():
+        if name in existing_names:
+            continue
+        db.add(
+            AffiliateTierSetting(
+                tier_name=name,
+                gmv_min=float(values["gmv_min"]),
+                buyers_min=int(values["buyers_min"]),
+                referrals_min=int(values["referrals_min"]),
+                session_cycles_min=int(values["session_cycles_min"]),
+                min_metrics_required=int(values["min_metrics_required"]),
+            )
+        )
         changed = True
 
     if changed:
@@ -456,6 +517,22 @@ async def compute_metrics_for_epoch(db: AsyncSession, epoch: PoolEpoch) -> List[
     ).all()
     msme_count_by_aff: Dict[str, int] = {str(aid): int(m or 0) for aid, m in msme_rows}
 
+    # Session cycles per affiliate: count distinct session_ids with conversion or sale events.
+    cycles_rows = (
+        await db.execute(
+            select(AffiliateEvent.affiliate_id, func.count(func.distinct(AffiliateEvent.session_id)).label("cycles"))
+            .where(
+                AffiliateEvent.event_type.in_(["conversion", "sale"]),
+                AffiliateEvent.affiliate_id.is_not(None),
+                AffiliateEvent.session_id.is_not(None),
+                AffiliateEvent.occurred_at >= start,
+                AffiliateEvent.occurred_at <= end,
+            )
+            .group_by(AffiliateEvent.affiliate_id)
+        )
+    ).all()
+    cycles_by_aff: Dict[str, int] = {str(aid): int(c or 0) for aid, c in cycles_rows}
+
     # Include affiliates with any in-epoch activity, even if once-ever uniqueness
     # results in 0 counted clicks/buyers/referrals for the epoch.
     active_aff_rows = (
@@ -477,6 +554,7 @@ async def compute_metrics_for_epoch(db: AsyncSession, epoch: PoolEpoch) -> List[
         | set(paid_by_aff)
         | set(buyers_count_by_aff)
         | set(msme_count_by_aff)
+        | set(cycles_by_aff)
         | set(active_affiliates)
     )
 
@@ -498,6 +576,7 @@ async def compute_metrics_for_epoch(db: AsyncSession, epoch: PoolEpoch) -> List[
                 clicks=int(clicks_by_aff.get(affiliate_id, 0)),
                 attributions=int(attributions),
                 paid_attributions=int(paid_attributions),
+                session_cycles=int(cycles_by_aff.get(affiliate_id, 0)),
                 tier_name=tier_name,
                 tier_multiplier=float(tier_multiplier),
             )
@@ -512,7 +591,8 @@ def _share(value: float, total: float) -> float:
     return float(value) / float(total)
 
 
-def compute_op_scores(
+async def compute_op_scores(
+    db: AsyncSession,
     metrics: List[AffiliateMetrics],
     weights: Dict[str, float],
     *,
@@ -521,72 +601,88 @@ def compute_op_scores(
     """Compute OP_final scores per affiliate.
 
     Uses max-normalized metrics per season epoch:
-      OP_raw = wSV*(SV/SVmax) + wUB*(UB/UBmax) + wMR*(MR/MRmax) + wCQ*(CQ/CQmax)
+      OP_raw = wSV*(SV/SVmax) + wUB*(UB/UBmax) + wMR*(MR/MRmax) + wSC*(SC/SCmax)
       OP_final = OP_raw * multiplier
-
-        Conversion quality is treated as **unique customers**.
-            CQ = unique phone numbers brought to the bot.
-        Uniqueness policy: phones are counted "once, ever" across epochs.
     """
 
     if min_clicks is None:
         min_clicks = _op_min_clicks()
 
     w = _normalize_weights(weights)
+    thresholds_by_tier = await _tier_thresholds(db)
 
-    # Unique customers is provided by metrics.clicks (see compute_metrics_for_epoch).
-    cq_by_aff: Dict[str, float] = {m.affiliate_id: float(m.clicks) for m in metrics}
+    cycles_by_aff: Dict[str, float] = {m.affiliate_id: float(m.session_cycles) for m in metrics}
 
     sales_max = max((float(m.sales_volume) for m in metrics), default=0.0)
     buyers_max = max((float(m.unique_buyers) for m in metrics), default=0.0)
     referrals_max = max((float(m.msme_referrals) for m in metrics), default=0.0)
-    cq_max = max((float(cq) for cq in cq_by_aff.values()), default=0.0)
+    cycles_max = max((float(cycles) for cycles in cycles_by_aff.values()), default=0.0)
 
     scores: Dict[str, float] = {}
     details: Dict[str, dict] = {}
     for m in metrics:
-        cq = float(cq_by_aff.get(m.affiliate_id, 0.0))
+        sc = float(cycles_by_aff.get(m.affiliate_id, 0.0))
         op_raw = (
             float(w.get("sales_volume", 0.0)) * _norm(float(m.sales_volume), sales_max)
             + float(w.get("unique_buyers", 0.0)) * _norm(float(m.unique_buyers), buyers_max)
             + float(w.get("msme_referrals", 0.0)) * _norm(float(m.msme_referrals), referrals_max)
-            + float(w.get("conversion_quality", 0.0)) * _norm(float(cq), cq_max)
+            + float(w.get("session_cycles", 0.0)) * _norm(float(sc), cycles_max)
         )
 
-        eligible, effective_multiplier, effective_tier, extra = _effective_multiplier(m, min_clicks=min_clicks)
+        eligible, effective_multiplier, effective_tier, extra = _effective_multiplier(
+            m,
+            min_clicks=min_clicks,
+            thresholds_by_tier=thresholds_by_tier,
+        )
         op_final = float(op_raw) * float(effective_multiplier)
 
         scores[m.affiliate_id] = float(op_final)
         details[m.affiliate_id] = {
             "op_raw": float(op_raw),
             "op_final": float(op_final),
-            "conversion_quality": float(cq),
+            "session_cycles": float(sc),
             "eligible_for_multiplier": bool(eligible),
             "effective_multiplier": float(effective_multiplier),
             "effective_tier": effective_tier,
             "tier_details": extra,
-            "tier_thresholds_assigned": _tier_thresholds().get((m.tier_name or "").strip().lower()),
-            "tier_thresholds_effective": _tier_thresholds().get((effective_tier or "").strip().lower()),
+            "tier_thresholds_assigned": thresholds_by_tier.get((m.tier_name or "").strip().lower()),
+            "tier_thresholds_effective": thresholds_by_tier.get((effective_tier or "").strip().lower()),
             "weights": {
                 "sales_volume": float(w.get("sales_volume", 0.0)),
                 "unique_buyers": float(w.get("unique_buyers", 0.0)),
                 "msme_referrals": float(w.get("msme_referrals", 0.0)),
-                "conversion_quality": float(w.get("conversion_quality", 0.0)),
+                "session_cycles": float(w.get("session_cycles", 0.0)),
             },
             "maxima": {
                 "sales_volume": float(sales_max),
                 "unique_buyers": float(buyers_max),
                 "msme_referrals": float(referrals_max),
-                "conversion_quality": float(cq_max),
+                "session_cycles": float(cycles_max),
             },
         }
 
     return scores, details
 
 
-def compute_weighted_scores(metrics: List[AffiliateMetrics], weights: Dict[str, float]) -> Dict[str, float]:
+async def get_qualified_tiers(db: AsyncSession, metrics: AffiliateMetrics) -> list[str]:
+    """Return list of tier names the affiliate qualifies for (ordered low->high)."""
+    thresholds_by_tier = await _tier_thresholds(db)
+    qualified: list[str] = []
+    for tier_name in _TIER_ORDER:
+        thresholds = thresholds_by_tier.get(tier_name, {})
+        eligible, _, _, _ = _qualify_tier(metrics, thresholds)
+        if eligible:
+            qualified.append(tier_name)
+    return qualified
+
+
+async def compute_weighted_scores(
+    db: AsyncSession,
+    metrics: List[AffiliateMetrics],
+    weights: Dict[str, float],
+) -> Dict[str, float]:
     # Backwards-compatible wrapper: historically this returned "weighted_score".
-    scores, _ = compute_op_scores(metrics, weights)
+    scores, _ = await compute_op_scores(db, metrics, weights)
     return scores
 
 
@@ -606,7 +702,7 @@ async def close_epoch_and_allocate(db: AsyncSession, epoch: PoolEpoch, settings:
     epoch.pool_amount_zmw = float(epoch.gross_revenue_zmw) * float(epoch.pool_pct)
 
     metrics = await compute_metrics_for_epoch(db, epoch)
-    scores, details = compute_op_scores(metrics, settings.weights)
+    scores, details = await compute_op_scores(db, metrics, settings.weights)
     payouts = compute_payouts(scores, epoch.pool_amount_zmw)
 
     allocations: List[PoolAllocation] = []
@@ -624,7 +720,7 @@ async def close_epoch_and_allocate(db: AsyncSession, epoch: PoolEpoch, settings:
                 "clicks": m.clicks,
                 "attributions": m.attributions,
                 "paid_attributions": m.paid_attributions,
-                "conversion_quality": float(d.get("conversion_quality", 0.0)),
+                "session_cycles": m.session_cycles,
                 "op_raw": float(d.get("op_raw", 0.0)),
                 "op_final": float(d.get("op_final", 0.0)),
                 "eligible_for_multiplier": bool(d.get("eligible_for_multiplier", False)),
@@ -638,3 +734,83 @@ async def close_epoch_and_allocate(db: AsyncSession, epoch: PoolEpoch, settings:
 
     await db.commit()
     return allocations
+
+
+async def record_metric_snapshot(
+    db: AsyncSession,
+    epoch_id: str,
+    affiliate_metrics: AffiliateMetrics,
+    qualified_tiers: list[str],
+    effective_tier: Optional[str],
+    pool_amount_zmw: float,
+    gross_revenue_zmw: float,
+    weighted_score: float,
+) -> AffiliateMetricSnapshot:
+    """
+    Record a snapshot of affiliate metrics at a specific point in time.
+    
+    Typically called when:
+    - Epoch closes and allocations are finalized
+    - Real-time projected payout is calculated
+    
+    Args:
+        db: Database session
+        epoch_id: ID of the epoch
+        affiliate_metrics: AffiliateMetrics dataclass with all 7 metrics
+        qualified_tiers: List of tiers the affiliate qualifies for
+        effective_tier: Highest qualified tier (or None)
+        pool_amount_zmw: Total pool amount for allocation
+        gross_revenue_zmw: Total gross revenue for the epoch
+        weighted_score: Calculated weighted score
+    
+    Returns:
+        The created AffiliateMetricSnapshot record
+    """
+    # Calculate affiliate's share if pool was distributed equally among score
+    total_score_in_epoch = 100.0  # Placeholder; in real scenario, sum all scores
+    affiliate_share_pct = (weighted_score / total_score_in_epoch) if total_score_in_epoch > 0 else 0.0
+    projected_payout_zmw = pool_amount_zmw * affiliate_share_pct if pool_amount_zmw > 0 else 0.0
+    
+    pool_pct = (pool_amount_zmw / gross_revenue_zmw) if gross_revenue_zmw > 0 else 0.0
+    
+    snapshot = AffiliateMetricSnapshot(
+        epoch_id=epoch_id,
+        affiliate_id=affiliate_metrics.affiliate_id,
+        
+        # The 4 primary weighted metrics
+        sales_volume=affiliate_metrics.sales_volume,
+        unique_buyers=affiliate_metrics.unique_buyers,
+        msme_referrals=affiliate_metrics.msme_referrals,
+        session_cycles=affiliate_metrics.session_cycles,
+        
+        # Supporting metrics
+        clicks=affiliate_metrics.clicks,
+        attributions=affiliate_metrics.attributions,
+        paid_attributions=affiliate_metrics.paid_attributions,
+        
+        # Scoring
+        weighted_score=weighted_score,
+        
+        # Tier qualification
+        qualified_tiers=qualified_tiers,
+        effective_tier=effective_tier,
+        tier_multiplier=affiliate_metrics.tier_multiplier,
+        
+        # Payout projection
+        pool_pct=pool_pct,
+        pool_amount_zmw=pool_amount_zmw,
+        affiliate_share_pct=affiliate_share_pct,
+        projected_payout_zmw=projected_payout_zmw,
+        
+        meta={
+            "tier_name": affiliate_metrics.tier_name,
+            "epoch_id": epoch_id,
+            "affiliate_id": affiliate_metrics.affiliate_id,
+        },
+    )
+    
+    db.add(snapshot)
+    await db.commit()
+    await db.refresh(snapshot)
+    
+    return snapshot

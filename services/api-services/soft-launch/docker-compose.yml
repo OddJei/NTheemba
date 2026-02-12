@@ -4,15 +4,17 @@ networks:
 
 volumes:
   postgres_data:
+  nextcloud_data:
+  nextcloud_db:
 
 services:
   msme-engine:
-    image: python:3.10-slim
-    working_dir: /app
+    build:
+      context: ./services/msme-engine
     volumes:
       - ./services/msme-engine:/app
     command: >-
-      sh -c "pip install -r requirements.txt && uvicorn src.app.main:app --host 0.0.0.0 --port 8500"
+      python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8500
     environment:
       PG_USER: postgres
       PG_PASSWORD: "!ladybug!#!"
@@ -34,12 +36,12 @@ services:
 
 
   affiliate-engine:
-    image: python:3.10-slim
-    working_dir: /app
+    build:
+      context: ./services/affiliate-engine
     volumes:
       - ./services/affiliate-engine:/app
     command: >-
-      sh -c "pip install -r requirements.txt && uvicorn src.app.main:app --host 0.0.0.0 --port 8510"
+      python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8510
     environment:
       PG_USER: postgres
       PG_PASSWORD: "!ladybug!#!"
@@ -48,40 +50,53 @@ services:
       PG_DB: ntheemba
       PG_SCHEMA: affiliate_engine
       MSME_BASE_URL: http://msme-engine:8500
+      AUDIT_SERVICE_URL: http://audit-service:8290
+      AUDIT_EMIT_ENABLED: "true"
+      AUDIT_FORWARD_LOGS_ENABLED: "true"
+      AUDIT_FORWARD_LOGS_LEVEL: "INFO"
     ports:
       - "8510:8510"
     networks:
       - softlaunch-net
 
   catalog-inventory:
-    image: python:3.10-slim
-    working_dir: /app
+    build:
+      context: ./services/catalog-inventory
     volumes:
       - ./services/catalog-inventory:/app
-    command: >-
-      sh -c "pip install -r requirements.txt && uvicorn src.app.main:app --host 0.0.0.0 --port 8520"
     environment:
       DATABASE_URL: "postgresql+asyncpg://postgres:!ladybug!%23!@postgres:5432/ntheemba"
       PG_SCHEMA: catalog_inventory
+      MSME_BASE_URL: http://msme-engine:8500
+      NOTIFICATION_BASE_URL: http://notification:8570
+      AUDIT_SERVICE_URL: http://audit-service:8290
+      AUDIT_EMIT_ENABLED: "true"
+      NEXTCLOUD_URL: http://nextcloud
+      NEXTCLOUD_USER: admin
+      NEXTCLOUD_PASSWORD: admin123
+      CATALOG_SKIP_MSME_VALIDATION: "1"
     ports:
       - "8520:8520"
     networks:
       - softlaunch-net
     depends_on:
       - postgres
+      - nextcloud
 
   cart:
-    image: python:3.10-slim
-    working_dir: /app
+    build:
+      context: ./services/cart
     volumes:
       - ./services/cart:/app
     command: >-
-      sh -c "pip install -r requirements.txt && uvicorn src.app.main:app --host 0.0.0.0 --port 8530"
+      python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8530
     environment:
       DATABASE_URL: "postgresql+asyncpg://postgres:!ladybug!%23!@postgres:5432/ntheemba"
       PG_SCHEMA: cart_service
       CATALOG_SERVICE_URL: http://catalog-inventory:8520
       NOTIFICATION_BASE_URL: http://notification:8570
+      AUDIT_SERVICE_URL: http://audit-service:8290
+      AUDIT_EMIT_ENABLED: "true"
     ports:
       - "8530:8530"
     networks:
@@ -97,6 +112,10 @@ services:
       PG_SCHEMA: order_delivery
       MSME_BASE_URL: http://msme-engine:8500
       CATALOG_SERVICE_URL: http://catalog-inventory:8520
+      PAYMENT_REVENUE_BASE_URL: http://payment-revenue:8590
+      AFFILIATE_ENGINE_BASE_URL: http://affiliate-engine:8510
+      AUDIT_SERVICE_URL: http://audit-service:8290
+      AUDIT_EMIT_ENABLED: "true"
       # INTERNAL_SERVICE_SECRET is removed; services should use JWTs for internal auth.
     ports:
       - "8560:8560"
@@ -104,6 +123,8 @@ services:
       python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8560
     networks:
       - softlaunch-net
+    depends_on:
+      - postgres
 
   payment-revenue:
     build:
@@ -122,7 +143,9 @@ services:
       # Set this in your root .env to a random string.
       # INTERNAL_SERVICE_SECRET and OUTBOX_FLUSH_INTERNAL_SECRET removed; use MSME-issued JWTs
       # Read from the root .env (or shell env). Do NOT hardcode secrets here.
-      PAWAPAY_API_KEY: ${PAWAPAY_API_KEY:-}
+      # For local dev: keep non-empty so payment-revenue doesn't short-circuit with pawapay_config_missing.
+      # In sandbox, an invalid key may yield HTTP_401 from pawaPay, but the flow still exercises our pipeline.
+      PAWAPAY_API_KEY: ${PAWAPAY_API_KEY:-dummy}
       PAWAPAY_BASE_URL: ${PAWAPAY_BASE_URL:-https://api.sandbox.pawapay.io/v2}
 
       # Automated delivery of callback-driven events
@@ -150,7 +173,6 @@ services:
       - msme-engine
       - affiliate-engine
       - notification
-      - order-delivery
 
   notification:
     build:
@@ -158,6 +180,11 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: "8570"
+      EMAIL_SMTP_HOST: smtp.gmail.com
+      EMAIL_SMTP_PORT: "587"
+      MAIL_USER: jchisulokt@gmail.com
+      MAIL_PASS: "ozmn bxgv xuut ihuj"
+      EMAIL_FROM: jchisulokt@gmail.com
     ports:
       - "8570:8570"
     networks:
@@ -169,12 +196,108 @@ services:
     environment:
       DATABASE_URL: "postgresql+asyncpg://postgres:!ladybug!%23!@postgres:5432/ntheemba"
       PG_SCHEMA: bot_session
+      AUDIT_SERVICE_URL: http://audit-service:8290
+      AUDIT_EMIT_ENABLED: "true"
+      AUDIT_FORWARD_LOGS_ENABLED: "true"
+      AUDIT_FORWARD_LOGS_LEVEL: "INFO"
     ports:
-      - "8000:8000"
+      - "8540:8540"
     command: >-
-      python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8000
+      python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8540
     networks:
       - softlaunch-net
+
+  ice-service:
+    build:
+      context: ./services/frontend/bot-services/ICE-service
+    environment:
+      ENVIRONMENT: docker
+      PG_SCHEMA: ice_service
+      DATABASE_URL: "postgresql+asyncpg://postgres:!ladybug!%23!@postgres:5432/ntheemba"
+      REDIS_URL: redis://redis:6379/0
+      BOT_SESSION_URL: http://bot-session:8540
+      MSME_ENGINE_URL: http://msme-engine:8500
+      CATALOG_INVENTORY_URL: http://catalog-inventory:8520
+      CART_SERVICE_URL: http://cart:8530
+      PAYMENT_REVENUE_URL: http://payment-revenue:8590
+      ORDER_DELIVERY_URL: http://order-delivery:8560
+      AFFILIATE_ENGINE_URL: http://affiliate-engine:8510
+    ports:
+      - "8100:8100"
+    command: >-
+      python -m uvicorn app.main:app --host 0.0.0.0 --port 8100
+    networks:
+      - softlaunch-net
+    depends_on:
+      - postgres
+      - redis
+      - msme-engine
+      - bot-session
+      - catalog-inventory
+      - cart
+      - affiliate-engine
+      - order-delivery
+      - payment-revenue
+
+  outbox-dispatcher:
+    build:
+      context: ./services/outbox-dispatcher
+    volumes:
+      - ./services/outbox-dispatcher:/app
+    command: >-
+      python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8550
+    environment:
+      OUTBOX_SERVICES: "http://msme-engine:8500,http://order-delivery:8560,http://payment-revenue:8590,http://affiliate-engine:8510,http://ice-service:8100"
+      OUTBOX_BATCH_SIZE: "50"
+      OUTBOX_POLL_INTERVAL_SECONDS: "5"
+      OUTBOX_INTERNAL_SECRET: ${OUTBOX_INTERNAL_SECRET:-secret}
+      OUTBOX_MAX_ATTEMPTS: "5"
+    ports:
+      - "8550:8550"
+    networks:
+      - softlaunch-net
+    depends_on:
+      - msme-engine
+      - order-delivery
+      - payment-revenue
+      - affiliate-engine
+      - ice-service
+
+  bot-ingress:
+    build:
+      context: ./services/frontend/bot-services/bot-ingress-service
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      INCOMING_STREAM: ingress:incoming
+      INGRESS_RESOLVED_STREAM: ingress:resolved_payload
+      BOT_LANE_PREFIX: "bot:lane:"
+      ICE_SERVICE_URL: http://ice-service:8100
+      INGRESS_HYDRATE_FIRST: "True"
+    ports:
+      - "5500:5500"
+    command: >-
+      python -m uvicorn app.main:app --host 0.0.0.0 --port 5500
+    networks:
+      - softlaunch-net
+    depends_on:
+      - redis
+      - ice-service
+
+  custom-bot:
+    build:
+      context: ./services/frontend/bot-services/custom-bot-service
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      BOT_LANE_PREFIX: "bot:lane:"
+      BOT_NAME: "custom"
+      OUTBOUND_STREAM: "outbound:request"
+    depends_on:
+      - redis
+      - ice-service
+    networks:
+      - softlaunch-net
+    command: >-
+      python -m services.stream_worker
 
 
   audit-service:
@@ -227,3 +350,51 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    networks:
+      - softlaunch-net
+
+  nextcloud-db:
+    image: mariadb:10.5
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: nextcloud_root
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: nextcloud_pass
+    volumes:
+      - nextcloud_db:/var/lib/mysql
+    networks:
+      - softlaunch-net
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nextcloud:
+    image: nextcloud:28-apache
+    restart: unless-stopped
+    depends_on:
+      nextcloud-db:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: nextcloud-db
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: nextcloud_pass
+      NEXTCLOUD_ADMIN_USER: admin
+      NEXTCLOUD_ADMIN_PASSWORD: admin123
+      NEXTCLOUD_TRUSTED_DOMAINS: localhost
+      OVERWRITEPROTOCOL: http
+    volumes:
+      - nextcloud_data:/var/www/html
+    ports:
+      - "8580:80"
+    networks:
+      - softlaunch-net

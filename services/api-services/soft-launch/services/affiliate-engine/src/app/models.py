@@ -181,14 +181,14 @@ class CommissionSettings(Base):
     epoch_days: Mapped[int] = mapped_column(Integer, default=182)
 
     # Weights sum to 1.0.
-    # Default OP weights: sales 50%, unique buyers 20%, MSME referrals 20%, conversion quality 10%.
+    # Default OP weights: sales 50%, unique buyers 20%, MSME referrals 20%, session cycles 10%.
     weights: Mapped[dict] = mapped_column(
         SqliteJson,
         default=lambda: {
             "sales_volume": 0.5,
             "unique_buyers": 0.2,
             "msme_referrals": 0.2,
-            "conversion_quality": 0.1,
+            "session_cycles": 0.1,
         },
     )
 
@@ -202,6 +202,18 @@ class AffiliateTier(Base):
     multiplier: Mapped[float] = mapped_column(Float)
     price_zmw: Mapped[float] = mapped_column(Float)
     active: Mapped[bool] = mapped_column(default=True)
+
+
+class AffiliateTierSetting(Base):
+    __tablename__ = "affiliate_tier_settings"
+
+    tier_name: Mapped[str] = mapped_column(String(30), primary_key=True)
+    gmv_min: Mapped[float] = mapped_column(Float)
+    buyers_min: Mapped[int] = mapped_column(Integer)
+    referrals_min: Mapped[int] = mapped_column(Integer)
+    session_cycles_min: Mapped[int] = mapped_column(Integer)
+    min_metrics_required: Mapped[int] = mapped_column(Integer, default=2)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class AffiliateTierAssignment(Base):
@@ -227,6 +239,27 @@ class PoolEpoch(Base):
     pool_pct: Mapped[float] = mapped_column(Float, default=0.10)
     pool_amount_zmw: Mapped[float] = mapped_column(Float, default=0.0)
 
+
+
+class Outbox(Base):
+    __tablename__ = "outbox"
+    __table_args__ = (
+        UniqueConstraint("topic", "dedupe_key", name="uq_outbox_topic_dedupe_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    topic: Mapped[str] = mapped_column(String(64), index=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    destination: Mapped[str] = mapped_column(String(256))
+    payload: Mapped[dict] = mapped_column(SqliteJson, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="pending")  # pending|sent|failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    send_after: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -248,4 +281,56 @@ class PoolAllocation(Base):
     weighted_score: Mapped[float] = mapped_column(Float)
     payout_zmw: Mapped[float] = mapped_column(Float)
 
+    # Payout status tracking
+    payout_status: Mapped[str] = mapped_column(String(50), default="pending")  # pending, processing, completed, failed
+    payout_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    payout_initiated_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payout_completed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payout_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AffiliateMetricSnapshot(Base):
+    """Persistent snapshot of affiliate metrics at a point in time (e.g., epoch close)."""
+    
+    __tablename__ = "affiliate_metric_snapshots"
+    __table_args__ = (
+        UniqueConstraint("epoch_id", "affiliate_id", name="uq_metric_snap_epoch_aff"),
+        Index("ix_metric_snap_epoch", "epoch_id"),
+        Index("ix_metric_snap_affiliate", "affiliate_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    epoch_id: Mapped[str] = mapped_column(String(36), ForeignKey("pool_epochs.id"), index=True)
+    affiliate_id: Mapped[str] = mapped_column(String(36), ForeignKey("affiliates.id"), index=True)
+
+    # The 4 primary weighted metrics
+    sales_volume: Mapped[float] = mapped_column(Float, default=0.0)
+    unique_buyers: Mapped[int] = mapped_column(Integer, default=0)
+    msme_referrals: Mapped[int] = mapped_column(Integer, default=0)
+    session_cycles: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Supporting metrics (not weighted in scoring, but tracked for transparency)
+    clicks: Mapped[int] = mapped_column(Integer, default=0)
+    attributions: Mapped[int] = mapped_column(Integer, default=0)
+    paid_attributions: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Scoring
+    weighted_score: Mapped[float] = mapped_column(Float, default=0.0)
+    
+    # Tier qualification at snapshot time
+    qualified_tiers: Mapped[list[str]] = mapped_column(SqliteJson, default=list)  # e.g., ["bronze", "silver"]
+    effective_tier: Mapped[str | None] = mapped_column(String(30), nullable=True)  # Highest qualified
+    tier_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+
+    # Payout if epoch had ended at this point
+    pool_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    pool_amount_zmw: Mapped[float] = mapped_column(Float, default=0.0)
+    affiliate_share_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    projected_payout_zmw: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # Metadata
+    meta: Mapped[dict] = mapped_column(SqliteJson, default=dict)
+
+    recorded_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

@@ -1,0 +1,327 @@
+Got it — let’s rebuild the **entire canonical map from ingress through outbound and affiliate automations**, this time explicitly including **OOB** as part of the flow (since you never said to remove it). Here’s the full end‑to‑end mind‑map:
+
+---
+
+## 🌐 Ingress
+
+1. **Bot‑Ingress**
+   - Consumes from `incoming:message`.
+   - Validates payload: `request_id`, `to`, `from`, `meta.platform`.
+   - Enforces **idempotence** (duplicate request detection).
+   - Forwards validated payload to ICE.
+
+2. **ICE Service**
+   - Saves incoming message.
+   - Hydrates using `to`, `from`, `platform`, `user_text`.
+   - Detects affiliate token (`ace:` prefix + `[[AFFLINK]]`).
+   - Extracts token, affiliate_id, product if present.
+
+3. **Business Resolution**
+   - Resolve `/business/phone/{phone_number}` via MSME engine.
+   - Collect business + owner details.
+   - Cache in Redis (`businessdetails:{business_phone}`) with long TTL.
+   - ICE checks cache/db before calling MSME engine.
+
+4. **Affiliate Resolution**
+   - If token present, resolve affiliate details via Affiliate engine.
+   - Collect affiliate_id, product linked to token.
+
+5. **Bot‑Session Resolution**
+   - Resolve bot type + bot_id from business_id.
+   - If none, create new bot.
+   - Resolve session_id from `from_phone` + `platform`.
+   - If none, create new session.
+   - Resolve cycle_id from sessions table.
+   - If affiliate_id present, always create new cycle with affiliate_id.
+   - Collect context snapshot + cycle_state.
+
+6. **Session Data**
+   - Persist cycle_id, session_id, intent flag (ON by default), stage=cycle_state.
+   - If affiliate prefix detected, intent flag OFF → map to cart intent canonical id.
+   - Add product slot details (product_id, name, price).
+   - Parse context snapshot if cycle is new.
+
+7. **Customer Details**
+   - Resolve `/auth/phone/{from_phone}`.
+   - Parse user details blob keyed by `from_phone`.
+
+8. **Cart & Order Check**
+   - Check CartService for cart with cycle_id not checked out.
+   - Cache cart snapshot if found.
+   - Check OrderDeliveryService for unconfirmed delivery orders.
+   - Cache order snapshot if found.
+
+9. **Product Snapshot**
+   - Resolve product snapshot via business_id.
+   - Cache with long TTL.
+
+10. **OOB Store**
+   - Redis hash keyed `oob:{session_id}`.
+   - Stores hydrated blobs, cart object, meta contexts (order, payment, refund, diagnostics).
+   - Used as cache between turns.
+   - Updated via ICE hydrate and runtime handlers using optimistic CAS.
+
+11. **Persistence**
+    - Map all collected data into blob with TTL.
+    - Persist to PostgreSQL for longevity.
+
+12. **Ingress Completion**
+    - Parse blobs into payload meta (enrichment).
+    - Publish enriched payload to `bot:lane:{bot_type}`.
+
+---
+
+## 🤖 Custom Bot Service
+
+1. **Consume Payload**
+   - Validates payload and idempotence.
+   - Reads `need_intent` flag (ON by default, set by ICE).
+
+2. **Context Build**
+   - If flag OFF → skip mapping, use direct executor.
+   - If flag ON → build strict multi‑intent context:
+     - Payload mapper.
+     - Product snapshots.
+     - Cart + order objects.
+     - Session data.
+     - OOB snapshots.
+   - Send context to Gemini for reply construction.
+   - Validate Gemini response.
+
+3. **Multi‑Intent Executor**
+   - Canonical stage order: **chat → cart → order → payment → delivery**.
+   - Dynamic execution:
+     - Cache‑first (OOB snapshots).
+     - Authoritative ICE calls if cache missing/stale.
+     - Skip completed stages, retry incomplete.
+
+---
+
+## 🧩 Stage Execution Details
+
+- **Chat Stage**
+  - Handle free text, help, affiliate greetings.
+  - Update bot‑session via ICE with cycle_state + snapshot.
+  - OOB updated with last_node_executed.
+
+- **Cart Stage**
+  - ICE → CartService.
+  - Use cycle_id + affiliate_id.
+  - Catalog + inventory authoritative check.
+  - Cache cart snapshot in OOB.
+  - Update bot‑session cycle_state.
+
+- **Order Stage**
+  - ICE → OrderDeliveryService.
+  - Validate cart, reserve stock, calculate totals.
+  - Cache order snapshot in OOB.
+  - Update bot‑session cycle_state.
+
+- **Payment Stage**
+  - ICE → OrderDeliveryService with cycle_id, user_phone, business_id, affiliate_id.
+  - OrderDeliveryService → Payment‑Revenue → PawaPay gateway.
+  - PawaPay callback → Payment‑Revenue calculates MSME payout (total − platform fee).
+  - Payment‑Revenue sends success/fail → OrderDeliveryService → Notification → ICE.
+  - ICE updates cycle snapshot + OOB.
+  - Queue outbound message.
+
+- **Delivery Stage**
+  - ICE → OrderDeliveryService + MSME engine.
+  - Confirm delivery, update order status.
+  - Notification service sends:
+    - WhatsApp outbound (minimal text).
+    - In‑app notification (admin + MSME dashboard).
+  - ICE persists final cycle snapshot + OOB.
+
+---
+
+## 📢 Notifications
+
+- **WhatsApp outbound**: concise, minimal text (order ID, payment confirmation, delivery status).  
+- **Email/in‑app**: structured detail for dashboards (payout breakdown, affiliate attribution, delivery logs).  
+- **Admin/MSME dashboards**: structured events, efficient monitoring, not verbose text.  
+
+---
+
+## 📤 Outbound Flow
+
+1. **Outbound Request**
+   - Custom bot service publishes enriched payload to `outbound:request`.
+   - Outbound service consumes this request.
+
+2. **Payload Stripping**
+   - Outbound service strips enrichment data (business blobs, product snapshots, cart/order context).
+   - Ensures payload only contains:
+     - `to`
+     - `from`
+     - `reply_text`
+     - `meta.platform`
+     - `bot_id`
+
+3. **ICE Persistence**
+   - Outbound service calls ICE to persist outbound message.
+   - ICE appends message to cycle snapshot, OOB, and session history.
+
+4. **Publishing**
+   - Outbound service publishes cleaned payload to `outbound:{platform}`.
+   - Platform‑specific outbound workers deliver the message.
+
+---
+
+## 🔄 Affiliate Automations
+
+- **OrderDelivery → Affiliate Engine**
+  - Delivery confirmed with affiliate_id → event sent with order value, cycle_id, business_id, user_phone.
+
+- **MSME Engine → Affiliate Engine**
+  - MSME signup + subscription payment success with affiliate_id → event sent with business_id + affiliate_id.
+
+- **Bot‑Session → Affiliate Engine**
+  - Cycle created with affiliate_id → event sent with cycle_id, affiliate_id, session_id.
+
+---
+
+## 📊 Affiliate Metrics & Pool Weighting
+
+- **Sales Volume (GMV)** → 0.5 (50%)  
+- **Unique Buyers** → 0.2 (20%)  
+- **MSME Referrals** → 0.2 (20%)  
+- **Conversion Quality** → 0.1 (10%)  
+
+Weighted score formula:  
+\[
+\text{Score} = 0.5 \cdot GMV + 0.2 \cdot UniqueBuyers + 0.2 \cdot MSMEReferrals + 0.1 \cdot ConversionQuality
+\]
+
+- Pool allocation ranks affiliates by score.  
+- Payouts distributed proportionally.  
+- Notifications minimal for UX, dashboards show full breakdown.
+
+---
+
+## 📝 Canonical End‑to‑End Summary
+
+- **Ingress** → Bot‑Ingress → ICE hydration → business/affiliate resolution → bot‑session setup → OOB persistence → PostgreSQL.  
+- **Bot Lane** → Custom bot service → validate payload + idempotence → build context → Gemini.  
+- **Executor** → Canonical stage order (chat → cart → order → payment → delivery).  
+- **Cache‑first, ICE authoritative** → OOB snapshots first, ICE calls when needed.  
+- **Notifications** → Minimal text for UX, structured events for dashboards.  
+- **Outbound** → Strip enrichment → ICE persist → publish to outbound:{platform}.  
+- **Affiliate Engine** → Events from OrderDelivery, MSME Engine, Bot‑Session → metrics → pool weighting → payouts.  
+
+---
+
+Here’s the **full ingress payload schema before and after enrichment**, laid out clearly so you can see exactly what ICE adds to the raw adapter message.
+
+---
+
+## 📦 Payload Before Enrichment  
+*(raw from adapter → `incoming:message`)*
+
+```json
+{
+  "request_id": "abc123",
+  "to": "+260955000111",
+  "from": "+260977000222",
+  "text": "Hi, I want to order shoes",
+  "meta": {
+    "platform": "whatsapp",
+    "timestamp": "2026-02-11T09:22:00Z"
+  }
+}
+```
+
+**Notes:**  
+- This is the bare minimum: identifiers, text, and meta from the adapter.  
+- No business, customer, session, affiliate, cart, or product context yet.  
+
+---
+
+## 🔧 Payload After Enrichment  
+*(Ingress → ICE hydration → publish to `bot:lane:{bot_type}`)*
+
+```json
+{
+  "request_id": "abc123",
+  "to": "+260955000111",
+  "from": "+260977000222",
+  "text": "Hi, I want to order shoes",
+  "meta": {
+    "platform": "whatsapp",
+    "timestamp": "2026-02-11T09:22:00Z",
+    "ingress_validated": true,
+    "ice_hydrated": true
+  },
+  "hydration": {
+    "business_blob": {
+      "business_id": "biz-555",
+      "business_name": "NTheemba Digital Services",
+      "owner_id": "owner-777",
+      "owner_username": "jameschisulo",
+      "owner_email": "james@example.com",
+      "owner_phone": "+260977000222",
+      "subscription_plan": "premium",
+      "subscription_expiry": "2026-12-31T23:59:59Z",
+      "is_active": true
+    },
+    "customer_blob": {
+      "user_id": "user-222",
+      "username": "customer123",
+      "phone": "+260955000111",
+      "role_id": "role-buyer",
+      "is_active": true
+    },
+    "session_blob": {
+      "session_id": "sess-456",
+      "bot_id": "bot-123",
+      "bot_type": "commerce",
+      "business_id": "biz-555",
+      "user_phone": "+260955000111",
+      "platform": "whatsapp",
+      "cycle_id": "cycle-999",
+      "cycle_state": "cart",
+      "affiliate_id": "aff-123",
+      "session_mode": "standard",
+      "state": "active",
+      "status": "open",
+      "context_snapshot": {}
+    },
+    "affiliate_blob": {
+      "affiliate_id": "aff-123",
+      "campaign": "promo-feb",
+      "product_id": "prod-888"
+    },
+    "cart_blob": {
+      "cart_id": "cart-333",
+      "cycle_id": "cycle-999",
+      "business_id": "biz-555",
+      "user_id": "user-222",
+      "items": [],
+      "status": "open"
+    },
+    "order_blob": null,
+    "product_snapshot": {
+      "product_id": "prod-888",
+      "name": "Shoes",
+      "price": 250,
+      "currency": "ZMW"
+    }
+  }
+}
+```
+
+**Notes:**  
+- ICE adds **hydration blobs**: business+owner, customer, session, affiliate, cart, order, product snapshot.  
+- These blobs make the payload self‑contained for downstream services (bot lane, cart/order/payment/delivery).  
+- `meta` now includes flags: `ingress_validated` and `ice_hydrated`.  
+
+---
+
+## 📝 Summary
+- **Before enrichment** → raw adapter payload (minimal identifiers + text).  
+- **After enrichment** → enriched payload with full context blobs, persisted and published to `bot:lane:{bot_type}`.  
+- This enriched payload is the canonical schema ICE guarantees for downstream execution.  
+
+---
+
+

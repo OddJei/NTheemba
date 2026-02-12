@@ -1,0 +1,179 @@
+Default Bot Service — Living Brainstorm Spec
+
+Last updated: 2025-10-29
+
+Overview
+- Purpose: orchestrate public-mode and registration flows using tree-driven nodes and shared handlers. Stateless workers with Redis-backed session/tree state. Consumes enriched payloads, selects node, runs handler, and emits reply context for the Reply Service.
+- Event path: Ingress → Intent → Default Bot Service (this) → Reply Service.
+
+Canonical payload contract (and who writes what)
+```json
+{
+	"request_id": "req_00123",
+	"event_id": "evt_003",
+	"message": "I want to buy a solar panel",
+	"to": "ntb_default",
+	"from": "097xxxxxxx",
+	"timestamp": "2025-10-22T18:02:00Z",
+	"meta": {
+		"platform": "wa",
+		"bot": {
+			"bot_id": "ntb_default",
+			"tenant_id": "tenant_001",
+			"channel": "whatsapp"
+		},
+		"user": {
+			"user_id": "usr_abc",
+			"phone": "097xxxxxxx",
+			"roles": ["public"],
+			"authenticated": false,
+			"locale": "en-ZM"
+		},
+		"session": {
+			"session_id": "sess_abc123",
+			"session_mode": "public",           // public|msme|affiliate|staff
+			"bot_type": "default",              // default|custom
+			"current_node": "browse_catalogue", // may be null on fresh session
+			"started_at": "2025-10-22T18:00:00Z",
+			"last_active_at": "2025-10-22T18:02:00Z",
+			"reset_requested": false
+		},
+		"previous_events": [
+			// minimal items: { event_id, timestamp, node, intent }
+		],
+		"session_event": {
+			"event_id": "evt_003",
+			"started_at": "2025-10-22T18:02:00Z",
+
+			"ingress": {                         // Bot Ingress Service
+				"normalized_text": "i want to buy a solar panel",
+				"attachments": [],
+				"capabilities": ["text"],
+				"received_at": "2025-10-22T18:02:00Z"
+			},
+
+			"intent": {                          // Bot Intent Service
+				"intent": "browse_catalogue",
+				"confidence": 0.93,
+				"entities": { "product": "solar panel" },
+				"next_node": "serve_categories",
+				"language": "en",
+				"model": "gemini-1.5-pro"
+			},
+
+			"handler": {                         // Default Bot Service
+				"selected_node": "serve_categories",
+				"tree": "public",
+				"validation_errors": [],
+				"transitions": ["serve_categories -> select_category"],
+				"has_more": false,
+				"next_offset": null
+			},
+
+			"reply": {                           // Bot Reply Service
+				"reply_type": "text",
+				"text": "Here are our categories…",
+				"media": [],
+				"buttons": [],
+				"channel_overrides": {}
+			}
+		}
+	}
+}
+```
+- Bot Ingress populates: envelope, platform/bot/user, session, previous_events, session_event.ingress
+- Bot Intent populates: session_event.intent (intent, confidence, entities, next_node)
+- Default Bot populates: session_event.handler (selected_node, transitions, errors, paging flags)
+- Reply Service populates: session_event.reply
+
+Root-node determination (guardrails)
+- Session lifecycle flags: new/expired or reset_requested → treat next turn as root.
+- History depth: empty or truncated → root.
+- LLM intent confidence: top-level intents (start/help/menu/greeting) above threshold route to root; very low confidence also defaults to root.
+- Context completeness: missing required keys (auth status, business_id, active_flow) → root.
+- Role gating: missing onboarding/permissions → root or onboarding branch.
+- Interaction cadence: first one or two turns (or long inactivity) bias toward root prompts.
+
+Public-mode top-level intents
+- greeting (welcome/first contact)
+- help (assistance/FAQ)
+- registration
+	- affiliate branch: submit_name → submit_phone_number → confirm_details → validate_user → create_account → registration_success
+	- msme branch: submit_name → submit_phone_number → confirm_details → collect_business_info (name/type/location/year) → select_subscription_plan → select_payment_method (zamtel|mtn|airtel) → trigger_subscription_payment (initiate_txn → verify_status) → validate_user → create_account → registration_success
+- browse_catalogue
+	- serve_categories → select_category → serve_products → select_product → show_product_details → add_to_cart → view_cart/modify_cart
+- order
+	- confirm_cart (validate_items: check_stock, calculate_total) → select_delivery_option (choose_location, choose_method) → provide_contact_info (enter_phone, enter_name) → review_order → select_payment_method (zamtel|mtn|airtel) → trigger_payment (initiate_txn → verify_status) → place_order (generate_order_id, log_order, notify_user)
+
+All-node guardrails (node determination)
+1) Session lifecycle override
+	 - If reset_requested=true or inactivity > SESSION_TIMEOUT, re-enter at root.
+	 - If no current_node, treat as root-level entry.
+2) LLM signal validation
+	 - Require intent.confidence ≥ MIN_INTENT_CONF to accept next_node.
+	 - Only accept next_node if known/allowed for the tree and mode.
+3) Reachability and resolution order
+	 - selected_node must be reachable via IntentTree edges.
+	 - Priority: (a) no current_node → top-level entry node; (b) reachable next_node; (c) current_node default transition; (d) remain and ask to clarify; (e) dead-end → root with guidance.
+4) Preconditions and context completeness
+	 - Nodes declare required context/entities; missing → route to resolver node or ask-for-more-info before proceeding.
+5) Role/auth gating
+	 - allowed_roles/auth_required enforced; violations → onboarding/auth.
+6) Rate limiting / anti-churn
+	 - Cap node hops per window; if exceeded, hold node and ask a clarifying question.
+7) Idempotency / replay safety
+	 - Deduplicate by event_id/request_id; avoid re-running mutations.
+8) Pagination guardrails
+	 - Clamp limit to [MIN_LIMIT, MAX_LIMIT]; force non-negative offset; reset stale offsets.
+9) External dependency health
+	 - On API failure: use cache/defaults; set handler.error=true; degrade gracefully.
+10) Transition conflicts
+	 - If multiple edges valid: deterministic priority (intent-specific > default > fallback) and log chosen edge.
+11) Validation policy
+	 - On validation errors, set handler.validation_errors; don’t advance.
+12) Observability
+	 - Always write handler.selected_node, handler.transitions, and per-step timings.
+13) Time-bounded steps
+	 - Verify freshness (e.g., last_action ≤ N minutes) for nodes that require it.
+14) Language/locale
+	 - Normalize to supported locales; fall back to default if unknown.
+15) Safety/compliance
+	 - Apply content moderation/PII redaction before sensitive nodes.
+
+Catalog API integration (dev and prod)
+- Dev base URL: http://127.0.0.1:9101 (env-driven). Prod defaults to service URL (e.g., http://localhost:8104) unless overridden.
+- GET /categories
+	- Query: limit>0, offset≥0, business_id?
+	- Response: { count, total, limit, offset, start_index, end_index, has_more, next_offset, categories[] }
+- GET /categories/all
+	- Query: business_id?
+	- Response: same schema with limit=null, offset=0, has_more=false
+- Client: prefers /categories/all in dev; normalizes response; caches if available.
+
+Redis state and keys
+- session:{session_id} → user/session envelope (started_at, last_active_at, reset_requested)
+- intent_tree:{session_id} → current_node, node history, paging state
+- node_state:{session_id} → per-node transient data (e.g., collected fields)
+
+LLM governance
+- Confidence thresholds per intent class; unreachable next_node is rejected.
+- If hint invalid, prefer default transition or clarify prompt; safe fallback is root in ambiguous cases.
+
+Errors and retries
+- Input validation errors → friendly prompt, no advance.
+- External failures → use defaults/cache; tag error; avoid crashing flows.
+- Retry policy with exponential backoff for idempotent calls.
+
+Telemetry and audit
+- Per-service timestamps: received_at, resolved_at, handled_at, replied_at.
+- Latency metrics and SLA; correlate via request_id/event_id.
+- Log transitions and handler outcomes for replay.
+
+Resolved defaults (configurable)
+- SESSION_TIMEOUT: 30 minutes (1800s). If now - last_active_at > 1800s, treat as new session and enter root.
+- MIN_INTENT_CONF: 0.70. Below threshold, ignore next_node hint and use default/fallback logic.
+- PAGINATION: MIN_LIMIT=1, DEFAULT_LIMIT=10, MAX_LIMIT=50. Offsets are clamped to ≥0.
+- PREVIOUS_EVENTS retention: keep last 20 events per session or max age 24h (whichever is fewer). Minimal item shape: { event_id, timestamp, node, intent }.
+- DEFAULT_LOCALE: "en-ZM"; DEFAULT_LANGUAGE: "en". If unsupported locale detected, normalize to DEFAULT_LOCALE.
+- RATE LIMIT (anti-churn): at most 3 node transitions within any 5s window; exceed → hold node and ask for clarification.
+- CATALOG CACHE_TTL: 300s. Dev base URL: http://127.0.0.1:9101; Prod via CATALOG_SERVICE_URL.

@@ -1,0 +1,126 @@
+
+---
+
+## 📦 Payload Before Enrichment (raw from adapter → `incoming:message`)
+
+```json
+{
+  "request_id": "abc123",
+  "to": "+260955000111",
+  "from": "+260977000222",
+  "text": "Hi, I want to order shoes",
+  "meta": {
+    "platform": "whatsapp",
+    "timestamp": "2026-02-11T09:22:00Z"
+  }
+}
+```
+
+This is the **bare minimum**: identifiers, text, and meta from the adapter.
+
+---
+
+## 🔧 Payload After Enrichment (Ingress → ICE hydration → publish to `bot:lane:{bot_type}`)
+
+```json
+{
+  "request_id": "abc123",
+  "to": "+260955000111",
+  "from": "+260977000222",
+  "text": "Hi, I want to order shoes",
+  "meta": {
+    "platform": "whatsapp",
+    "timestamp": "2026-02-11T09:22:00Z",
+    "ingress_validated": true
+  },
+  "hydration": {
+    "business_blob": {
+      "business_id": "biz-555",
+      "business_name": "NTheemba Digital Services",
+      "owner_id": "owner-777",
+      "owner_username": "jameschisulo",
+      "owner_email": "james@example.com",
+      "owner_phone": "+260977000222",
+      "subscription_plan": "premium",
+      "subscription_expiry": "2026-12-31T23:59:59Z",
+      "is_active": true
+    },
+    "customer_blob": {
+      "user_id": "user-222",
+      "username": "customer123",
+      "phone": "+260955000111",
+      "role_id": "role-buyer",
+      "is_active": true
+    },
+    "session_blob": {
+      "session_id": "sess-456",
+      "bot_id": "bot-123",
+      "bot_type": "commerce",
+      "business_id": "biz-555",
+      "user_phone": "+260955000111",
+      "platform": "whatsapp",
+      "cycle_id": "cycle-999",
+      "cycle_state": "cart",
+      "affiliate_id": "aff-123",
+      "session_mode": "standard",
+      "state": "active",
+      "status": "open",
+      "context_snapshot": {}
+    },
+    "affiliate_blob": {
+      "affiliate_id": "aff-123",
+      "campaign": "promo-feb",
+      "product_id": "prod-888"
+    },
+    "cart_blob": {
+      "cart_id": "cart-333",
+      "cycle_id": "cycle-999",
+      "business_id": "biz-555",
+      "user_id": "user-222",
+      "items": [],
+      "status": "open"
+    },
+    "order_blob": null,
+    "product_snapshot": {
+      "product_id": "prod-888",
+      "name": "Shoes",
+      "price": 250,
+      "currency": "ZMW"
+    }
+  }
+}
+```
+
+---
+
+## 🧩 Canonical Ingress Workflow (Mind‑Map)
+
+1. **Adapter Intake** → raw payload arrives in `incoming:message`.  
+2. **Validation** → check required fields (`request_id`, `to`, `from`, `meta.platform`).  
+3. **Idempotence** → reject duplicates by `request_id`.  
+4. **Normalization** → standardize phone numbers, platform IDs.  
+5. **Forward to ICE** → validated payload passed to ICE.  
+6. **ICE Hydration** → build blobs:  
+   - Business + Owner blob (from `businesses` + `users`).  
+   - Customer blob (from `users` keyed by phone).  
+   - Session blob (from `sessions` + `session_state_cycles`).  
+   - Affiliate blob (if affiliate_id present).  
+   - Cart blob (from CartService).  
+   - Order blob (from OrderDeliveryService).  
+   - Product snapshot (from catalog/inventory).  
+7. **Persistence** → hydrated payload persisted in PostgreSQL.  
+8. **Ingress Completion** → enriched payload published to `bot:lane:{bot_type}`.  
+9. **Audit Hooks** → emit `ingress_validated` or `ingress_rejected` events.  
+10. **Error Handling** → malformed payloads → `ingress:deadletter`.
+
+---
+
+## 📝 Summary
+- **Before enrichment** → raw adapter payload.  
+- **After enrichment** → enriched payload with blobs (business+owner, customer, session, affiliate, cart, order, product snapshot).  
+- **Ingress canonical workflow** → validate → deduplicate → normalize → ICE hydration → persist → publish enriched payload to bot lane.  
+
+---
+
+
+

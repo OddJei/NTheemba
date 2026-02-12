@@ -166,3 +166,87 @@ class PawaPayTxnOut(OrmBaseModel):
     provider: Optional[str] = None
     phone_number: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GrossRevenueOut(OrmBaseModel):
+    """Gross revenue calculation response."""
+    gross_revenue_zmw: float
+    subscription_revenue_zmw: float
+    platform_fee_revenue_zmw: float
+    transaction_count: int
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    epoch_id: Optional[str] = None
+    calculated_at: datetime
+
+
+class PlatformBalanceOut(OrmBaseModel):
+    """Current platform balance (total money held)."""
+    platform_balance_zmw: float
+    total_inflows_zmw: float
+    total_outflows_zmw: float
+    calculated_at: datetime
+
+
+class MSMEPayoutInitiateIn(OrmBaseModel):
+    """Request to initiate MSME payout for a delivered order."""
+    order_id: str
+    business_id: str
+    msme_phone: str
+    order_amount_minor: int = Field(ge=0)
+    currency: str = "ZMW"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class MSMEPayoutOut(OrmBaseModel):
+    """MSME payout record response."""
+    id: str
+    payout_id: str
+    order_id: str
+    business_id: str
+    msme_phone: str
+    provider: Optional[str]
+    amount_minor: int
+    platform_fee_minor: int
+    currency: str
+    status: str
+    failure_code: Optional[str]
+    failure_message: Optional[str]
+    initiated_at: datetime
+    completed_at: Optional[datetime]
+
+
+class PayoutRequestIn(OrmBaseModel):
+    """Individual payout request in a batch."""
+    affiliate_id: str
+    amount_zmw: float
+    currency: str = "ZMW"
+    phone_number: Optional[str] = None
+
+
+class PayoutBatchRequestIn(OrmBaseModel):
+    """Batch payout request from affiliate-engine."""
+    epoch_id: str
+    payouts: list[PayoutRequestIn]
+    callback_url: str
+
+
+class AffiliatePayoutOut(OrmBaseModel):
+    """Response for individual affiliate payout."""
+    affiliate_id: str
+    payout_id: str
+    amount_zmw: float
+    currency: str
+    status: str  # accepted, processing, completed, failed
+    initiated_at: datetime
+
+
+class PayoutBatchResponseOut(OrmBaseModel):
+    """Response for batch payout request."""
+    batch_id: str
+    epoch_id: str
+    total_payouts: int
+    total_amount_zmw: float
+    payouts: list[AffiliatePayoutOut]
+    status: str  # accepted, processing
+    initiated_at: datetime

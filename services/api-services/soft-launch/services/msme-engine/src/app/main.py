@@ -33,6 +33,8 @@ from src.app.models import (
     BusinessSubscription,
     MsmeCode,
     MsmeEvent,
+    PaymentInitiation,
+    OutboxEvent,
     Role,
     User,
     VerificationToken,
@@ -43,6 +45,8 @@ from src.app.schemas import (
     BusinessMetadataOut,
     BusinessEntitlementsOut,
     BusinessOut,
+    BusinessPhoneLookupOut,
+    DeliveryLocationsUpdate,
     BusinessRegister,
     BusinessRegisterOut,
     BusinessUpdate,
@@ -57,6 +61,7 @@ from src.app.schemas import (
     SubscriptionOut,
     TokenPair,
     UserLookupOut,
+    UserPhoneLookupOut,
     UserOut,
     UserUpdate,
 )
@@ -89,6 +94,34 @@ audit_client.install_audit_log_forwarding(service=_SERVICE)
 
 _PLAN_FREE = "free"
 _PLAN_PAID = "paid"
+
+
+def _normalize_zmb_provider(provider: str | None) -> str | None:
+    if not provider:
+        return None
+    raw = provider.strip()
+    if not raw:
+        return None
+
+    upper = raw.upper()
+    # Accept official pawaPay provider codes
+    if upper in {"AIRTEL_OAPI_ZMB", "MTN_MOMO_ZMB", "ZAMTEL_ZMB"}:
+        return upper
+
+    # Accept common short-hands
+    if upper in {"AIRTEL", "AIRTEL_ZMB"}:
+        return "AIRTEL_OAPI_ZMB"
+    if upper in {"MTN", "MTN_ZMB"}:
+        return "MTN_MOMO_ZMB"
+    if upper in {"ZAMTEL", "ZAMTEL_ZMB"}:
+        return "ZAMTEL_ZMB"
+
+    # If caller passes a generic gateway label, omit provider and let payment-revenue infer.
+    if upper in {"PAWA", "PAWAPAY", "PAWA_PAY", "PAWA-PAY"}:
+        return None
+
+    # Unknown provider value
+    raise HTTPException(status_code=400, detail="invalid_provider")
 
 
 async def _notify_in_app(*, user_id: str | None, business_id: str | None, template: str, payload: dict | None, correlation_id: str | None) -> None:
@@ -184,6 +217,61 @@ async def startup() -> None:
 
 # Register startup handler
 app.add_event_handler("startup", startup)
+
+
+def _get_internal_secret() -> str | None:
+    # Prefer unified env var, fall back to service config if present
+    import os
+
+    s = os.environ.get("OUTBOX_INTERNAL_SECRET")
+    if s:
+        return s
+    # No config helper in msme config; return None
+    return None
+
+
+def _require_internal_secret(request: Request) -> None:
+    expected = (_get_internal_secret() or "").strip()
+    provided = (request.headers.get("X-Internal-Secret") or "").strip()
+    if not expected or not provided or not secrets.compare_digest(expected, provided):
+        raise HTTPException(status_code=401, detail="invalid_internal_secret")
+
+
+@app.get("/outbox/pending")
+async def outbox_pending(request: Request, batch_size: int = 50, db: AsyncSession = Depends(get_db_session)):
+    _require_internal_secret(request)
+    now = datetime.now(timezone.utc)
+    q = select(OutboxEvent).where(OutboxEvent.status == "pending")
+    q = q.order_by(OutboxEvent.created_at)
+    q = q.limit(int(batch_size))
+    res = (await db.execute(q)).scalars().all()
+    out = []
+    for r in res:
+        out.append({
+            "id": r.id,
+            "event_type": r.event_type,
+            "payload": r.payload,
+            "dedupe_key": None,
+            "destination": r.target,
+            "attempts": r.attempts if hasattr(r, "attempts") else 0,
+            "scheduled_at": r.scheduled_at.isoformat() if getattr(r, "scheduled_at", None) else None,
+            "correlation_id": r.payload.get("correlation_id") if isinstance(r.payload, dict) else None,
+        })
+    return out
+
+
+@app.post("/outbox/ack")
+async def outbox_ack(request: Request, body: dict, db: AsyncSession = Depends(get_db_session)):
+    _require_internal_secret(request)
+    ids = body.get("ids") or []
+    if not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="invalid_ids")
+    q = select(OutboxEvent).where(OutboxEvent.id.in_(ids))
+    rows = (await db.execute(q)).scalars().all()
+    for r in rows:
+        r.status = "sent"
+    await db.commit()
+    return {"acked": [r.id for r in rows]}
 
 
 @app.middleware("http")
@@ -460,6 +548,51 @@ async def auth_logout(payload: LogoutRequest, db: AsyncSession = Depends(get_db_
     return {"status": "ok"}
 
 
+@app.post("/auth/service-token/{business_id}", response_model=TokenPair)
+async def auth_service_token(business_id: str, db: AsyncSession = Depends(get_db_session)):
+    """
+    Issue service-to-service JWT token for a business without requiring login.
+    
+    This endpoint is designed for downstream services (bots, background jobs) that need
+    to authenticate on behalf of a business without user credentials.
+    
+    **Security Note**: This endpoint should be protected by API gateway/firewall rules
+    to prevent unauthorized access. Only internal services should be able to call this.
+    """
+    # Find business
+    business = (await db.execute(select(Business).where(Business.id == business_id))).scalar_one_or_none()
+    if not business:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    
+    if not business.is_active:
+        raise HTTPException(status_code=403, detail="business_inactive")
+    
+    # Get the business owner (user) to generate token
+    owner = (await db.execute(select(User).where(User.id == business.owner_id))).scalar_one_or_none()
+    if not owner:
+        raise HTTPException(status_code=404, detail="owner_not_found")
+    
+    if not owner.is_active:
+        raise HTTPException(status_code=403, detail="owner_inactive")
+    
+    _, role_name = await get_user_and_role(db, owner.id)
+    
+    # Issue tokens for the owner (representing the business).
+    # Ensure the access token contains the business id so service tokens can act on behalf of the business.
+    owner.business_id = business.id
+    refresh_token = issue_refresh_token(user=owner, role_name=role_name)
+    access_token = issue_access_token(user=owner, role_name=role_name)
+    
+    # Persist refresh token as a revocable session
+    exp_ts = jwt_decode(refresh_token, secret=get_jwt_secret()).get("exp")
+    expires_at = datetime.fromtimestamp(int(exp_ts), tz=timezone.utc)
+    session = AuthSession(user_id=owner.id, token=refresh_token, expires_at=expires_at)
+    db.add(session)
+    await db.commit()
+    
+    return TokenPair(access_token=access_token, refresh_token=refresh_token)
+
+
 @app.get("/auth/me", response_model=UserOut)
 async def auth_me(request: Request, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db_session)):
     role_name = "default"
@@ -472,19 +605,45 @@ async def auth_me(request: Request, user: User = Depends(get_current_user), db: 
     return _user_out(user, role_name)
 
 
-@app.get("/auth/phone/{user_phone}", response_model=UserLookupOut)
+@app.get("/auth/phone/{user_phone}", response_model=UserPhoneLookupOut)
 async def auth_phone_lookup(user_phone: str, db: AsyncSession = Depends(get_db_session)):
-    user = (await db.execute(select(User).where(User.phone == user_phone))).scalar_one_or_none()
-    if not user:
+    """Lookup user by phone. Returns user details with associated business (if linked).
+    
+    Uses optimized left join to fetch user and business in single database query.
+    """
+    # Join User with Business (left join to get user even if no business)
+    stmt = (
+        select(User, Business)
+        .outerjoin(Business, User.business_id == Business.id)
+        .where(User.phone == user_phone)
+    )
+    
+    result = (await db.execute(stmt)).one_or_none()
+    if not result:
         raise HTTPException(status_code=404, detail="user_not_found")
-
+    
+    user, business = result
     _, role_name = await get_user_and_role(db, user.id)
-    return UserLookupOut(
-        user_id=user.id,
-        role=role_name,
-        business_id=user.business_id,
-        affiliate_id=user.affiliate_id,
-        is_active=bool(user.is_active),
+    
+    # Build business object if user is linked to a business
+    business_out = None
+    if business:
+        business_out = _business_out(business)
+    
+    return UserPhoneLookupOut(
+        user=UserOut(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            phone=user.phone,
+            role=role_name,
+            business_id=user.business_id,
+            affiliate_id=user.affiliate_id,
+            is_active=bool(user.is_active),
+            created_at=user.created_at,
+            updated_at=user.updated_at,
+        ),
+        business=business_out,
     )
 
 
@@ -894,7 +1053,8 @@ async def business_subscribe_and_pay(
 
         # If caller provided payment details and plan is paid, call payment-revenue
         pr_result = None
-        if plan == _PLAN_PAID and payload.amount_minor and payload.phone_number and payload.provider:
+        normalized_provider = _normalize_zmb_provider(payload.provider)
+        if plan == _PLAN_PAID and payload.amount_minor and payload.phone_number:
             # Require caller Authorization header for payment-initiating flows so payment-revenue can record initiator.
             auth = request.headers.get("Authorization")
             if not auth:
@@ -920,15 +1080,49 @@ async def business_subscribe_and_pay(
                 logger.exception("persist_subscription_price_failed")
 
             body = {
-                "depositId": payload.deposit_id or None,
+                "depositId": payload.deposit_id or str(uuid.uuid4()),
                 "order_id": None,
                 "business_id": b.id,
                 "amount_minor": int(payload.amount_minor) if payload.amount_minor else int(b.subscription_price_minor or 0),
                 "currency": payload.currency or (b.subscription_currency or "ZMW"),
                 "phoneNumber": payload.phone_number,
-                "provider": payload.provider,
                 "metadata": {"reference_id": sub.id, "source": "msme-subscribe"},
             }
+            # Attach affiliate context if present in caller's JWT
+            try:
+                auth = request.headers.get("Authorization")
+                affiliate_id = None
+                if auth and auth.lower().startswith("bearer "):
+                    token = auth.split()[1]
+                    try:
+                        tok = jwt_decode(token, secret=get_jwt_secret())
+                        affiliate_id = tok.get("affiliate_id")
+                    except Exception:
+                        affiliate_id = None
+
+                if affiliate_id:
+                    body["metadata"]["affiliate_id"] = affiliate_id
+
+                # Persist payment initiation so callbacks can be correlated
+                try:
+                    deposit_id_local = body.get("depositId")
+                    init = PaymentInitiation(
+                        deposit_id=str(deposit_id_local),
+                        business_id=b.id,
+                        subscription_id=sub.id,
+                        affiliate_id=affiliate_id,
+                        metadata=body,
+                        status="pending",
+                    )
+                    db.add(init)
+                    await db.commit()
+                except Exception:
+                    logger.exception("persist_payment_initiation_failed")
+            except Exception:
+                # best-effort: don't fail flow if affiliate parsing/persist fails
+                logger.exception("affiliate_extraction_failed")
+            if normalized_provider:
+                body["provider"] = normalized_provider
 
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
@@ -1047,7 +1241,7 @@ async def business_subscribe_and_pay(
 
     # Early guard: require Authorization header for payment-initiating subscribe_and_pay requests.
     plan = _normalize_plan(payload.plan)
-    if plan == _PLAN_PAID and payload.amount_minor and payload.phone_number and payload.provider:
+    if plan == _PLAN_PAID and payload.amount_minor and payload.phone_number:
         if not request.headers.get("Authorization"):
             raise HTTPException(status_code=401, detail="authorization_required_for_payment")
 
@@ -1093,17 +1287,43 @@ async def business_metadata(id: str, db: AsyncSession = Depends(get_db_session))
     )
 
 
-@app.get("/business/phone/{phone_number}", response_model=BusinessOut)
+@app.get("/business/phone/{phone_number}", response_model=BusinessPhoneLookupOut)
 async def business_lookup_by_phone(phone_number: str, db: AsyncSession = Depends(get_db_session)):
-    user = (await db.execute(select(User).where(User.phone == phone_number))).scalar_one_or_none()
-    if not user or not user.business_id:
-        raise HTTPException(status_code=404, detail="business_not_found")
+    """Lookup business by owner phone number. Returns both user and business details.
+    
+    Uses optimized join query to fetch user and business in single database round-trip.
+    """
+    # Single query: Join User and Business on user.business_id = business.id
+    stmt = (
+        select(User, Business)
+        .join(Business, User.business_id == Business.id)
+        .where(User.phone == phone_number)
+    )
+    
+    result = (await db.execute(stmt)).one_or_none()
+    if not result:
+        raise HTTPException(status_code=404, detail="business_not_found_for_phone")
+    
+    user, b = result
 
-    b = (await db.execute(select(Business).where(Business.id == user.business_id))).scalar_one_or_none()
-    if not b:
-        raise HTTPException(status_code=404, detail="business_not_found")
+    # Get user role
+    _, role_name = await get_user_and_role(db, user.id)
 
-    return _business_out(b)
+    return BusinessPhoneLookupOut(
+        business=_business_out(b),
+        owner=UserOut(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            phone=user.phone,
+            role=role_name,
+            business_id=user.business_id,
+            affiliate_id=user.affiliate_id,
+            is_active=bool(user.is_active),
+            created_at=user.created_at,
+            updated_at=user.updated_at,
+        ),
+    )
 
 
 @app.post("/business/reindex")
@@ -1176,6 +1396,85 @@ async def payment_success(
             correlation_id=getattr(request.state, "correlation_id", None),
             meta=payload.model_dump(mode="json"),
         )
+
+        # Attempt to correlate this payment success with a persisted PaymentInitiation
+        try:
+            # Prefer explicit correlation via `reference_id` present in the callback payload.
+            ref_id = None
+            try:
+                raw_body = await request.json()
+            except Exception:
+                raw_body = {}
+
+            if isinstance(raw_body, dict):
+                ref_id = (
+                    raw_body.get("reference_id")
+                    or raw_body.get("referenceId")
+                    or raw_body.get("payment_id")
+                    or raw_body.get("paymentId")
+                    or raw_body.get("deposit_id")
+                    or raw_body.get("depositId")
+                )
+
+            initiation = None
+            if ref_id:
+                initiation = (
+                    await db.execute(
+                        select(PaymentInitiation).where(PaymentInitiation.deposit_id == str(ref_id))
+                    )
+                ).scalar_one_or_none()
+
+            # Fallback: Look for recent pending initiation for this business (best-effort correlation)
+            if not initiation:
+                initiation = (
+                    await db.execute(
+                        select(PaymentInitiation)
+                        .where(PaymentInitiation.business_id == b.id)
+                        .where(PaymentInitiation.status == "pending")
+                        .order_by(PaymentInitiation.created_at.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+
+            affiliate_to_emit = None
+            if initiation and initiation.affiliate_id:
+                # Perform initiation.status update and Outbox insert atomically.
+                try:
+                    async with db.begin():
+                        # Re-select the initiation row for update inside the transaction
+                        locked = (
+                            await db.execute(
+                                select(PaymentInitiation).where(PaymentInitiation.id == initiation.id).with_for_update()
+                            )
+                        ).scalar_one_or_none()
+                        if not locked:
+                            raise RuntimeError("initiation_not_found_during_transaction")
+
+                        # Update initiation status
+                        locked.status = "completed"
+
+                        # Build outbox payload and insert OutboxEvent within same transaction
+                        out_payload = {
+                            "business_id": b.id,
+                            "subscription_plan": payload.plan,
+                            "amount": payload.amount,
+                            "currency": payload.currency,
+                            "occurred_at": datetime.now(timezone.utc).isoformat(),
+                            "correlation_id": getattr(request.state, "correlation_id", None),
+                            "affiliate_id": initiation.affiliate_id,
+                            "event_id": payload.event_id,
+                        }
+                        # Use shared outbox helper to insert outbox row (async-aware)
+                        from libs.outbox.outbox import create_outbox_row
+
+                        await create_outbox_row(db, "msme.subscription.payment_succeeded", out_payload)
+                    # commit happens on context exit
+                    affiliate_to_emit = initiation.affiliate_id
+                    except Exception:
+                        logger.exception("outbox_transaction_failed")
+
+        except Exception:
+            logger.exception("initiation_correlation_failed")
 
         await _notify_in_app(
             user_id=b.owner_id,
@@ -1348,3 +1647,58 @@ async def notification_get(id: str, request: Request):
         return JSONResponse(status_code=r.status_code, content=r.json())
     except Exception:
         return JSONResponse(status_code=r.status_code, content={"detail": "invalid_notification_response"})
+
+
+# ---- Delivery locations endpoints ----
+
+
+@app.get("/businesses/{business_id}/delivery-locations")
+async def get_business_delivery_locations(business_id: str, db: AsyncSession = Depends(get_db_session)):
+    """Return the delivery locations mapping for a business.
+
+    Response example: {"Lusaka": {"price_minor": 2500, "currency": "ZMW"}, ...}
+    """
+    b = (await db.execute(select(Business).where(Business.id == business_id))).scalar_one_or_none()
+    if not b:
+        raise HTTPException(status_code=404, detail="business_not_found")
+    return b.delivery_locations or {}
+
+
+@app.put("/businesses/{business_id}/delivery-locations")
+async def update_business_delivery_locations(
+    business_id: str,
+    payload: DeliveryLocationsUpdate,
+    db: AsyncSession = Depends(get_db_session),
+    current_user = Depends(get_current_user),
+):
+    """Replace the business's delivery locations. Caller must be authenticated.
+
+    The payload must be a mapping of town -> metadata, where metadata includes at least `price_minor`.
+    """
+    # authorization: only allow owner or staff to update (simple check)
+    b = (await db.execute(select(Business).where(Business.id == business_id))).scalar_one_or_none()
+    if not b:
+        raise HTTPException(status_code=404, detail="business_not_found")
+
+    # Very small authorization: user must be the business owner or have role 'admin' or 'staff'
+    # Resolve role name for the current_user (User object doesn't include `role` attribute)
+    _, role_name = await get_user_and_role(db, current_user.id)
+    if getattr(current_user, "business_id", None) != business_id and role_name not in {"admin", "staff"}:
+        raise HTTPException(status_code=403, detail="not_authorized")
+
+    # Basic validation: ensure each entry has price_minor as int
+    for town, meta in payload.delivery_locations.items():
+        if not isinstance(meta, dict):
+            raise HTTPException(status_code=400, detail=f"invalid_meta_for_{town}")
+        if "price_minor" not in meta:
+            raise HTTPException(status_code=400, detail=f"missing_price_minor_for_{town}")
+        try:
+            int(meta["price_minor"])
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"invalid_price_minor_for_{town}")
+
+    b.delivery_locations = payload.delivery_locations
+    db.add(b)
+    await db.commit()
+    await db.refresh(b)
+    return b.delivery_locations or {}

@@ -52,6 +52,7 @@ class Product(Base):
     currency: Mapped[str] = mapped_column(String, nullable=False, default="ZMW")
     image_url: Mapped[str | None] = mapped_column(String, nullable=True)
     tags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    media_urls: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)

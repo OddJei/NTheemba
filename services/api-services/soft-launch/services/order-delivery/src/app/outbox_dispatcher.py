@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 import httpx
@@ -9,6 +10,8 @@ from sqlalchemy import select
 from src.app.config import get_affiliate_engine_base_url, get_affiliate_engine_timeout_seconds
 from src.app.db import SessionLocal
 from src.app.models import OutboxEvent
+
+logger = logging.getLogger("order-delivery")
 
 
 async def dispatch_once(*, batch_size: int = 50) -> int:
@@ -20,7 +23,7 @@ async def dispatch_once(*, batch_size: int = 50) -> int:
             await db.execute(
                 select(OutboxEvent)
                 .where(OutboxEvent.processed.is_(False))
-                .where(OutboxEvent.event_type == "order_created")
+                .where(OutboxEvent.event_type.in_(["order_created", "order_delivered"]))
                 .order_by(OutboxEvent.created_at.asc())
                 .limit(int(batch_size))
             )
@@ -34,7 +37,8 @@ async def dispatch_once(*, batch_size: int = 50) -> int:
             for ev in events:
                 payload: dict[str, Any] = ev.payload or {}
                 affiliate_code = payload.get("affiliate_code")
-                if not affiliate_code:
+                affiliate_id = payload.get("affiliate_id")
+                if not (affiliate_code or affiliate_id):
                     ev.processed = True
                     await db.commit()
                     continue
@@ -49,9 +53,10 @@ async def dispatch_once(*, batch_size: int = 50) -> int:
                     headers["X-Idempotency-Key"] = event_id
 
                 last_exc: Exception | None = None
+                destination = "/events/order-created" if ev.event_type == "order_created" else "/events/order/delivered"
                 for attempt in range(3):
                     try:
-                        resp = await client.post(f"{base}/events/order-created", json=payload, headers=headers)
+                        resp = await client.post(f"{base}{destination}", json=payload, headers=headers)
                         if 200 <= resp.status_code < 300:
                             last_exc = None
                             break
@@ -71,9 +76,16 @@ async def dispatch_once(*, batch_size: int = 50) -> int:
 
 
 async def run_forever(*, poll_seconds: float = 2.0, batch_size: int = 50) -> None:
+    logger.info("OUTBOX_DISPATCHER_STARTED", extra={"poll_seconds": poll_seconds, "batch_size": batch_size})
     while True:
-        processed = await dispatch_once(batch_size=batch_size)
-        if processed == 0:
+        try:
+            processed = await dispatch_once(batch_size=batch_size)
+            if processed > 0:
+                logger.info("OUTBOX_DISPATCHER_PROCESSED", extra={"count": processed})
+            else:
+                await asyncio.sleep(float(poll_seconds))
+        except Exception as e:
+            logger.error("OUTBOX_DISPATCHER_ERROR", extra={"error": str(e)})
             await asyncio.sleep(float(poll_seconds))
 
 

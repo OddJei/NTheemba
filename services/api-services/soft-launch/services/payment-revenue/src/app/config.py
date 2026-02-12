@@ -185,3 +185,8 @@ def get_outbox_flush_backoff_max_seconds() -> int:
 def get_pg_schema() -> str:
     # Optional schema name. If set and using Postgres, the service will ensure it exists.
     return os.getenv("PG_SCHEMA", "").strip()
+
+
+def get_admin_key() -> str:
+    # Admin key for protected administrative endpoints.
+    return os.getenv("ADMIN_KEY", "change-me")

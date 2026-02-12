@@ -5,7 +5,7 @@ from typing import List
 from typing import Any, Dict, Optional
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class AffiliateCreate(BaseModel):
@@ -154,6 +154,23 @@ class OrderDeliveredEvent(BaseModel):
     business_id: str
 
 
+class SessionCycleCreatedEvent(BaseModel):
+    event_id: str
+    event_type: str = "session_cycle_created"
+    occurred_at: datetime
+    correlation_id: Optional[str]
+    producer: str
+
+    affiliate_id: str
+    session_id: str
+    cycle_id: str
+    cycle_state: str
+
+    user_phone: Optional[str] = None
+    business_id: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
+
+
 
 class EarningOut(BaseModel):
     id: str
@@ -236,6 +253,54 @@ class TierAssign(BaseModel):
     ends_at: Optional[datetime] = None
 
 
+class TierThreshold(BaseModel):
+    tier_name: str
+    gmv_min: float
+    buyers_min: int
+    referrals_min: int
+    session_cycles_min: int
+    min_metrics_required: int
+
+
+class TierThresholdUpdate(BaseModel):
+    gmv_min: Optional[float] = None
+    buyers_min: Optional[int] = None
+    referrals_min: Optional[int] = None
+    session_cycles_min: Optional[int] = None
+    min_metrics_required: Optional[int] = None
+
+
+class ProjectedPayoutOut(BaseModel):
+    """Real-time projected payout for current epoch based on current metrics."""
+    affiliate_id: str
+    epoch_id: str
+    epoch_ends_at: datetime
+
+    # Metrics
+    sales_volume: float
+    unique_buyers: int
+    msme_referrals: int
+    clicks: int
+    attributions: int
+    paid_attributions: int
+    session_cycles: int
+
+    # Scoring
+    weighted_score: float
+
+    # Tier qualification
+    qualified_tiers: list[str]
+    effective_tier: Optional[str]
+    tier_multiplier: float
+
+    # Payout calculation
+    gross_revenue_zmw: float
+    pool_pct: float
+    pool_amount_zmw: float
+    affiliate_share_pct: float
+    projected_payout_zmw: float
+
+
 class PoolStanding(BaseModel):
     affiliate_id: str
     tier_name: Optional[str]
@@ -255,8 +320,7 @@ class PoolStanding(BaseModel):
     clicks: int
     attributions: int
     paid_attributions: int
-
-    conversion_quality: float
+    session_cycles: int
 
     op_raw: float
     op_final: float
@@ -303,3 +367,67 @@ class AffiliateEventOut(BaseModel):
 
     meta: Optional[Dict[str, Any]] = None
     created_at: datetime
+
+
+class MetricSnapshotOut(BaseModel):
+    """Snapshot of affiliate metrics at a specific point in time (e.g., epoch close)."""
+    
+    id: str
+    epoch_id: str
+    affiliate_id: str
+
+    # Primary weighted metrics (4 metrics)
+    sales_volume: float
+    unique_buyers: int
+    msme_referrals: int
+    session_cycles: int
+
+    # Supporting metrics (tracked but not weighted)
+    clicks: int
+    attributions: int
+    paid_attributions: int
+
+    # Scoring result
+    weighted_score: float
+
+    # Tier qualification at snapshot time
+    qualified_tiers: list[str]  # e.g., ["bronze", "silver"]
+    effective_tier: Optional[str]  # Highest qualified tier
+    tier_multiplier: float
+
+    # Payout projection
+    pool_pct: float
+    pool_amount_zmw: float
+    affiliate_share_pct: float
+    projected_payout_zmw: float
+
+    # Metadata
+    meta: Optional[Dict[str, Any]] = None
+    
+    # Timestamp
+    recorded_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MetricHistoryOut(BaseModel):
+    """Historical metrics for an affiliate across epochs."""
+    
+    affiliate_id: str
+    snapshots: list[MetricSnapshotOut]
+    total_snapshots: int
+    date_range: Optional[tuple[datetime, datetime]] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PayoutStatusCallback(BaseModel):
+    """Callback from payment-revenue service with payout status update."""
+    
+    payout_id: str
+    epoch_id: str
+    affiliate_id: str
+    status: Literal["completed", "failed"]
+    amount_zmw: float
+    error_message: Optional[str] = None
+    completed_at: datetime

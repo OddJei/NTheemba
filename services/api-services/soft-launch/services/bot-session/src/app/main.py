@@ -61,7 +61,6 @@ class CreateSessionReq(BaseModel):
     bot_type: Optional[str] = None
     business_id: Optional[str] = None
     platform: str
-    affiliate_code: Optional[str] = None
     affiliate_id: Optional[str] = None
     affiliate_metadata: Optional[dict] = None
 
@@ -84,6 +83,11 @@ async def startup() -> None:
     if os.getenv("DISABLE_CLEANUP_JOBS") != "1":
         try:
             jobs.schedule_cleanup(app)
+            # schedule periodic sweeps for abandoned sessions and stuck cycles
+            try:
+                jobs.schedule_sweeps(app)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -115,6 +119,11 @@ async def resolve_bot_by_phone(db: AsyncSession, phone: str) -> Optional[models.
 
 
 MSME_ENGINE_URL = os.getenv("MSME_ENGINE_URL", "http://127.0.0.1:8500")
+AFFILIATE_ENGINE_BASE_URL = os.getenv("AFFILIATE_ENGINE_BASE_URL", "http://127.0.0.1:8510")
+try:
+    AFFILIATE_ENGINE_TIMEOUT_SECONDS = float(os.getenv("AFFILIATE_ENGINE_TIMEOUT_SECONDS", "3.0"))
+except ValueError:
+    AFFILIATE_ENGINE_TIMEOUT_SECONDS = 3.0
 
 
 async def _msme_auth_lookup(user_phone: str) -> Optional[dict]:
@@ -160,6 +169,22 @@ async def bot_create(payload: dict, db: AsyncSession = Depends(get_db_session)):
     db.add(bot)
     await db.commit()
     await db.refresh(bot)
+    
+    # Emit audit event for bot creation
+    await audit_client.emit_audit(
+        service="bot-session",
+        event_type="bot_created",
+        payload={
+            "bot_id": bot.id,
+            "phone_number": bot.phone_number,
+            "bot_type": bot.type.value,
+            "business_id": bot.business_id,
+        },
+        entity_type="bot",
+        entity_id=bot.id,
+        metadata={"phone_number": bot.phone_number},
+    )
+    
     return {"bot_id": bot.id, "phone_number": bot.phone_number}
 
 
@@ -228,20 +253,23 @@ async def create_session(payload: CreateSessionReq, db: AsyncSession = Depends(g
         reactivated = False
 
         # If affiliate info provided on create, record initial cycle with attribution
-        if payload.affiliate_code or payload.affiliate_id or payload.affiliate_metadata:
+        if payload.affiliate_id or payload.affiliate_metadata:
             # Initial SessionStateCycle: captures affiliate attribution at session creation.
             # This is recorded separately from the Session row so attribution is tracked per cycle.
-            cycle = models.SessionStateCycle(
-                session_id=session_obj.id,
-                cycle_type=session_obj.state,
-                started_at=datetime.utcnow(),
-                initiated_by_affiliate=True,
-                affiliate_code=payload.affiliate_code,
-                affiliate_id=payload.affiliate_id,
-                meta=payload.affiliate_metadata,
+            affiliate_metadata = payload.affiliate_metadata if isinstance(payload.affiliate_metadata, dict) else None
+            incoming_context = affiliate_metadata.get("context") if affiliate_metadata else None
+            cycle = _create_cycle(
+                session_obj.id,
+                session_obj.state,
+                payload.affiliate_id,
+                affiliate_metadata,
+                incoming_context,
+                None,
             )
             db.add(cycle)
             await db.commit()
+            await db.refresh(cycle)
+            await _emit_affiliate_cycle_created(cycle, session_obj)
 
     await audit_client.emit_audit(
         service="bot-session",
@@ -307,11 +335,10 @@ async def admin_session_full(session_id: str, request: Request, db: AsyncSession
     cycles = [
         {
             "id": c.id,
-            "cycle_type": c.cycle_type.value,
+            "cycle_state": c.cycle_state.value,
             "started_at": c.started_at,
             "completed_at": c.completed_at,
             "initiated_by_affiliate": c.initiated_by_affiliate,
-            "affiliate_code": c.affiliate_code,
             "affiliate_id": c.affiliate_id,
             "meta": c.meta,
         }
@@ -387,7 +414,393 @@ async def close_session(session_id: str, db: AsyncSession = Depends(get_db_sessi
         db.add(c)
     await db.commit()
 
+    # Emit audit event for session closure
+    await audit_client.emit_audit(
+        service="bot-session",
+        event_type="session_closed",
+        payload={
+            "session_id": s.id,
+            "user_phone": s.user_phone,
+            "bot_id": s.bot_id,
+            "status": s.status.value,
+            "duration_seconds": s.duration_seconds,
+        },
+        actor_id=s.user_phone,
+        entity_type="session",
+        entity_id=s.id,
+        metadata={"duration_seconds": s.duration_seconds},
+    )
+
     return {"session_id": s.id, "status": s.status.value, "closed_at": s.closed_at}
+
+
+class StateTransitionRequest(BaseModel):
+    new_state: str
+    context: Optional[dict] = None
+    affiliate_id: Optional[str] = None
+
+
+class StateCycleUpgradeRequest(BaseModel):
+    new_state: str
+    context: Optional[dict] = None
+    affiliate_id: Optional[str] = None
+
+
+def _extract_cycle_context(meta: Optional[dict]) -> dict:
+    meta = meta or {}
+    context = meta.get("context")
+    return context if isinstance(context, dict) else {}
+
+
+def _extract_affiliate_metadata(meta: Optional[dict]) -> Optional[dict]:
+    meta = meta or {}
+    affiliate_metadata = meta.get("affiliate_metadata")
+    return affiliate_metadata if isinstance(affiliate_metadata, dict) else None
+
+
+def _build_cycle_context(
+    cycle_state: models.SessionState,
+    incoming_context: Optional[dict],
+    existing_context: Optional[dict],
+) -> dict:
+    incoming_context = incoming_context or {}
+    existing_context = existing_context or {}
+
+    if "user_text" in existing_context:
+        user_text = existing_context.get("user_text")
+    else:
+        user_text = incoming_context.get("user_text", "")
+
+    context = {"user_text": user_text}
+
+    if cycle_state == models.SessionState.cart:
+        cart_items = incoming_context.get("cart_items")
+        if cart_items is None:
+            cart_items = existing_context.get("cart_items") or []
+        context["cart_items"] = cart_items
+        context["checkout"] = True
+    elif cycle_state == models.SessionState.order:
+        order_id = incoming_context.get("order_id")
+        if order_id is None:
+            order_id = existing_context.get("order_id")
+        context["order_id"] = order_id
+        context["confirmed_order"] = True
+    elif cycle_state == models.SessionState.payment:
+        payment_method = incoming_context.get("payment_method")
+        if payment_method is None:
+            payment_method = existing_context.get("payment_method")
+        context["payment_method"] = payment_method
+        context["confirm_payment"] = True
+
+    return context
+
+
+def _build_cycle_meta(
+    cycle_state: models.SessionState,
+    incoming_context: Optional[dict],
+    existing_meta: Optional[dict],
+    affiliate_metadata: Optional[dict],
+) -> dict:
+    existing_context = _extract_cycle_context(existing_meta)
+    context = _build_cycle_context(cycle_state, incoming_context, existing_context)
+    meta = {"context": context}
+
+    if affiliate_metadata is not None:
+        meta["affiliate_metadata"] = affiliate_metadata
+    else:
+        existing_affiliate_metadata = _extract_affiliate_metadata(existing_meta)
+        if existing_affiliate_metadata is not None:
+            meta["affiliate_metadata"] = existing_affiliate_metadata
+
+    return meta
+
+
+def _resolve_initiated_by_affiliate(
+    initiated_by_affiliate: Optional[bool],
+    affiliate_id: Optional[str],
+) -> bool:
+    if initiated_by_affiliate is None:
+        initiated_by_affiliate = True if affiliate_id else False
+
+    if initiated_by_affiliate and not affiliate_id:
+        raise HTTPException(status_code=400, detail="affiliate_id required when initiated_by_affiliate=true")
+    if not initiated_by_affiliate and affiliate_id:
+        raise HTTPException(status_code=400, detail="affiliate_id must be null when initiated_by_affiliate=false")
+
+    return initiated_by_affiliate
+
+
+async def _dispatch_to_affiliate_engine_cycle_created(*, payload: dict, correlation_id: str) -> bool:
+    base = AFFILIATE_ENGINE_BASE_URL.rstrip("/")
+    timeout = AFFILIATE_ENGINE_TIMEOUT_SECONDS
+
+    headers: dict[str, str] = {"X-Correlation-Id": correlation_id}
+    event_id = payload.get("event_id")
+    if isinstance(event_id, str) and event_id:
+        headers["X-Idempotency-Key"] = event_id
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(f"{base}/events/session-cycle-created", json=payload, headers=headers)
+    except httpx.RequestError:
+        return False
+
+    return r.status_code in (200, 201)
+
+
+async def _emit_affiliate_cycle_created(cycle: models.SessionStateCycle, session: models.Session) -> None:
+    if not cycle.initiated_by_affiliate or not cycle.affiliate_id:
+        return
+
+    payload = {
+        "event_id": cycle.id,
+        "event_type": "session_cycle_created",
+        "occurred_at": cycle.started_at.isoformat(),
+        "correlation_id": cycle.id,
+        "producer": "bot-session",
+        "affiliate_id": cycle.affiliate_id,
+        "session_id": cycle.session_id,
+        "cycle_id": cycle.id,
+        "cycle_state": cycle.cycle_state.value,
+        "user_phone": session.user_phone,
+        "business_id": session.business_id,
+        "meta": cycle.meta,
+    }
+    await _dispatch_to_affiliate_engine_cycle_created(payload=payload, correlation_id=cycle.id)
+
+
+def _upgrade_cycle_meta(
+    cycle_state: models.SessionState,
+    incoming_context: Optional[dict],
+    existing_meta: Optional[dict],
+) -> dict:
+    return _build_cycle_meta(cycle_state, incoming_context, existing_meta, None)
+
+
+def _create_cycle(
+    session_id: str,
+    cycle_state: models.SessionState,
+    affiliate_id: Optional[str],
+    affiliate_metadata: Optional[dict],
+    incoming_context: Optional[dict],
+    existing_meta: Optional[dict],
+) -> models.SessionStateCycle:
+    meta = _build_cycle_meta(cycle_state, incoming_context, existing_meta, affiliate_metadata)
+    return models.SessionStateCycle(
+        session_id=session_id,
+        cycle_state=cycle_state,
+        started_at=datetime.utcnow(),
+        initiated_by_affiliate=_resolve_initiated_by_affiliate(None, affiliate_id),
+        affiliate_id=affiliate_id,
+        meta=meta,
+    )
+
+
+async def lookup_cycle_state(session_id: str, db: AsyncSession) -> dict:
+    res = await db.execute(
+        select(models.SessionStateCycle)
+        .where(models.SessionStateCycle.session_id == session_id)
+        .order_by(models.SessionStateCycle.started_at.desc())
+        .limit(1)
+    )
+    latest = res.scalars().first()
+    if not latest:
+        return {}
+    return _extract_cycle_context(latest.meta)
+
+
+def validate_state_transition(current_state: models.SessionState, new_state_str: str, context: Optional[dict]) -> tuple[bool, str]:
+    """Validate strict state progression and required context."""
+    # Parse new state
+    try:
+        new_state = models.SessionState[new_state_str]
+    except KeyError:
+        return False, f"Invalid state: {new_state_str}"
+    
+    # Define valid transitions
+    VALID_TRANSITIONS = {
+        models.SessionState.chat: [models.SessionState.cart],
+        models.SessionState.cart: [models.SessionState.order, models.SessionState.chat],
+        models.SessionState.order: [models.SessionState.payment, models.SessionState.cart],
+        models.SessionState.payment: [models.SessionState.delivery, models.SessionState.order],
+        models.SessionState.delivery: [models.SessionState.closed],
+        models.SessionState.closed: [],
+    }
+    
+    # Check if transition is valid
+    if new_state not in VALID_TRANSITIONS.get(current_state, []):
+        return False, f"Invalid transition from {current_state.value} to {new_state.value}"
+    
+    # Validate required context per transition
+    ctx = context or {}
+    
+    if new_state == models.SessionState.cart:
+        # chat → cart requires selected items
+        if not ctx.get("selected_items"):
+            return False, "cart transition requires 'selected_items' in context"
+    
+    elif new_state == models.SessionState.order:
+        # cart → order requires cart summary
+        if not ctx.get("cart_summary"):
+            return False, "order transition requires 'cart_summary' in context"
+    
+    elif new_state == models.SessionState.payment:
+        # order → payment requires fulfillment + contact + total
+        if not all(k in ctx for k in ["fulfillment", "contact", "order_total"]):
+            return False, "payment transition requires 'fulfillment', 'contact', 'order_total' in context"
+    
+    elif new_state == models.SessionState.delivery:
+        # payment → delivery requires payment success
+        if ctx.get("payment_status") != "success" or not ctx.get("transaction_id"):
+            return False, "delivery transition requires 'payment_status=success' and 'transaction_id' in context"
+    
+    elif new_state == models.SessionState.closed:
+        # delivery → closed requires delivery confirmation and identifiers
+        if (
+            ctx.get("delivery_status") != "confirmed"
+            or not ctx.get("delivery_code")
+            or not ctx.get("order_id")
+            or not ctx.get("payment_id")
+        ):
+            return False, "closed transition requires 'delivery_status=confirmed', 'delivery_code', 'order_id' and 'payment_id' in context"
+    
+    return True, ""
+
+
+@app.post("/session/{session_id}/transition")
+async def transition_session_state(
+    session_id: str,
+    payload: StateTransitionRequest,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """Transition session to new state with validation and structured context."""
+    # Fetch session
+    res = await db.execute(select(models.Session).where(models.Session.id == session_id))
+    s = res.scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    
+    if s.status == models.SessionStatus.closed:
+        raise HTTPException(status_code=400, detail="session_already_closed")
+    
+    # Validate transition
+    valid, error_msg = validate_state_transition(s.state, payload.new_state, payload.context)
+    if not valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+    
+    # Parse new state
+    new_state = models.SessionState[payload.new_state]
+    
+    # Complete current cycle
+    res_cycle = await db.execute(
+        select(models.SessionStateCycle).where(
+            models.SessionStateCycle.session_id == session_id,
+            models.SessionStateCycle.completed_at == None
+        )
+    )
+    current_cycle = res_cycle.scalar_one_or_none()
+    if current_cycle:
+        current_cycle.completed_at = datetime.utcnow()
+        db.add(current_cycle)
+    
+    # Update session state
+    old_state = s.state
+    s.state = new_state
+    s.state_entered_at = datetime.utcnow()
+    
+    # Merge context into object_context
+    if payload.context:
+        existing_context = s.object_context or {}
+        existing_context[new_state.value] = payload.context
+        s.object_context = existing_context
+    
+    db.add(s)
+    
+    # Create new cycle for new state
+    new_cycle = _create_cycle(
+        session_id,
+        new_state,
+        payload.affiliate_id,
+        None,
+        payload.context,
+        current_cycle.meta if current_cycle else None,
+    )
+    db.add(new_cycle)
+    
+    await db.commit()
+    await db.refresh(s)
+    await db.refresh(new_cycle)
+    await _emit_affiliate_cycle_created(new_cycle, s)
+    
+    # Emit audit event
+    await audit_client.emit_audit(
+        service="bot-session",
+        event_type="session_state_transition",
+        payload={
+            "session_id": session_id,
+            "old_state": old_state.value,
+            "new_state": new_state.value,
+            "context_keys": list(payload.context.keys()) if payload.context else [],
+        },
+        actor_id=s.user_phone,
+        entity_type="session",
+        entity_id=session_id,
+        metadata={"transition": f"{old_state.value} → {new_state.value}"},
+    )
+    
+    return {
+        "session_id": session_id,
+        "old_state": old_state.value,
+        "new_state": new_state.value,
+        "state_entered_at": s.state_entered_at,
+        "cycle_id": new_cycle.id,
+    }
+
+
+@app.get("/session/{session_id}/context")
+async def get_session_context(session_id: str, db: AsyncSession = Depends(get_db_session)):
+    """Get structured context for a session."""
+    res = await db.execute(select(models.Session).where(models.Session.id == session_id))
+    s = res.scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    
+    return {
+        "session_id": session_id,
+        "current_state": s.state.value,
+        "object_context": s.object_context or {},
+        "state_entered_at": s.state_entered_at,
+    }
+
+
+@app.patch("/session/{session_id}/context")
+async def update_session_context(
+    session_id: str,
+    context: dict,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """Update structured context for current session state."""
+    res = await db.execute(select(models.Session).where(models.Session.id == session_id))
+    s = res.scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    
+    # Merge context for current state
+    existing_context = s.object_context or {}
+    current_state_key = s.state.value
+    existing_context[current_state_key] = {
+        **(existing_context.get(current_state_key) or {}),
+        **context,
+    }
+    s.object_context = existing_context
+    db.add(s)
+    await db.commit()
+    
+    return {
+        "session_id": session_id,
+        "current_state": s.state.value,
+        "updated_context": existing_context[current_state_key],
+    }
 
 
 @app.get("/session/resolve")
@@ -395,7 +808,6 @@ async def resolve_session(
     user_phone: Optional[str] = None,
     bot_id: Optional[str] = None,
     platform: Optional[str] = None,
-    affiliate_code: Optional[str] = None,
     affiliate_id: Optional[str] = None,
     affiliate_metadata: Optional[str] = None,
     db: AsyncSession = Depends(get_db_session),
@@ -436,20 +848,23 @@ async def resolve_session(
     await db.commit()
     await db.refresh(new_s)
     # record initial cycle if affiliate info present
-    if affiliate_code or affiliate_id or affiliate_metadata:
+    if affiliate_id or affiliate_metadata:
         # Initial SessionStateCycle on session resolution when affiliate attribution
         # is provided by the resolver call.
-        cycle = models.SessionStateCycle(
-            session_id=new_s.id,
-            cycle_type=new_s.state,
-            started_at=datetime.utcnow(),
-            initiated_by_affiliate=True,
-            affiliate_code=affiliate_code,
-            affiliate_id=affiliate_id,
-            meta=affiliate_metadata,
+        affiliate_metadata = affiliate_metadata if isinstance(affiliate_metadata, dict) else None
+        incoming_context = affiliate_metadata.get("context") if affiliate_metadata else None
+        cycle = _create_cycle(
+            new_s.id,
+            new_s.state,
+            affiliate_id,
+            affiliate_metadata,
+            incoming_context,
+            None,
         )
         db.add(cycle)
         await db.commit()
+        await db.refresh(cycle)
+        await _emit_affiliate_cycle_created(cycle, new_s)
     return {"session_id": new_s.id, "session_mode": new_s.session_mode.value, "status": new_s.status.value}
 
 
@@ -560,13 +975,17 @@ async def event_create(payload: CreateEventReq, db: AsyncSession = Depends(get_d
                         open_cycle = res_c.scalars().first()
                         if open_cycle:
                             # capture affiliate info before closing
-                            aff_code = open_cycle.affiliate_code
                             aff_id = open_cycle.affiliate_id
-                            aff_meta = open_cycle.meta
+                            prior_meta = open_cycle.meta or {}
                             open_cycle.completed_at = datetime.utcnow()
                             db.add(open_cycle)
-                            return {"affiliate_code": aff_code, "affiliate_id": aff_id, "affiliate_metadata": aff_meta}
-                        return {"affiliate_code": None, "affiliate_id": None, "affiliate_metadata": None}
+                            return {
+                                "affiliate_id": aff_id,
+                                "affiliate_metadata": _extract_affiliate_metadata(prior_meta),
+                                "context": _extract_cycle_context(prior_meta),
+                                "meta": prior_meta,
+                            }
+                        return {"affiliate_id": None, "affiliate_metadata": None, "context": {}, "meta": None}
 
                     et = (payload.event_type or "")
                     if et in transition_map:
@@ -575,16 +994,17 @@ async def event_create(payload: CreateEventReq, db: AsyncSession = Depends(get_d
                             # On state transition: complete any open cycle and create
                             # a new SessionStateCycle for the `new_state`.
                             prior_aff = await _fetch_and_complete_open_cycle()
-                            cycle = models.SessionStateCycle(
-                                session_id=session.id,
-                                cycle_type=new_state,
-                                started_at=datetime.utcnow(),
-                                initiated_by_affiliate=bool(prior_aff.get("affiliate_code") or prior_aff.get("affiliate_id")),
-                                affiliate_code=prior_aff.get("affiliate_code"),
-                                affiliate_id=prior_aff.get("affiliate_id"),
-                                meta=prior_aff.get("affiliate_metadata"),
+                            cycle = _create_cycle(
+                                session.id,
+                                new_state,
+                                prior_aff.get("affiliate_id"),
+                                None,
+                                None,
+                                prior_aff.get("meta"),
                             )
                             db.add(cycle)
+                            await db.flush()
+                            await _emit_affiliate_cycle_created(cycle, session)
                             session.state = new_state
                             session.state_entered_at = datetime.utcnow()
                             db.add(session)
@@ -693,29 +1113,34 @@ async def event_create(payload: CreateEventReq, db: AsyncSession = Depends(get_d
                     )
                     open_cycle = res_c.scalars().first()
                     if open_cycle:
-                        aff_code = open_cycle.affiliate_code
                         aff_id = open_cycle.affiliate_id
-                        aff_meta = open_cycle.meta
+                        prior_meta = open_cycle.meta or {}
                         open_cycle.completed_at = datetime.utcnow()
                         db.add(open_cycle)
-                        return {"affiliate_code": aff_code, "affiliate_id": aff_id, "affiliate_metadata": aff_meta}
-                    return {"affiliate_code": None, "affiliate_id": None, "affiliate_metadata": None}
+                        return {
+                            "affiliate_id": aff_id,
+                            "affiliate_metadata": _extract_affiliate_metadata(prior_meta),
+                            "context": _extract_cycle_context(prior_meta),
+                            "meta": prior_meta,
+                        }
+                    return {"affiliate_id": None, "affiliate_metadata": None, "context": {}, "meta": None}
 
                 et = (payload.event_type or "")
                 if et in transition_map:
                     new_state = transition_map[et]
                     if session.state != new_state:
                         prior_aff = await _fetch_and_complete_open_cycle()
-                        cycle = models.SessionStateCycle(
-                            session_id=session.id,
-                            cycle_type=new_state,
-                            started_at=datetime.utcnow(),
-                            initiated_by_affiliate=bool(prior_aff.get("affiliate_code") or prior_aff.get("affiliate_id")),
-                            affiliate_code=prior_aff.get("affiliate_code"),
-                            affiliate_id=prior_aff.get("affiliate_id"),
-                            meta=prior_aff.get("affiliate_metadata"),
+                        cycle = _create_cycle(
+                            session.id,
+                            new_state,
+                            prior_aff.get("affiliate_id"),
+                            None,
+                            None,
+                            prior_aff.get("meta"),
                         )
                         db.add(cycle)
+                        await db.flush()
+                        await _emit_affiliate_cycle_created(cycle, session)
                         session.state = new_state
                         session.state_entered_at = datetime.utcnow()
                         db.add(session)
@@ -827,16 +1252,86 @@ async def session_cycles(session_id: str, db: AsyncSession = Depends(get_db_sess
     return [
         {
             "id": r.id,
-            "cycle_type": r.cycle_type.value,
+            "cycle_state": r.cycle_state.value,
             "started_at": r.started_at,
             "completed_at": r.completed_at,
             "initiated_by_affiliate": r.initiated_by_affiliate,
-            "affiliate_code": r.affiliate_code,
             "affiliate_id": r.affiliate_id,
             "meta": r.meta,
         }
         for r in rows
     ]
+
+
+@app.post("/session/{session_id}/cycle/{cycle_id}/upgrade")
+async def upgrade_cycle_by_id(
+    session_id: str,
+    cycle_id: str,
+    payload: StateCycleUpgradeRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Upgrade a specific open cycle identified by session_id+cycle_id to a new state.
+
+    This allows targeted upgrades when clients reference a particular cycle.
+    """
+    # Fetch session
+    res = await db.execute(select(models.Session).where(models.Session.id == session_id))
+    s = res.scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="session_not_found")
+
+    # Fetch cycle
+    res_c = await db.execute(select(models.SessionStateCycle).where(models.SessionStateCycle.id == cycle_id))
+    c = res_c.scalar_one_or_none()
+    if not c or c.session_id != session_id:
+        raise HTTPException(status_code=404, detail="cycle_not_found")
+
+    if c.completed_at is not None:
+        raise HTTPException(status_code=400, detail="cycle_already_completed")
+
+    # Validate transition from the cycle's current state
+    valid, err = validate_state_transition(c.cycle_state, payload.new_state, payload.context)
+    if not valid:
+        raise HTTPException(status_code=400, detail=err)
+
+    # Complete the targeted cycle
+    c.completed_at = datetime.utcnow()
+    db.add(c)
+
+    # Create new cycle carrying affiliate attribution
+    new_state = models.SessionState[payload.new_state]
+    new_cycle = _create_cycle(
+        session_id,
+        new_state,
+        c.affiliate_id,
+        None,
+        payload.context,
+        c.meta,
+    )
+    db.add(new_cycle)
+
+    # Update session state if needed
+    if s.state != new_state:
+        s.state = new_state
+        s.state_entered_at = datetime.utcnow()
+        db.add(s)
+
+    await db.commit()
+    await db.refresh(new_cycle)
+    await db.refresh(s)
+    await _emit_affiliate_cycle_created(new_cycle, s)
+
+    await audit_client.emit_audit(
+        service="bot-session",
+        event_type="cycle_upgraded",
+        payload={"session_id": session_id, "old_cycle_id": c.id, "new_cycle_id": new_cycle.id, "new_state": new_state.value},
+        actor_id=s.user_phone,
+        entity_type="session",
+        entity_id=session_id,
+        metadata={"cycle_id": new_cycle.id},
+    )
+
+    return {"session_id": session_id, "new_state": new_state.value, "cycle_id": new_cycle.id}
 
 
 @app.get("/event/phone/{user_phone}")

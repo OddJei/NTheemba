@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import secrets
@@ -26,6 +27,11 @@ from src.app.config import (
     get_msme_timeout_seconds,
     get_notification_base_url,
     get_notification_timeout_seconds,
+    get_outbox_dispatch_batch_size,
+    get_outbox_dispatch_enabled,
+    get_outbox_dispatch_interval_seconds,
+    get_payment_revenue_base_url,
+    get_payment_revenue_timeout_seconds,
     get_pg_schema,
 )
 from src.app.db import Base, engine, get_db_session
@@ -37,10 +43,13 @@ from src.app.schemas import (
     DeliveryOut,
     OrderCreate,
     OrderOut,
+    PaymentInitiateIn,
+    PaymentStatusOut,
     StatusOut,
 )
 from src.app import audit_client
 from src.app import security
+from src.app import outbox_dispatcher
 
 app = FastAPI(title="Order + Delivery Service (Soft Launch)")
 
@@ -58,6 +67,8 @@ _AUTH_SKIP_PATHS = {
     "/docs/index.html",
     "/redoc",
 }
+
+_outbox_task: asyncio.Task | None = None
 
 
 def _authorize_business_access(request: Request, business_id: str) -> None:
@@ -99,6 +110,48 @@ async def _notify_in_app(*, user_id: str | None, business_id: str | None, templa
         logger.info("notification_unreachable", extra={"template": template, "correlation_id": correlation_id})
 
 
+def _require_internal_secret_od(request: Request) -> None:
+    expected = (get_internal_service_secret() or "").strip()
+    provided = (request.headers.get("X-Internal-Secret") or "").strip()
+    if expected and (not provided or not secrets.compare_digest(expected, provided)):
+        raise HTTPException(status_code=401, detail="invalid_internal_secret")
+
+
+@app.get("/outbox/pending")
+async def outbox_pending_od(request: Request, batch_size: int = 50, db: AsyncSession = Depends(get_db_session)):
+    _require_internal_secret_od(request)
+    q = select(OutboxEvent).where(OutboxEvent.processed == False)
+    q = q.order_by(OutboxEvent.created_at).limit(int(batch_size))
+    rows = (await db.execute(q)).scalars().all()
+    out = []
+    for r in rows:
+        out.append({
+            "id": r.id,
+            "event_type": r.event_type,
+            "payload": r.payload,
+            "dedupe_key": None,
+            "destination": None,
+            "attempts": 0,
+            "scheduled_at": None,
+            "correlation_id": r.payload.get("correlation_id") if isinstance(r.payload, dict) else None,
+        })
+    return out
+
+
+@app.post("/outbox/ack")
+async def outbox_ack_od(request: Request, body: dict, db: AsyncSession = Depends(get_db_session)):
+    _require_internal_secret_od(request)
+    ids = body.get("ids") or []
+    if not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="invalid_ids")
+    q = select(OutboxEvent).where(OutboxEvent.id.in_(ids))
+    rows = (await db.execute(q)).scalars().all()
+    for r in rows:
+        r.processed = True
+    await db.commit()
+    return {"acked": [r.id for r in rows]}
+
+
 def _extract_affiliate_code(meta: dict | None) -> str | None:
     if not meta:
         return None
@@ -120,10 +173,36 @@ def _extract_affiliate_code(meta: dict | None) -> str | None:
     return None
 
 
+def _extract_affiliate_id(meta: dict | None) -> str | None:
+    if not meta:
+        return None
+
+    value = meta.get("affiliate_id")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+
+    value = meta.get("affiliateId")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+
+    value = meta.get("affiliate")
+    if isinstance(value, dict):
+        aff_id = value.get("id") or value.get("affiliate_id")
+        if isinstance(aff_id, str) and aff_id.strip():
+            return aff_id.strip()
+
+    return None
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     # Require Bearer access tokens issued by msme-engine for all routes except health/metrics/docs.
-    if request.url.path in _AUTH_SKIP_PATHS:
+    # Skip auth for exact paths and for /orders/{id}/mark_paid pattern
+    path = request.url.path
+    if path in _AUTH_SKIP_PATHS:
+        return await call_next(request)
+    # Pattern: /orders/{order_id}/mark_paid
+    if path.startswith("/orders/") and path.endswith("/mark_paid"):
         return await call_next(request)
 
     expected_internal = (get_internal_service_secret() or "").strip()
@@ -327,9 +406,31 @@ async def startup() -> None:
         await conn.run_sync(Base.metadata.create_all)
     await _ensure_delivery_hash_columns()
 
+    if get_outbox_dispatch_enabled():
+        global _outbox_task
+        if _outbox_task is None or _outbox_task.done():
+            logger.info("STARTUP_DISPATCHER_ENABLED", extra={"interval_sec": get_outbox_dispatch_interval_seconds(), "batch_size": get_outbox_dispatch_batch_size()})
+            _outbox_task = asyncio.create_task(
+                outbox_dispatcher.run_forever(
+                    poll_seconds=get_outbox_dispatch_interval_seconds(),
+                    batch_size=get_outbox_dispatch_batch_size(),
+                )
+            )
+
+
+async def shutdown() -> None:
+    global _outbox_task
+    if _outbox_task and not _outbox_task.done():
+        _outbox_task.cancel()
+        try:
+            await _outbox_task
+        except asyncio.CancelledError:
+            pass
+
 
 # Register startup handler without using the deprecated decorator.
 app.add_event_handler("startup", startup)
+app.add_event_handler("shutdown", shutdown)
 
 
 @app.get("/health")
@@ -405,6 +506,7 @@ async def order_create(
 
         correlation_id = getattr(request.state, "correlation_id", None)
         affiliate_code = _extract_affiliate_code(meta)
+        affiliate_id = _extract_affiliate_id(meta)
 
         # Keep the outbox event, but enrich it with affiliate attribution fields so a dispatcher can
         # reliably forward to affiliate-engine when available.
@@ -427,6 +529,7 @@ async def order_create(
                 "user_phone": order.user_phone,
                 "user_id": order.user_id,
                 "affiliate_code": affiliate_code,
+                "affiliate_id": affiliate_id,
                 "metadata": meta,
                 "transaction_fee_pct": meta.get("transaction_fee_pct"),
                 "platform_fee_amount": meta.get("platform_fee_amount"),
@@ -534,8 +637,119 @@ async def order_mark_paid(order_id: str, request: Request, db: AsyncSession = De
             payload={"order_id": order.id, "total_amount": order.total_amount, "currency": order.currency},
             correlation_id=getattr(request.state, "correlation_id", None),
         )
+        await audit_client.emit_audit(
+            service="order-delivery",
+            event_type="order_paid",
+            payload={
+                "order_id": order.id,
+                "business_id": order.business_id,
+                "total_amount": order.total_amount,
+                "currency": order.currency,
+                "platform_fee_amount": meta.get("platform_fee_amount"),
+                "msme_net_amount": meta.get("msme_net_amount"),
+            },
+            actor_id=getattr(request.state, "token_payload", {}).get("user_id") or order.user_id or order.user_phone,
+            entity_type="order",
+            entity_id=order.id,
+            metadata={"correlation_id": getattr(request.state, "correlation_id", None)},
+        )
 
     return OrderOut(**_serialize_order(order))
+
+
+@app.post("/orders/{order_id}/initiate_payment", response_model=PaymentStatusOut)
+async def order_initiate_payment(
+    order_id: str,
+    payload: PaymentInitiateIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Initiate a payment for an existing order.
+    Calls payment-revenue to initiate a pawaPay deposit.
+    Returns payment status from payment-revenue.
+    """
+    order = (await db.execute(select(Order).where(Order.id == order_id))).scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="order_not_found")
+
+    if order.status != "pending_payment":
+        raise HTTPException(status_code=400, detail=f"order_status_not_pending_payment: {order.status}")
+
+    correlation_id = getattr(request.state, "correlation_id", None) or str(uuid.uuid4())
+    
+    try:
+        base = get_payment_revenue_base_url().rstrip("/")
+        timeout = get_payment_revenue_timeout_seconds()
+        
+        payment_request = {
+            "amount_minor": int(order.total_amount),
+            "currency": order.currency,
+            "phone_number": payload.phone_number,
+            "provider": payload.provider,
+            "order_id": order_id,
+            "business_id": str(order.business_id),
+            "metadata": {
+                "user_phone": order.user_phone,
+                "user_id": order.user_id,
+                "session_id": order.session_id,
+            },
+        }
+        
+        headers = {"X-Correlation-Id": correlation_id}
+        
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(
+                f"{base}/pawapay/deposits/initiate",
+                json=payment_request,
+                headers=headers,
+            )
+        
+        if r.status_code not in (200, 201):
+            logger.error(
+                "payment_revenue_error",
+                extra={
+                    "order_id": order_id,
+                    "status_code": r.status_code,
+                    "response": r.text[:500],
+                    "correlation_id": correlation_id,
+                },
+            )
+            raise HTTPException(
+                status_code=r.status_code,
+                detail=f"payment_revenue_failed: {r.status_code}",
+            )
+        
+        payment_response = r.json()
+        await audit_client.emit_audit(
+            service="order-delivery",
+            event_type="payment_initiated",
+            payload={
+                "order_id": order_id,
+                "business_id": str(order.business_id),
+                "amount_minor": int(order.total_amount),
+                "currency": order.currency,
+                "deposit_id": payment_response.get("external_id"),
+                "payment_status": payment_response.get("status"),
+            },
+            actor_id=order.user_id or order.user_phone,
+            entity_type="order",
+            entity_id=order_id,
+            metadata={"correlation_id": correlation_id},
+        )
+        
+        return PaymentStatusOut(**payment_response)
+    
+    except httpx.RequestError as e:
+        logger.error(
+            "payment_revenue_unreachable",
+            extra={
+                "order_id": order_id,
+                "error": str(e),
+                "correlation_id": correlation_id,
+            },
+        )
+        raise HTTPException(status_code=502, detail="payment_revenue_unreachable")
 
 
 @app.post("/delivery/initiate/{order_id}", response_model=DeliveryInitiateOut)
@@ -610,6 +824,21 @@ async def delivery_initiate(
             template="delivery_initiated",
             payload={"order_id": order.id, "delivery_id": delivery.id, "delivery_code": code, "delivery_method": delivery.delivery_method},
             correlation_id=getattr(request.state, "correlation_id", None),
+        )
+        await audit_client.emit_audit(
+            service="order-delivery",
+            event_type="delivery_initiated",
+            payload={
+                "delivery_id": delivery.id,
+                "order_id": order.id,
+                "business_id": order.business_id,
+                "delivery_method": delivery.delivery_method,
+                "user_phone": order.user_phone,
+            },
+            actor_id=delivery.user_id or delivery.user_phone,
+            entity_type="delivery",
+            entity_id=delivery.id,
+            metadata={"correlation_id": getattr(request.state, "correlation_id", None)},
         )
         return 201, {"delivery": DeliveryOut(**_serialize_delivery(delivery)), "delivery_code": code}
 
@@ -686,6 +915,11 @@ async def delivery_confirm(delivery_id: str, payload: DeliveryConfirmIn, request
         order.status = "delivered"
         order.updated_at = _utcnow()
 
+    correlation_id = getattr(request.state, "correlation_id", None) or str(uuid.uuid4())
+    affiliate_code = _extract_affiliate_code(order.meta)
+    affiliate_id = _extract_affiliate_id(order.meta)
+    occurred_at = _utcnow().isoformat().replace("+00:00", "Z")
+
     await _emit_outbox(
         db,
         event_type="delivery_confirmed",
@@ -694,7 +928,16 @@ async def delivery_confirm(delivery_id: str, payload: DeliveryConfirmIn, request
     await _emit_outbox(
         db,
         event_type="order_delivered",
-        payload={"order_id": order.id, "business_id": order.business_id},
+        payload={
+            "event_id": f"order-delivered-{order.id}",
+            "event_type": "order_delivered",
+            "occurred_at": occurred_at,
+            "correlation_id": correlation_id,
+            "order_id": order.id,
+            "business_id": order.business_id,
+            "affiliate_code": affiliate_code,
+            "affiliate_id": affiliate_id,
+        },
     )
 
     await db.commit()
@@ -715,6 +958,20 @@ async def delivery_confirm(delivery_id: str, payload: DeliveryConfirmIn, request
         template="delivery_confirmed_business",
         payload={"delivery_id": delivery.id, "order_id": delivery.order_id, "confirmed_by": delivery.confirmed_by},
         correlation_id=getattr(request.state, "correlation_id", None),
+    )
+    await audit_client.emit_audit(
+        service="order-delivery",
+        event_type="delivery_confirmed",
+        payload={
+            "delivery_id": delivery.id,
+            "order_id": delivery.order_id,
+            "business_id": delivery.business_id,
+            "confirmed_by": delivery.confirmed_by,
+        },
+        actor_id=delivery.confirmed_by or delivery.user_id or delivery.user_phone,
+        entity_type="delivery",
+        entity_id=delivery.id,
+        metadata={"correlation_id": getattr(request.state, "correlation_id", None)},
     )
     return DeliveryOut(**_serialize_delivery(delivery))
 
