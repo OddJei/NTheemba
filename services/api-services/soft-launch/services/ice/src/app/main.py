@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import List
 
 import httpx
+import json
 from fastapi import FastAPI, Request, HTTPException, Depends
 from sqlalchemy import select
 from src.app.db import Base, engine, get_db_session
@@ -105,5 +106,22 @@ async def session_confirm(request: Request, session_id: str, body: ConfirmReques
     await db.flush()
     await db.commit()
     await db.refresh(out)
+
+    # Optional compatibility: mirror the event to Redis stream for legacy consumers.
+    # Enabled when OUTBOX_MIRROR_REDIS=1 and REDIS_URL is set. Failure is best-effort.
+    try:
+        if os.environ.get("OUTBOX_MIRROR_REDIS") == "1" and os.environ.get("REDIS_URL"):
+            try:
+                import redis.asyncio as aioredis
+
+                redis_url = os.environ.get("REDIS_URL")
+                r = aioredis.from_url(redis_url)
+                # xadd expects mapping; store payload as JSON under 'data'
+                await r.xadd("ice:confirmed", {"data": json.dumps(payload)})
+            except Exception as e:
+                logger.warning("redis_mirror_failed", extra={"error": str(e)})
+    except Exception:
+        # top-level safety: never fail the confirm API because mirroring failed
+        pass
 
     return {"outbox_id": out.id}
