@@ -1,0 +1,9 @@
+{
+  "method": "GET",
+  "path": "/auth/verify/{token}",
+  "url": "http://localhost:8500/auth/verify/test",
+  "status": 404,
+  "response": {
+    "detail": "token_not_found"
+  }
+}

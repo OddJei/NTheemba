@@ -4,29 +4,30 @@ import json
 from datetime import datetime
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.db import SessionLocal, engine
-from src.app.models import OutboxEvent
+import json
 
 
 OUTBOX_SINK = os.getenv("OUTBOX_SINK_URL", "http://127.0.0.1:9000/events")
 POLL_INTERVAL = float(os.getenv("OUTBOX_POLL_INTERVAL", "2.0"))
 
 
-async def dispatch_event(session: AsyncSession, event: OutboxEvent) -> bool:
+async def dispatch_event(session: AsyncSession, row) -> bool:
+    try:
+        payload = json.loads(row.payload) if row.payload else {}
+    except Exception:
+        payload = {}
     async with httpx.AsyncClient(timeout=5.0) as client:
         try:
-            resp = await client.post(OUTBOX_SINK, json={"type": event.event_type, "payload": event.payload})
+            resp = await client.post(OUTBOX_SINK, json={"type": row.topic, "payload": payload})
             resp.raise_for_status()
         except Exception:
             return False
 
-    # mark processed
-    await session.execute(
-        update(OutboxEvent).where(OutboxEvent.id == event.id).values(processed=True)
-    )
+    await session.execute(text("UPDATE public.outbox SET status='sent' WHERE id = :id"), {"id": row.id})
     await session.commit()
     return True
 
@@ -34,7 +35,8 @@ async def dispatch_event(session: AsyncSession, event: OutboxEvent) -> bool:
 async def run() -> None:
     async with SessionLocal() as session:
         while True:
-            rows = (await session.execute(select(OutboxEvent).where(OutboxEvent.processed == False))).scalars().all()
+            res = await session.execute(text("SELECT id, topic, payload::text as payload FROM public.outbox WHERE status = 'pending' ORDER BY created_at ASC LIMIT 50"))
+            rows = res.fetchall()
             if not rows:
                 await asyncio.sleep(POLL_INTERVAL)
                 continue

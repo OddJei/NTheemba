@@ -1,0 +1,87 @@
+{
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "event_type": {
+        "type": "string"
+      },
+      "payload": {
+        "type": "object",
+        "properties": {
+          "event_type": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "deposit_id": {
+            "type": "string"
+          },
+          "business_id": {
+            "type": "null"
+          },
+          "amount": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "event_type": {
+                "type": "string"
+              },
+              "event_id": {
+                "type": "string"
+              },
+              "depositId": {
+                "type": "null"
+              },
+              "payment_id": {
+                "type": "string"
+              },
+              "id": {
+                "type": "null"
+              },
+              "business_id": {
+                "type": "null"
+              },
+              "amount_minor": {
+                "type": "integer"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "dedupe_key": {
+        "type": "null"
+      },
+      "destination": {
+        "type": "string"
+      },
+      "attempts": {
+        "type": "integer"
+      },
+      "scheduled_at": {
+        "type": "null"
+      },
+      "correlation_id": {
+        "type": "null"
+      }
+    }
+  }
+}

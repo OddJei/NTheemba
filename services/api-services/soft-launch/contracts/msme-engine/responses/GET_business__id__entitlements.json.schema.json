@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "properties": {
+    "business_id": {
+      "type": "string"
+    },
+    "plan": {
+      "type": "string"
+    },
+    "subscription_expiry": {
+      "type": "null"
+    },
+    "is_active": {
+      "type": "boolean"
+    },
+    "bot_instances_enabled": {
+      "type": "boolean"
+    },
+    "affiliate_promo_links_enabled": {
+      "type": "boolean"
+    },
+    "transaction_fee_pct": {
+      "type": "number"
+    }
+  }
+}

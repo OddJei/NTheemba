@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "properties": {
+    "business_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "location": {
+      "type": "null"
+    },
+    "category": {
+      "type": "null"
+    },
+    "tags": {
+      "type": "null"
+    },
+    "delivery_locations": {
+      "type": "object",
+      "properties": {
+        "Lusaka": {
+          "type": "object",
+          "properties": {
+            "price_minor": {
+              "type": "integer"
+            },
+            "currency": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "is_active": {
+      "type": "boolean"
+    }
+  }
+}

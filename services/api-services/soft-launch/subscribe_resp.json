@@ -1,0 +1,20 @@
+﻿{
+    "subscription":  {
+                         "id":  "027c096a-a046-441a-bc56-fddb9a8b58f5",
+                         "business_id":  "b1b3ef04-5261-430c-8ca0-d972a4dd0f45",
+                         "plan":  "paid",
+                         "start_date":  null,
+                         "end_date":  null,
+                         "status":  "pending_payment",
+                         "created_at":  "2026-02-20T07:11:05.728526Z"
+                     },
+    "payment_request":  {
+                            "reference_id":  "027c096a-a046-441a-bc56-fddb9a8b58f5",
+                            "business_id":  "b1b3ef04-5261-430c-8ca0-d972a4dd0f45",
+                            "plan":  "paid",
+                            "currency":  "ZMW",
+                            "payment_revenue_response":  {
+                                                             "initiated_event_id":  "71fc76e1-e75f-4819-b84a-32ac71b1483c"
+                                                         }
+                        }
+}

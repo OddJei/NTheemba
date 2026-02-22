@@ -1,0 +1,9 @@
+{
+  "method": "DELETE",
+  "path": "/auth/user/{user_id}",
+  "url": "http://localhost:8500/auth/user/1148d57b-7edb-4b58-941e-f5733895259f",
+  "status": 200,
+  "response": {
+    "status": "ok"
+  }
+}

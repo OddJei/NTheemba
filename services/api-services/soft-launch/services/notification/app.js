@@ -3,6 +3,7 @@ require('dotenv').config();
 
 const notifyRoutes = require('./routes/notifyRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const outboxRoutes = require('./routes/outboxRoutes');
 const { startWorker } = require('./workers/notificationWorker');
 
 const app = express();
@@ -11,6 +12,7 @@ app.use(express.json());
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.use('/notify', notifyRoutes);
 app.use('/notification', notificationRoutes);
+app.use('/outbox', outboxRoutes);
 
 app.get('/', (req, res) => res.json({ ok: true, service: 'softlaunch-notification' }));
 

@@ -1,0 +1,9 @@
+{
+  "method": "GET",
+  "path": "/business/phone/{phone_number}",
+  "url": "http://localhost:8500/business/phone/test",
+  "status": 404,
+  "response": {
+    "detail": "business_not_found_for_phone"
+  }
+}

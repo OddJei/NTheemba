@@ -1,0 +1,10 @@
+﻿{
+  "payoutId": "test-payout-002",
+  "order_id": "test-order-123",
+  "business_id": "biz-123",
+  "amount_minor": 1200,
+  "currency": "ZMW",
+  "phoneNumber": "260973456789",
+  "provider": "MTN_MOMO_ZMB",
+  "metadata": {"note": "test payout 2"}
+}

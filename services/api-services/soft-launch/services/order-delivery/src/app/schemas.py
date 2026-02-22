@@ -83,3 +83,43 @@ class PaymentStatusOut(OrmBaseModel):
     provider: str
     phone_number: str
     meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class OrderSummary(OrmBaseModel):
+    id: str
+    status: str
+    total_amount: int
+    currency: str
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+# Mapping of subject -> list of order summaries
+class CustomerSummary(OrmBaseModel):
+    user_phone: str
+    user_id: Optional[str] = None
+
+
+class DeliverySummary(OrmBaseModel):
+    delivery_id: Optional[str] = None
+    status: Optional[str] = None
+    # intentionally exclude delivery_code for security
+
+
+class PendingPage(OrmBaseModel):
+    items: list[OrderSummary]
+    total: int
+    offset: int
+    limit: int
+
+
+class PendingGroup(OrmBaseModel):
+    pending_payment: PendingPage
+    pending_delivery: PendingPage
+
+
+PendingOrdersOut = dict[str, PendingGroup]
+ 
+
+class DenyRequest(OrmBaseModel):
+    reason: Optional[str] = None
+    initiate_refund: bool = True

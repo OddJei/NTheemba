@@ -1,0 +1,9 @@
+{
+  "method": "POST",
+  "path": "/events/payment_success",
+  "url": "http://localhost:8500/events/payment_success",
+  "status": 200,
+  "response": {
+    "status": "ok"
+  }
+}

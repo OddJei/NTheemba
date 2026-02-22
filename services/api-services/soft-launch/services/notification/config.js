@@ -20,6 +20,8 @@ module.exports = {
     from: process.env.EMAIL_FROM || 'no-reply@ntheemba.local',
     smtp: smtpConfig
   },
+  iceBaseUrl: process.env.ICE_BASE_URL || 'http://ice-service:8100',
+  webBaseUrl: process.env.WEB_BASE_URL || 'http://web:8900',
   sms: {
     provider: process.env.SMS_PROVIDER || 'mock',
     from: process.env.SMS_FROM,

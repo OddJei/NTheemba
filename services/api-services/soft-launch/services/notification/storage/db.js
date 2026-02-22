@@ -11,15 +11,16 @@ function loadDb() {
   const file = config.dbFile;
   try {
     if (!fs.existsSync(file)) {
-      return { notifications: [] };
+      return { notifications: [], outbox: [] };
     }
     const raw = fs.readFileSync(file, 'utf8');
     const data = JSON.parse(raw || '{}');
     return {
-      notifications: Array.isArray(data.notifications) ? data.notifications : []
+      notifications: Array.isArray(data.notifications) ? data.notifications : [],
+      outbox: Array.isArray(data.outbox) ? data.outbox : []
     };
   } catch {
-    return { notifications: [] };
+    return { notifications: [], outbox: [] };
   }
 }
 

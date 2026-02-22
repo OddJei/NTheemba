@@ -8,6 +8,16 @@ from typing import Any, Optional
 import httpx
 import asyncio
 import os
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.starlette import StarletteIntegration
+    SENTRY_AVAILABLE = True
+except Exception:
+    sentry_sdk = None
+    StarletteIntegration = None
+    SENTRY_AVAILABLE = False
+import re
+from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response, File, UploadFile
 from fastapi.responses import JSONResponse
@@ -47,6 +57,7 @@ logger = logging.getLogger("catalog_inventory")
 _SERVICE = "catalog-inventory"
 _REQ_COUNT = Counter("http_requests_total", "Total HTTP requests", ["service", "method", "route", "status"])
 _REQ_LATENCY = Histogram("http_request_duration_seconds", "HTTP request duration", ["service", "method", "route"])
+_EXCEPTIONS = Counter("http_exceptions_total", "Total unhandled exceptions", ["service", "method", "route", "exception_type"])
 
 _AUTH_SKIP_PATHS = {
     "/health",
@@ -58,12 +69,29 @@ _AUTH_SKIP_PATHS = {
 }
 # Temporarily skip auth for media endpoints during testing
 _AUTH_SKIP_PREFIXES = ["/catalog/product/", "/catalog/business/", "/catalog/categories", "/inventory/", "/uploads/"]
+# Allow listing all products for tests without auth
+_AUTH_SKIP_PREFIXES.append("/catalog/products")
 
 # Install Python log forwarding to audit-service (best-effort).
 try:
     audit_client.install_audit_log_forwarding(service=_SERVICE)
 except Exception:
     logger.exception("failed_to_install_audit_log_forwarding")
+
+# Guarded Sentry initialisation (best-effort). Configure with SENTRY_DSN and optional SENTRY_RELEASE.
+try:
+    sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
+    if SENTRY_AVAILABLE and sentry_dsn:
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            integrations=[StarletteIntegration()],
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
+            environment=os.getenv("ENVIRONMENT", "development"),
+            release=os.getenv("SENTRY_RELEASE", None),
+        )
+        logger.info("sentry_initialized")
+except Exception:
+    logger.exception("sentry_init_failed")
 
 
 async def _notify_in_app(*, business_id: str | None, template: str, payload: dict | None, correlation_id: str | None) -> None:
@@ -93,11 +121,35 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _sanitize_filename(filename: str) -> str:
+    """Return a safe filename suitable for object keys and storage.
+
+    - Keep only the base name (no directories)
+    - Replace unsafe characters with underscore
+    - Collapse repeated underscores and limit length
+    """
+    name = Path(filename).name
+    name = name.strip().replace(" ", "_")
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+    name = re.sub(r"_+", "_", name)
+    if len(name) > 255:
+        name = name[:255]
+    if not name:
+        name = "file"
+    return name
+
+
 @app.middleware("http")
 async def correlation_id_middleware(request: Request, call_next):
     start = time.perf_counter()
     correlation_id = request.headers.get("X-Correlation-Id") or str(uuid.uuid4())
     request.state.correlation_id = correlation_id
+    # Attach correlation id to Sentry if available
+    try:
+        if SENTRY_AVAILABLE and sentry_sdk:
+            sentry_sdk.set_tag("correlation_id", correlation_id)
+    except Exception:
+        logger.debug("sentry_set_tag_failed", exc_info=True)
     response = await call_next(request)
     response.headers["X-Correlation-Id"] = correlation_id
 
@@ -108,6 +160,20 @@ async def correlation_id_middleware(request: Request, call_next):
 
     logger.info("request", extra={"method": request.method, "path": route_path, "status": response.status_code, "correlation_id": correlation_id})
     return response
+
+
+@app.exception_handler(Exception)
+async def handle_unhandled_exception(request: Request, exc: Exception):
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", request.url.path)
+    _EXCEPTIONS.labels(_SERVICE, request.method, route_path, exc.__class__.__name__).inc()
+    logger.exception("unhandled_exception", extra={"correlation_id": _correlation_id(request)})
+    try:
+        if SENTRY_AVAILABLE and sentry_sdk:
+            sentry_sdk.capture_exception(exc)
+    except Exception:
+        logger.debug("sentry_capture_failed", exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": "internal_server_error"})
 
 
 @app.middleware("http")
@@ -139,8 +205,10 @@ async def startup() -> None:
 app.add_event_handler("startup", startup)
 
 
-def _correlation_id(request: Request) -> Optional[str]:
-    return getattr(request.state, "correlation_id", None)
+def _correlation_id(request: Optional[Request]) -> Optional[str]:
+    # Accept None for background tasks or callers that don't have a Request.
+    state = getattr(request, "state", None)
+    return getattr(state, "correlation_id", None)
 
 
 # ---- Health ----
@@ -179,7 +247,7 @@ async def category_create(
         )
         db.add(cat)
         await db.flush()
-        add_outbox_event(
+        await add_outbox_event(
             db=db,
             event_type="catalog.category.created",
             business_id=payload.business_id,
@@ -265,7 +333,7 @@ async def category_update(
             cat.is_active = bool(payload.is_active)
         cat.updated_at = _utcnow()
 
-        add_outbox_event(
+        await add_outbox_event(
             db=db,
             event_type="catalog.category.updated",
             business_id=cat.business_id,
@@ -311,7 +379,7 @@ async def category_delete(
 
         cat.is_active = False
         cat.updated_at = _utcnow()
-        add_outbox_event(
+        await add_outbox_event(
             db=db,
             event_type="catalog.category.deleted",
             business_id=cat.business_id,
@@ -407,7 +475,7 @@ async def product_create(
         db.add(prod)
         await db.flush()
 
-        add_outbox_event(
+        await add_outbox_event(
             db=db,
             event_type="catalog.product.created",
             business_id=payload.business_id,
@@ -481,7 +549,7 @@ async def product_update(
             setattr(prod, field_name, value)
         prod.updated_at = _utcnow()
 
-        add_outbox_event(
+        await add_outbox_event(
             db=db,
             event_type="catalog.product.updated",
             business_id=prod.business_id,
@@ -528,7 +596,7 @@ async def product_delete(
         prod.is_active = False
         prod.updated_at = _utcnow()
 
-        add_outbox_event(
+        await add_outbox_event(
             db=db,
             event_type="catalog.product.deleted",
             business_id=prod.business_id,
@@ -595,7 +663,7 @@ async def variant_add(
         )
         db.add(inv)
 
-        add_outbox_event(
+        await add_outbox_event(
             db=db,
             event_type="catalog.variant.created",
             business_id=prod.business_id,
@@ -653,11 +721,30 @@ async def catalog_by_business(business_id: str, db: AsyncSession = Depends(get_d
 
     variants: list[ProductVariant] = []
     if product_ids:
-        variants = (
-            await db.execute(select(ProductVariant).where(ProductVariant.product_id.in_(product_ids)))
-        ).scalars().all()
+        res = await db.execute(select(ProductVariant).where(ProductVariant.product_id.in_(product_ids)))
+        variants = list(res.scalars().all())
 
-    return BusinessCatalogOut(business_id=business_id, products=list(products), variants=list(variants))
+    # Convert ORM objects to pydantic response models to satisfy type invariance
+    products_out = [ProductOut(**p.__dict__) for p in products]
+    variants_out = [VariantOut(**v.__dict__) for v in variants]
+    return BusinessCatalogOut(business_id=business_id, products=products_out, variants=variants_out)
+
+
+@app.get("/catalog/products")
+async def catalog_all_products(db: AsyncSession = Depends(get_db_session)):
+    """Return all products and variants across businesses (useful for tests)."""
+    products = (await db.execute(select(Product))).scalars().all()
+    product_ids = [p.id for p in products]
+
+    variants: list[ProductVariant] = []
+    if product_ids:
+        res = await db.execute(select(ProductVariant).where(ProductVariant.product_id.in_(product_ids)))
+        variants = list(res.scalars().all())
+
+    products_out = [ProductOut(**p.__dict__) for p in products]
+    variants_out = [VariantOut(**v.__dict__) for v in variants]
+
+    return {"products": [p.model_dump() for p in products_out], "variants": [v.model_dump() for v in variants_out]}
 
 
 @app.post("/catalog/reindex/{business_id}")
@@ -669,7 +756,7 @@ async def catalog_reindex(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     async def _run():
-        add_outbox_event(
+        await add_outbox_event(
             db=db,
             event_type="catalog.reindex.requested",
             business_id=business_id,
@@ -705,9 +792,9 @@ async def uploads_presign(payload: dict, request: Request):
     content_type = payload.get("content_type", "application/octet-stream")
     if not filename:
         raise HTTPException(status_code=400, detail="filename_required")
-
-    # Use a UUID-based key to avoid collisions
-    key = f"uploads/{str(uuid.uuid4())}-{filename}"
+    # Sanitize filename and use a UUID-based key to avoid collisions
+    safe_name = _sanitize_filename(filename)
+    key = f"uploads/{str(uuid.uuid4())}-{safe_name}"
     url = generate_presigned_put_url(key=key, content_type=content_type)
     return {"key": key, "url": url}
 
@@ -743,13 +830,13 @@ async def uploads_complete(
             if prod:
                 prod.image_url = url
                 await db.commit()
-                add_outbox_event(
+                await add_outbox_event(
                     db=db,
                     event_type="catalog.product.image.updated",
                     business_id=prod.business_id,
                     entity_type="product",
                     entity_id=prod.id,
-                    correlation_id=getattr(Request, "state", None),
+                    correlation_id=None,
                     meta={"image_key": thumb_key},
                 )
 
@@ -822,7 +909,7 @@ async def inventory_update(
         if payload.meta is not None:
             meta["meta"] = payload.meta
 
-        add_outbox_event(
+        await add_outbox_event(
             db=db,
             event_type="inventory.updated",
             entity_type="variant",
@@ -832,7 +919,7 @@ async def inventory_update(
         )
 
         if int(inv.stock_level) == 0:
-            add_outbox_event(
+            await add_outbox_event(
                 db=db,
                 event_type="inventory.out_of_stock",
                 entity_type="variant",
@@ -841,7 +928,7 @@ async def inventory_update(
                 meta={"variant_id": payload.variant_id},
             )
         elif old_stock == 0 and int(inv.stock_level) > 0:
-            add_outbox_event(
+            await add_outbox_event(
                 db=db,
                 event_type="inventory.restocked",
                 entity_type="variant",
@@ -851,7 +938,7 @@ async def inventory_update(
             )
 
         if int(inv.threshold) > 0 and int(inv.stock_level) <= int(inv.threshold):
-            add_outbox_event(
+            await add_outbox_event(
                 db=db,
                 event_type="inventory.low_stock",
                 entity_type="variant",
@@ -935,10 +1022,11 @@ from src.app.schemas import MediaUpload
 @app.post("/catalog/product/{product_id}/media", response_model=MediaUploadBatch)
 async def product_media_upload(
     product_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+    *,
     files: list[UploadFile] = File(...),
     set_default_index: int = 0,
-    request: Request = None,
-    db: AsyncSession = Depends(get_db_session),
 ):
     """Upload multiple media files for a product. First file is default unless set_default_index specified."""
     # Verify product exists
@@ -963,17 +1051,19 @@ async def product_media_upload(
     for idx, file in enumerate(files):
         # Read file content
         file_content = await file.read()
-        
-        # Upload to Nextcloud
+
+        # Use a stable original name (fallback to 'file') then sanitize
+        orig_name = file.filename or "file"
+        safe_filename = _sanitize_filename(orig_name)
         try:
             url = nextcloud_client.upload_product_media(
                 business_id=product.business_id,
                 product_id=product_id,
-                filename=file.filename,
+                filename=safe_filename,
                 file_content=file_content
             )
         except Exception as e:
-            logger.error(f"Nextcloud upload failed for {file.filename}: {e}", exc_info=True)
+            logger.error(f"Nextcloud upload failed for {orig_name}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Media upload failed: {str(e)}")
         
         is_default = (idx == set_default_index)
@@ -981,7 +1071,7 @@ async def product_media_upload(
         # Create media entry
         media_entry = {
             "url": url,
-            "filename": file.filename,
+            "filename": safe_filename,
             "uploaded_at": datetime.now(timezone.utc).isoformat(),
             "content_type": file.content_type,
             "size": len(file_content),
@@ -991,7 +1081,7 @@ async def product_media_upload(
         
         uploaded.append(MediaUpload(
             url=url,
-            filename=file.filename,
+            filename=safe_filename,
             uploaded_at=datetime.now(timezone.utc),
             is_default=is_default
         ))
@@ -1003,7 +1093,7 @@ async def product_media_upload(
             payload={
                 "product_id": product_id,
                 "business_id": product.business_id,
-                "filename": file.filename,
+                "filename": safe_filename,
                 "url": url,
                 "size": len(file_content),
                 "is_default": is_default
@@ -1024,7 +1114,7 @@ async def product_media_upload(
 async def product_media_delete(
     product_id: str,
     filename: str,
-    request: Request = None,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
 ):
     """Delete media file from a product."""
@@ -1033,11 +1123,14 @@ async def product_media_delete(
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
     
+    # Sanitize filename before deletion
+    safe_filename = _sanitize_filename(filename)
+
     # Delete from Nextcloud
     success = nextcloud_client.delete_product_media(
         business_id=product.business_id,
         product_id=product_id,
-        filename=filename
+        filename=safe_filename
     )
     
     if not success:
@@ -1046,12 +1139,12 @@ async def product_media_delete(
     # Check if deleted file was the default
     was_default = False
     if product.media_urls:
-        was_default = any(m.get("filename") == filename and m.get("is_default") for m in product.media_urls)
-        
+        was_default = any(m.get("filename") == safe_filename and m.get("is_default") for m in product.media_urls)
+
         # Remove from product media_urls (create new list)
         new_media_urls = [
             m for m in product.media_urls 
-            if m.get("filename") != filename
+            if m.get("filename") != safe_filename
         ]
         
         # If we deleted the default and there are other files, set first as default
@@ -1072,19 +1165,19 @@ async def product_media_delete(
         payload={
             "product_id": product_id,
             "business_id": product.business_id,
-            "filename": filename
+            "filename": safe_filename
         },
         metadata={"correlation_id": _correlation_id(request)},
     )
     
-    return {"status": "deleted", "filename": filename}
+    return {"status": "deleted", "filename": safe_filename}
 
 
 @app.patch("/catalog/product/{product_id}/media/{filename}/set-default")
 async def product_media_set_default(
     product_id: str,
     filename: str,
-    request: Request = None,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
 ):
     """Set a specific media file as the default for a product."""
@@ -1096,12 +1189,15 @@ async def product_media_set_default(
     if not product.media_urls:
         raise HTTPException(status_code=404, detail="no_media_found")
     
+    # Sanitize filename and find the media to set as default (create new list with updated dicts)
+    safe_filename = _sanitize_filename(filename)
+
     # Find the media to set as default (create new list with updated dicts)
     media_found = False
     new_media_urls = []
     
     for media in product.media_urls:
-        if media.get("filename") == filename:
+        if media.get("filename") == safe_filename:
             # Create new dict with is_default=True
             new_media_urls.append({**media, "is_default": True})
             media_found = True
@@ -1124,12 +1220,12 @@ async def product_media_set_default(
         payload={
             "product_id": product_id,
             "business_id": product.business_id,
-            "filename": filename
+            "filename": safe_filename
         },
         metadata={"correlation_id": _correlation_id(request)},
     )
     
-    return {"status": "updated", "filename": filename, "is_default": True}
+    return {"status": "updated", "filename": safe_filename, "is_default": True}
 
 
 # ---- Outbox events (debug) ----

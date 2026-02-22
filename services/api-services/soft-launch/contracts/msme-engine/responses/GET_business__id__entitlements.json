@@ -1,0 +1,15 @@
+{
+  "method": "GET",
+  "path": "/business/{id}/entitlements",
+  "url": "http://localhost:8500/business/37eeeb11-65af-4fbe-bd9e-d332a3ced2da/entitlements",
+  "status": 200,
+  "response": {
+    "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+    "plan": "free",
+    "subscription_expiry": null,
+    "is_active": true,
+    "bot_instances_enabled": true,
+    "affiliate_promo_links_enabled": false,
+    "transaction_fee_pct": 0.07
+  }
+}

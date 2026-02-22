@@ -1,0 +1,9 @@
+{
+  "method": "POST",
+  "path": "/business/{id}/subscribe",
+  "url": "http://localhost:8500/business/37eeeb11-65af-4fbe-bd9e-d332a3ced2da/subscribe",
+  "status": 400,
+  "response": {
+    "detail": "invalid_subscription_plan"
+  }
+}

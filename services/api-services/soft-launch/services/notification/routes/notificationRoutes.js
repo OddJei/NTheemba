@@ -4,6 +4,7 @@ const router = express.Router();
 const ctrl = require('../controllers/notificationController');
 
 router.post('/send', ctrl.sendNotification);
+router.post('/receipts', ctrl.handleReceipts);
 router.get('/:id', ctrl.getNotification);
 router.get('/user/:user_id', ctrl.listUserNotifications);
 

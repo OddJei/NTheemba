@@ -1,0 +1,28 @@
+{
+  "method": "GET",
+  "path": "/business/{id}",
+  "url": "http://localhost:8500/business/37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+  "status": 200,
+  "response": {
+    "id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+    "name": "Test Business",
+    "owner_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+    "location": null,
+    "category": null,
+    "logo_url": null,
+    "affiliate_code": null,
+    "referred_by_msme_code": null,
+    "subscription_plan": "free",
+    "subscription_expiry": null,
+    "delivery_locations": {
+      "Lusaka": {
+        "price_minor": 2500,
+        "currency": "ZMW"
+      }
+    },
+    "tags": null,
+    "is_active": true,
+    "created_at": "2026-02-17T03:46:52.832974Z",
+    "updated_at": "2026-02-17T06:36:27.916361Z"
+  }
+}

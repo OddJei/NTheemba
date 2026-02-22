@@ -135,6 +135,18 @@ async def enrich_inbound(
     # Prefer bot-session UUID for payloads; error if missing
     external_session_id = bot_session.get("session_id")
     if not external_session_id:
+        # Log full inbound metadata to help troubleshooting missing session_id
+        try:
+            LOG.error(
+                "Missing session_id from bot_session metadata",
+                extra={
+                    "inbound": getattr(inbound, "dict", lambda **kwargs: str(inbound))(),
+                    "bot_session": bot_session,
+                    "hydration_blob_sample": {k: hydration_blob.get(k) for k in ("user", "bot_details", "metadata")},
+                },
+            )
+        except Exception:
+            LOG.exception("failed_logging_missing_session_id")
         raise PayloadValidationError("Missing session_id from bot_session metadata")
 
     # Build SessionContext from hydration blob

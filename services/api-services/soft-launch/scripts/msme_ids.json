@@ -1,0 +1,15 @@
+{
+  "businesses": [
+    {
+      "id": "958cc950-4320-4d0a-bb2a-308527109129",
+      "name": "My Shop",
+      "affiliate_code": "AFF-123"
+    },
+    {
+      "id": "test-business",
+      "name": "Test Business",
+      "affiliate_code": null
+    }
+  ],
+  "affiliate_users": []
+}

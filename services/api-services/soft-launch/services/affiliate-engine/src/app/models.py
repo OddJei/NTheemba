@@ -21,6 +21,12 @@ class Affiliate(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(200))
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    # Preferences stored as JSON (e.g., {"categories": [...], "commissionPreference": ...})
+    preferences: Mapped[dict | None] = mapped_column(SqliteJson, nullable=True)
+    # Whether the affiliate has signed the terms/agreement
+    signed_terms: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Short biography / about the affiliate
+    about: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="active")
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -145,6 +151,17 @@ class AffiliateEvent(Base):
 
     order_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     business_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Payment / referral identifiers (for /events/msme/referral)
+    deposit_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    payment_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+
+    # Session cycle details (for /events/session-cycle-created)
+    cycle_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    cycle_state: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+    # Producer/service info and raw payload dump
+    producer: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)
+    raw_payload: Mapped[dict | None] = mapped_column(SqliteJson, nullable=True)
     delivered_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     amount_zmw: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -232,13 +249,16 @@ class PoolEpoch(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     starts_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     ends_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="open")  # open|closed
 
     gross_revenue_zmw: Mapped[float] = mapped_column(Float, default=0.0)
     pool_pct: Mapped[float] = mapped_column(Float, default=0.10)
     pool_amount_zmw: Mapped[float] = mapped_column(Float, default=0.0)
-
+    bonus_pool_zmw: Mapped[float] = mapped_column(Float, default=0.0)
+    # Effective pool after adding gross revenue + bonus (computed by background job)
+    effective_pool_zmw: Mapped[float] = mapped_column(Float, default=0.0)
 
 
 class Outbox(Base):
@@ -259,8 +279,6 @@ class Outbox(Base):
     send_after: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class PoolAllocation(Base):

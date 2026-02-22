@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "Lusaka": {
+      "type": "object",
+      "properties": {
+        "price_minor": {
+          "type": "integer"
+        },
+        "currency": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

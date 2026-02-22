@@ -4,6 +4,8 @@ from datetime import datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel, EmailStr, Field
+from typing import List
+from pydantic import Extra
 
 
 # ---- Auth ----
@@ -45,6 +47,7 @@ class UserOut(BaseModel):
     business_id: Optional[str]
     affiliate_id: Optional[str]
     is_active: bool
+    signed_terms: bool
     created_at: datetime
     updated_at: datetime
 
@@ -160,16 +163,39 @@ class SubscribeAndPayRequest(SubscribeRequest):
     phone_number: Optional[str] = None
     provider: Optional[str] = None
     deposit_id: Optional[str] = None
+    billing_interval: Optional[str] = "monthly"
 
 
 class SubscriptionOut(BaseModel):
     id: str
     business_id: str
     plan: str
+    billing_interval: Optional[str] = "monthly"
     start_date: Optional[datetime]
     end_date: Optional[datetime]
+    periods_paid: Optional[float] = 0
+    paid_through: Optional[datetime] = None
     status: str
     created_at: datetime
+
+
+class SubscriptionPriceUpdate(BaseModel):
+    amount_minor: int
+    billing_interval: Optional[str] = "monthly"
+
+
+class DefaultSubscriptionPriceUpdate(BaseModel):
+    amount_minor: int
+    billing_interval: Optional[str] = "monthly"
+    currency: Optional[str] = "ZMW"
+    apply_to_missing: Optional[bool] = False
+
+
+class DefaultSubscriptionPriceOut(BaseModel):
+    billing_interval: str
+    amount_minor: int
+    currency: str
+    updated_at: datetime
 
 
 class SubscriptionInitiateOut(BaseModel):
@@ -218,6 +244,7 @@ class PaymentSuccessEvent(BaseModel):
     amount: Optional[float] = None
     currency: str = "ZMW"
     source: Optional[str] = None
+    billing_interval: Optional[str] = "monthly"
 
 
 class PaymentFailedEvent(BaseModel):
@@ -237,3 +264,69 @@ class MsmeEventOut(BaseModel):
     correlation_id: Optional[str]
     meta: Optional[dict[str, Any]]
     created_at: datetime
+
+
+# ---- Callbacks / misc requests ----
+
+
+class PaymentCallback(BaseModel):
+    event_type: Optional[str] = None
+    event_id: Optional[str] = None
+    depositId: Optional[str] = None
+    payment_id: Optional[str] = None
+    id: Optional[str] = None
+    business_id: Optional[str] = None
+    amount_minor: Optional[int] = None
+    currency: Optional[str] = None
+    status: Optional[str] = None
+
+    class Config:
+        extra = Extra.allow
+
+
+class OutboxAckRequest(BaseModel):
+    ids: List[str]
+
+
+# ---- Onboarding (frontend-friendly payloads) ----
+
+
+class OnboardProfile(BaseModel):
+    fullName: str
+    email: EmailStr
+    phone: Optional[str] = None
+    location: Optional[str] = None
+
+
+class OnboardBusiness(BaseModel):
+    businessName: str
+    businessType: Optional[str] = None
+    description: Optional[str] = None
+    yearsInBusiness: Optional[str] = None
+
+
+class OnboardProduct(BaseModel):
+    name: str
+    category: Optional[str] = None
+    price: str
+    initialStock: str
+
+
+class MSMEOnboardRequest(BaseModel):
+    profile: OnboardProfile
+    business: OnboardBusiness
+    products: List[OnboardProduct]
+    signed_terms: bool = Field(default=False, description="Whether the user has signed the platform agreement")
+
+
+class AffiliatePreferences(BaseModel):
+    categories: List[str]
+    commissionPreference: Optional[str] = None
+    bio: Optional[str] = None
+
+
+class AffiliateOnboardRequest(BaseModel):
+    profile: OnboardProfile
+    preferences: AffiliatePreferences
+    signed_terms: bool = Field(default=False, description="Whether the user has signed the platform agreement")
+

@@ -1,0 +1,296 @@
+..............F...F                                                      [100%]
+================================== FAILURES ===================================
+____________________ test_tier_multiplier_increases_share _____________________
+
+client = <starlette.testclient.TestClient object at 0x00000205C892F2E0>
+
+    def test_tier_multiplier_increases_share(client) -> None:
+        # Create two affiliates with identical performance but B has gold tier.
+        # NOTE: pool policy requires qualifying for the tier before multiplier activates.
+        # For unit tests, we lower the per-tier thresholds via env vars.
+        a_id = _create_affiliate(client, "A2", "+260900000011")
+        b_id = _create_affiliate(client, "B2", "+260900000021")
+    
+        _create_link(client, a_id, "codeA2")
+        _create_link(client, b_id, "codeB2")
+    
+        # Assign gold to B2
+        resp = client.put(
+            f"/admin/affiliates/{b_id}/tier",
+            headers={"X-Admin-Key": "test-admin"},
+            json={"tier_name": "gold"},
+        )
+        assert resp.status_code == 200
+    
+        import os
+    
+        os.environ["AFFILIATE_TIER_GOLD_GMV_MIN_ZMW"] = "1"
+        os.environ["AFFILIATE_TIER_GOLD_BUYERS_MIN"] = "1"
+        os.environ["AFFILIATE_TIER_GOLD_REFERRALS_MIN"] = "0"
+        os.environ["AFFILIATE_TIER_GOLD_CUSTOMERS_MIN"] = "1"
+        os.environ["AFFILIATE_OP_MIN_CLICKS"] = "1"
+        os.environ["AFFILIATE_OP_MIN_PAID_ATTRIBUTIONS"] = "1"
+        os.environ["AFFILIATE_OP_MIN_UNIQUE_BUYERS"] = "1"
+        os.environ["AFFILIATE_OP_MIN_SALES_VOLUME"] = "1"
+    
+        # Same single paid order for each
+        for code in ("codeA2", "codeB2"):
+            session_id = _uuid()
+            buyer_phone = f"+260822{session_id[-6:]}"
+            business_id = _uuid()
+            order_id = _uuid()
+            _track_click(client, code, session_id, buyer_phone)
+            _attribute_order(client, code, order_id, business_id, session_id, buyer_phone)
+            _payment_success(client, order_id, business_id, buyer_phone, affiliate_amount=10.0)
+    
+        epoch_id = _get_open_epoch_id(client)
+        client.put(
+            f"/admin/epochs/{epoch_id}/gross-revenue",
+            headers={"X-Admin-Key": "test-admin"},
+            json={"gross_revenue_zmw": 1000.0},
+        )
+    
+        standings = client.get("/pool/standings").json()["standings"]
+        by_aff = {s["affiliate_id"]: s for s in standings}
+    
+        # Gold tier should increase B2 projected payout over A2 with equal underlying performance.
+        assert by_aff[b_id]["tier_name"] == "gold"
+>       assert by_aff[b_id]["projected_payout_zmw"] > by_aff[a_id]["projected_payout_zmw"]
+E       assert 50.0 > 50.0
+
+services\affiliate-engine\tests\test_pool.py:231: AssertionError
+________________________ test_token_resolve_single_use ________________________
+  + Exception Group Traceback (most recent call last):
+  |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\starlette\_utils.py", line 87, in collapse_excgroups
+  |     yield
+  |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\starlette\middleware\base.py", line 190, in __call__
+  |     async with anyio.create_task_group() as task_group:
+  |   File "C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\anyio\_backends\_asyncio.py", line 783, in __aexit__
+  |     raise BaseExceptionGroup(
+  | exceptiongroup.ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\_pytest\runner.py", line 341, in from_call
+    |     result: TResult | None = func()
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\_pytest\runner.py", line 242, in <lambda>
+    |     lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    |     return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    |     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_callers.py", line 167, in _multicall
+    |     raise exception
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+    |     teardown.throw(exception)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\_pytest\threadexception.py", line 92, in pytest_runtest_call
+    |     yield from thread_exception_runtest_hook()
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\_pytest\threadexception.py", line 68, in thread_exception_runtest_hook
+    |     yield
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+    |     teardown.throw(exception)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\_pytest\unraisableexception.py", line 95, in pytest_runtest_call
+    |     yield from unraisable_exception_runtest_hook()
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\_pytest\unraisableexception.py", line 70, in unraisable_exception_runtest_hook
+    |     yield
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+    |     teardown.throw(exception)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\_pytest\logging.py", line 846, in pytest_runtest_call
+    |     yield from self._runtest_for(item, "call")
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\_pytest\logging.py", line 829, in _runtest_for
+    |     yield
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+    |     teardown.throw(exception)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\_pytest\capture.py", line 880, in pytest_runtest_call
+    |     return (yield)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+    |     teardown.throw(exception)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\_pytest\skipping.py", line 257, in pytest_runtest_call
+    |     return (yield)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    |     res = hook_impl.function(*args)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\_pytest\runner.py", line 174, in pytest_runtest_call
+    |     item.runtest()
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\_pytest\python.py", line 1627, in runtest
+    |     self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    |     return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    |     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_callers.py", line 167, in _multicall
+    |     raise exception
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+    |     teardown.throw(exception)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_callers.py", line 53, in run_old_style_hookwrapper
+    |     return result.get_result()
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_result.py", line 103, in get_result
+    |     raise exc.with_traceback(tb)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_callers.py", line 38, in run_old_style_hookwrapper
+    |     res = yield
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    |     res = hook_impl.function(*args)
+    |   File "C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\anyio\pytest_plugin.py", line 190, in pytest_pyfunc_call
+    |     runner.run_test(pyfuncitem.obj, testargs)
+    |   File "C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\anyio\_backends\_asyncio.py", line 2306, in run_test
+    |     self._raise_async_exceptions()
+    |   File "C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\anyio\_backends\_asyncio.py", line 2210, in _raise_async_exceptions
+    |     raise exceptions[0]
+    |   File "C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\anyio\_backends\_asyncio.py", line 2300, in run_test
+    |     self.get_loop().run_until_complete(
+    |   File "C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\asyncio\base_events.py", line 649, in run_until_complete
+    |     return future.result()
+    |   File "C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\anyio\_backends\_asyncio.py", line 2260, in _call_in_runner_task
+    |     return await future
+    |   File "C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\anyio\_backends\_asyncio.py", line 2227, in _run_tests_and_fixtures
+    |     retval = await coro
+    |   File "C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\affiliate-engine\tests\test_token_resolve.py", line 74, in test_token_resolve_single_use
+    |     resp = await ac.post("/token/resolve", json={"token": token_msg}, headers=auth_headers)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\httpx\_client.py", line 1848, in post
+    |     return await self.request(
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\httpx\_client.py", line 1530, in request
+    |     return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\httpx\_client.py", line 1617, in send
+    |     response = await self._send_handling_auth(
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\httpx\_client.py", line 1645, in _send_handling_auth
+    |     response = await self._send_handling_redirects(
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\httpx\_client.py", line 1682, in _send_handling_redirects
+    |     response = await self._send_single_request(request)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\httpx\_client.py", line 1719, in _send_single_request
+    |     response = await transport.handle_async_request(request)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\httpx\_transports\asgi.py", line 162, in handle_async_request
+    |     await self.app(scope, receive, send)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\fastapi\applications.py", line 1054, in __call__
+    |     await super().__call__(scope, receive, send)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\starlette\applications.py", line 123, in __call__
+    |     await self.middleware_stack(scope, receive, send)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\starlette\middleware\errors.py", line 186, in __call__
+    |     raise exc
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    |     await self.app(scope, receive, _send)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\starlette\middleware\base.py", line 189, in __call__
+    |     with collapse_excgroups():
+    |   File "C:\Users\SMART PC\AppData\Local\Programs\Python\Python310\lib\contextlib.py", line 153, in __exit__
+    |     self.gen.throw(typ, value, traceback)
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\starlette\_utils.py", line 93, in collapse_excgroups
+    |     raise exc
+    |   File "c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\starlette\middleware\base.py", line 191, in __call__
+    |     response = await self.dispatch_func(request, call_next)
+    |   File "C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\affiliate-engine\src\app\main.py", line 537, in auth_middleware
+    |     await security.require_access_token(request)
+    | NameError: name 'security' is not defined. Did you mean: 'secrets'?
+    +------------------------------------
+
+During handling of the above exception, another exception occurred:
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000205C8A13400>
+
+    @pytest.mark.anyio
+    async def test_token_resolve_single_use(monkeypatch) -> None:
+        monkeypatch.setenv("AFFILIATE_SKIP_LINK_TARGET_VALIDATION", "1")
+        monkeypatch.setenv("AFFILIATE_DEFAULT_WHATSAPP_NUMBER", "+260970000000")
+    
+        from src.app.db import get_db_session
+        from src.app.main import app
+        from src.app.models import Affiliate, AffiliateLink, AffiliateToken
+        from src.app.config import get_jwt_secret
+    
+        await app.router.startup()
+        try:
+            affiliate_id = _uuid()
+            link_code = "code-resolve-2"
+            product_id = _uuid()
+            business_id = _uuid()
+    
+            async with get_db_session() as db:
+                db.add(Affiliate(id=affiliate_id, name="A", phone="+260900000002"))
+                db.add(
+                    AffiliateLink(
+                        affiliate_id=affiliate_id,
+                        code=link_code,
+                        campaign="camp",
+                        product_id=product_id,
+                        business_id=business_id,
+                    )
+                )
+                await db.commit()
+    
+            async with AsyncClient(app=app, base_url="http://test") as ac:
+                # Create second-token via public resolve
+                r = await ac.get(f"/a/{link_code}/resolve")
+                assert r.status_code == 200
+                body = r.json()
+                assert body["status"] == "available"
+                token_msg = body["token_message"]
+                token_val = body["token"]
+    
+                # Build a valid JWT for the business (signed with service secret)
+                header = {"alg": "HS256", "typ": "JWT"}
+                payload = {"typ": "access", "business_id": business_id}
+                h_secret = get_jwt_secret()
+                header_b64 = _b64url_encode(json.dumps(header).encode("utf-8"))
+                payload_b64 = _b64url_encode(json.dumps(payload).encode("utf-8"))
+                signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+                sig = hmac.new(h_secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+                sig_b64 = _b64url_encode(sig)
+                jwt = f"{header_b64}.{payload_b64}.{sig_b64}"
+    
+                # Resolve token as bot
+                auth_headers = {"Authorization": f"Bearer {jwt}"}
+>               resp = await ac.post("/token/resolve", json={"token": token_msg}, headers=auth_headers)
+
+services\affiliate-engine\tests\test_token_resolve.py:74: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\lib\site-packages\httpx\_client.py:1848: in post
+    return await self.request(
+.venv\lib\site-packages\httpx\_client.py:1530: in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+.venv\lib\site-packages\httpx\_client.py:1617: in send
+    response = await self._send_handling_auth(
+.venv\lib\site-packages\httpx\_client.py:1645: in _send_handling_auth
+    response = await self._send_handling_redirects(
+.venv\lib\site-packages\httpx\_client.py:1682: in _send_handling_redirects
+    response = await self._send_single_request(request)
+.venv\lib\site-packages\httpx\_client.py:1719: in _send_single_request
+    response = await transport.handle_async_request(request)
+.venv\lib\site-packages\httpx\_transports\asgi.py:162: in handle_async_request
+    await self.app(scope, receive, send)
+.venv\lib\site-packages\fastapi\applications.py:1054: in __call__
+    await super().__call__(scope, receive, send)
+.venv\lib\site-packages\starlette\applications.py:123: in __call__
+    await self.middleware_stack(scope, receive, send)
+.venv\lib\site-packages\starlette\middleware\errors.py:186: in __call__
+    raise exc
+.venv\lib\site-packages\starlette\middleware\errors.py:164: in __call__
+    await self.app(scope, receive, _send)
+.venv\lib\site-packages\starlette\middleware\base.py:189: in __call__
+    with collapse_excgroups():
+..\..\..\..\..\AppData\Local\Programs\Python\Python310\lib\contextlib.py:153: in __exit__
+    self.gen.throw(typ, value, traceback)
+.venv\lib\site-packages\starlette\_utils.py:93: in collapse_excgroups
+    raise exc
+.venv\lib\site-packages\starlette\middleware\base.py:191: in __call__
+    response = await self.dispatch_func(request, call_next)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+request = <starlette.middleware.base._CachedRequest object at 0x00000205C8AF84F0>
+call_next = <function BaseHTTPMiddleware.__call__.<locals>.call_next at 0x00000205C893FD90>
+
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        # Require Bearer access tokens issued by msme-engine for all routes except health/metrics/docs.
+        if request.url.path in _AUTH_SKIP_PATHS or any(request.url.path.startswith(p) for p in _AUTH_SKIP_PREFIXES):
+            return await call_next(request)
+        try:
+>           await security.require_access_token(request)
+E           NameError: name 'security' is not defined
+
+services\affiliate-engine\src\app\main.py:537: NameError
+============================== warnings summary ===============================
+.venv\lib\site-packages\starlette\formparsers.py:12
+  c:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\.venv\lib\site-packages\starlette\formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED services/affiliate-engine/tests/test_pool.py::test_tier_multiplier_increases_share
+FAILED services/affiliate-engine/tests/test_token_resolve.py::test_token_resolve_single_use
+2 failed, 17 passed, 1 warning in 36.28s

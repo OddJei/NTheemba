@@ -6,20 +6,60 @@ from typing import Any, Dict, Optional
 from typing import Literal
 
 from pydantic import BaseModel, Field, ConfigDict
+from typing import Dict, Any
+
+
+class PaymentCallback(BaseModel):
+    event_type: Optional[str] = None
+    event_id: Optional[str] = None
+    depositId: Optional[str] = None
+    payment_id: Optional[str] = None
+    id: Optional[str] = None
+    business_id: Optional[str] = None
+    amount_minor: Optional[int] = None
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    status: Optional[str] = None
+
+    # Pydantic v2: prefer `model_config` for configuration
+    model_config = ConfigDict(extra="allow", json_schema_extra={
+        "example": {
+            "event_type": "payment.callback",
+            "event_id": "deposit-1234",
+            "depositId": "deposit-1234",
+            "payment_id": "pay-9876",
+            "business_id": "biz-1111",
+            "amount": 150.0,
+            "currency": "ZMW",
+            "status": "payment_success",
+            "method": "pawapay",
+        }
+    })
+
 
 
 class AffiliateCreate(BaseModel):
     name: str
     phone: Optional[str] = None
+    preferences: Optional[Dict[str, Any]] = None
+    signed_terms: Optional[bool] = False
+    about: Optional[str] = None
 
 
 class AffiliateOut(BaseModel):
     id: str
     name: str
     phone: Optional[str]
+    preferences: Optional[Dict[str, Any]] = None
+    signed_terms: bool
+    about: Optional[str]
     status: str
     created_at: datetime
 
+
+class AffiliateLookupOut(BaseModel):
+    affiliate_id: str
+    location: str
 
 class LinkCreate(BaseModel):
     campaign: Optional[str] = None
@@ -152,6 +192,33 @@ class OrderDeliveredEvent(BaseModel):
 
     order_id: str
     business_id: str
+    user_phone: Optional[str] = None
+    affiliate_id: Optional[str] = None
+    affiliate_code: Optional[str] = None
+    order_amount: Optional[float] = None
+    amount_zmw: Optional[float] = None
+    currency: Optional[str] = None
+    cycle_id: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "event_id": "order-delivered-1234",
+            "event_type": "order_delivered",
+            "occurred_at": "2026-02-17T12:34:56Z",
+            "correlation_id": "corr-abc",
+            "order_id": "order-1234",
+            "business_id": "biz-1111",
+            "user_phone": "260971234567",
+            "affiliate_id": "aff-2222",
+            "affiliate_code": "AFFCODE123",
+            "order_amount": 120.5,
+            "amount_zmw": 120.5,
+            "currency": "ZMW",
+            "cycle_id": "cycle-1",
+            "meta": {"note": "delivered via rider"},
+        }
+    })
 
 
 class SessionCycleCreatedEvent(BaseModel):
@@ -169,6 +236,23 @@ class SessionCycleCreatedEvent(BaseModel):
     user_phone: Optional[str] = None
     business_id: Optional[str] = None
     meta: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "event_id": "session-cycle-123",
+            "event_type": "session_cycle_created",
+            "occurred_at": "2026-02-17T12:00:00Z",
+            "correlation_id": "corr-xyz",
+            "producer": "bot-session",
+            "affiliate_id": "aff-2222",
+            "session_id": "sess-abc",
+            "cycle_id": "cycle-123",
+            "cycle_state": "started",
+            "user_phone": "260971234567",
+            "business_id": "biz-1111",
+            "meta": {"source": "bot"},
+        }
+    })
 
 
 
@@ -431,3 +515,49 @@ class PayoutStatusCallback(BaseModel):
     amount_zmw: float
     error_message: Optional[str] = None
     completed_at: datetime
+
+
+class HealthOut(BaseModel):
+    status: str
+
+
+class DebugEpochOut(BaseModel):
+    epoch_id: str
+    starts_at: datetime
+    ends_at: Optional[datetime]
+    metrics: List[Dict[str, Any]]
+    scores: Dict[str, float]
+    details: Dict[str, dict]
+
+
+class EventEnvelope(BaseModel):
+    id: Optional[str] = None
+    type: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
+    occurred_at: Optional[datetime] = None
+
+
+class MSMEReferralEvent(BaseModel):
+    event_id: Optional[str] = None
+    event_type: str = "msme_referral"
+    occurred_at: Optional[datetime] = None
+
+    deposit_id: str
+    affiliate_id: str
+    business_id: str
+
+    amount_zmw: Optional[float] = None
+    correlation_id: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
+    model_config = ConfigDict(extra="allow", json_schema_extra={
+        "example": {
+            "event_id": "msme-referral-123",
+            "event_type": "msme_referral",
+            "deposit_id": "deposit-1234",
+            "affiliate_id": "aff-2222",
+            "business_id": "biz-1111",
+            "amount_zmw": 50.0,
+            "correlation_id": "corr-ref",
+            "meta": {"note": "first sale for business"},
+        }
+    })

@@ -1,0 +1,370 @@
+{
+  "method": "GET",
+  "path": "/events/business/{business_id}",
+  "url": "http://localhost:8500/events/business/37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+  "status": 200,
+  "response": [
+    {
+      "event_id": "subscription_initiated:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:003cc2b9db074bf6a3b8df2a764644d7",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "subscription_initiated",
+      "occurred_at": "2026-02-17T06:49:34.090192Z",
+      "source": "business_service",
+      "correlation_id": "32e269b8-531d-40fb-8280-e6b4ee3c909d",
+      "meta": {
+        "reference_id": "4b102f74-bd4a-42e1-82af-b714b78e9c02",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "plan": "free",
+        "currency": "ZMW"
+      },
+      "created_at": "2026-02-17T06:49:34.090202Z"
+    },
+    {
+      "event_id": "msme_updated:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:83a376b3ad98415e9bf426662d1c4400",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_updated",
+      "occurred_at": "2026-02-17T06:49:33.930483Z",
+      "source": "business_service",
+      "correlation_id": "9a1c8b2f-8326-4c3a-b1a9-1753f0ae5a8b",
+      "meta": {
+        "name": "Test Business",
+        "is_active": true
+      },
+      "created_at": "2026-02-17T06:49:33.930492Z"
+    },
+    {
+      "event_id": "evt_1771310966",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "payment_failed",
+      "occurred_at": "2026-02-17T06:49:26.048047Z",
+      "source": "payment_service",
+      "correlation_id": "36360bf2-7ef2-428f-a258-d6ba8761b872",
+      "meta": {
+        "event_id": "evt_1771310966",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "plan": null,
+        "reason": "test_failure",
+        "source": null
+      },
+      "created_at": "2026-02-17T06:49:26.048056Z"
+    },
+    {
+      "event_id": "evt_1771310965",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "payment_success",
+      "occurred_at": "2026-02-17T06:49:25.976839Z",
+      "source": "payment_service",
+      "correlation_id": "b99b12ef-10bb-48e3-8db9-94c57edb544c",
+      "meta": {
+        "event_id": "evt_1771310965",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "plan": "free",
+        "paid_until": "2026-02-18T06:49:25Z",
+        "amount": 25.0,
+        "currency": "ZMW",
+        "source": null
+      },
+      "created_at": "2026-02-17T06:49:25.976847Z"
+    },
+    {
+      "event_id": "msme_updated:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:0caa12eb4a434dc7a91ca81bc126d2c5",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_updated",
+      "occurred_at": "2026-02-17T06:49:18.626825Z",
+      "source": "business_service",
+      "correlation_id": "06b4ece8-bfa4-42a2-b808-83c779b99144",
+      "meta": {
+        "is_active": true
+      },
+      "created_at": "2026-02-17T06:49:18.626833Z"
+    },
+    {
+      "event_id": "msme_updated:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:fc5b8df8112744eb8804516387f25080",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_updated",
+      "occurred_at": "2026-02-17T06:36:51.539013Z",
+      "source": "business_service",
+      "correlation_id": "70f413b5-c1b1-4e14-a77a-ceee5ec3bd11",
+      "meta": {
+        "name": "Test Business",
+        "is_active": true
+      },
+      "created_at": "2026-02-17T06:36:51.539032Z"
+    },
+    {
+      "event_id": "evt_1771310195",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "payment_success",
+      "occurred_at": "2026-02-17T06:36:35.371093Z",
+      "source": "payment_service",
+      "correlation_id": "2dc53ae7-ffb2-44b6-8129-f629bdb2bb51",
+      "meta": {
+        "event_id": "evt_1771310195",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "plan": "free",
+        "paid_until": "2026-02-18T06:36:35Z",
+        "amount": 25.0,
+        "currency": "ZMW",
+        "source": null
+      },
+      "created_at": "2026-02-17T06:36:35.371109Z"
+    },
+    {
+      "event_id": "msme_updated:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:9c548e22ca2f4138a15c3e718401b450",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_updated",
+      "occurred_at": "2026-02-17T06:36:27.936695Z",
+      "source": "business_service",
+      "correlation_id": "ecb4ee84-36d4-4856-8ca5-edfc8f76ff4c",
+      "meta": {
+        "is_active": true
+      },
+      "created_at": "2026-02-17T06:36:27.936713Z"
+    },
+    {
+      "event_id": "msme_suspended:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:ea9c01cc14cb4be8ab8079e685e89a57",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_suspended",
+      "occurred_at": "2026-02-17T06:24:31.046296Z",
+      "source": "business_service",
+      "correlation_id": "24d84a25-018d-4479-8133-aa8ee40aaa16",
+      "meta": null,
+      "created_at": "2026-02-17T06:24:31.046308Z"
+    },
+    {
+      "event_id": "msme_updated:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:ca081e886e724a8a8c1aa890cbacabd9",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_updated",
+      "occurred_at": "2026-02-17T06:24:30.870811Z",
+      "source": "business_service",
+      "correlation_id": "bcdf38d7-848d-4957-9ebc-7f84ab323ce5",
+      "meta": {
+        "name": "Test Business",
+        "is_active": true
+      },
+      "created_at": "2026-02-17T06:24:30.870825Z"
+    },
+    {
+      "event_id": "evt_1771309453",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "payment_failed",
+      "occurred_at": "2026-02-17T06:24:13.208986Z",
+      "source": "payment_service",
+      "correlation_id": "37f387a7-c146-4cf9-a044-7ba742b10b6e",
+      "meta": {
+        "event_id": "evt_1771309453",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "plan": null,
+        "reason": "test_failure",
+        "source": null
+      },
+      "created_at": "2026-02-17T06:24:13.209003Z"
+    },
+    {
+      "event_id": "evt_1771309452",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "payment_success",
+      "occurred_at": "2026-02-17T06:24:13.006534Z",
+      "source": "payment_service",
+      "correlation_id": "6b9c70c2-72a0-4dcf-86b4-8443889580d1",
+      "meta": {
+        "event_id": "evt_1771309452",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "plan": "free",
+        "paid_until": "2026-02-18T06:24:12Z",
+        "amount": 25.0,
+        "currency": "ZMW",
+        "source": null
+      },
+      "created_at": "2026-02-17T06:24:13.006545Z"
+    },
+    {
+      "event_id": "msme_updated:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:9a07ec5fe4414bbf840cc452ec735f86",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_updated",
+      "occurred_at": "2026-02-17T06:24:05.478486Z",
+      "source": "business_service",
+      "correlation_id": "6a466a77-dd58-4344-a807-6c8df8d7d01a",
+      "meta": {
+        "is_active": true
+      },
+      "created_at": "2026-02-17T06:24:05.478503Z"
+    },
+    {
+      "event_id": "evt_1771308102",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "payment_failed",
+      "occurred_at": "2026-02-17T06:01:42.153167Z",
+      "source": "payment_service",
+      "correlation_id": "79465492-8c40-45ae-9a7b-73a91768d4bc",
+      "meta": {
+        "event_id": "evt_1771308102",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "plan": null,
+        "reason": "test_failure",
+        "source": null
+      },
+      "created_at": "2026-02-17T06:01:42.153176Z"
+    },
+    {
+      "event_id": "evt_1771308101",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "payment_success",
+      "occurred_at": "2026-02-17T06:01:42.034951Z",
+      "source": "payment_service",
+      "correlation_id": "5b85a568-f79a-466f-90dc-f6be6b39e4b4",
+      "meta": {
+        "event_id": "evt_1771308101",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "plan": "free",
+        "paid_until": "2026-02-18T06:01:41Z",
+        "amount": 25.0,
+        "currency": "ZMW",
+        "source": null
+      },
+      "created_at": "2026-02-17T06:01:42.034961Z"
+    },
+    {
+      "event_id": "msme_suspended:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:ea222cf409694fefb7d102ad6f0d21ff",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_suspended",
+      "occurred_at": "2026-02-17T06:01:41.391115Z",
+      "source": "business_service",
+      "correlation_id": "6f154021-2803-4d4a-a394-41a62ce29c35",
+      "meta": null,
+      "created_at": "2026-02-17T06:01:41.391124Z"
+    },
+    {
+      "event_id": "msme_updated:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:54354e6df02a404a8fa99cfe02e7b67c",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_updated",
+      "occurred_at": "2026-02-17T06:01:41.314540Z",
+      "source": "business_service",
+      "correlation_id": "b0a86da8-fd54-4349-86bc-792e3d82d1e5",
+      "meta": {
+        "name": "Test Business",
+        "is_active": true
+      },
+      "created_at": "2026-02-17T06:01:41.314549Z"
+    },
+    {
+      "event_id": "msme_updated:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:ce80ad09a8904effb50854299ca3a473",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_updated",
+      "occurred_at": "2026-02-17T06:01:22.032392Z",
+      "source": "business_service",
+      "correlation_id": "07ad3295-bd36-4e42-9522-7b3421227eb4",
+      "meta": {
+        "is_active": true
+      },
+      "created_at": "2026-02-17T06:01:22.032402Z"
+    },
+    {
+      "event_id": "evt_1771308071",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "payment_success",
+      "occurred_at": "2026-02-17T06:01:11.074622Z",
+      "source": "payment_service",
+      "correlation_id": "6c6f1dbe-2c41-4207-bb39-79b576a76e56",
+      "meta": {
+        "event_id": "evt_1771308071",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "plan": "free",
+        "paid_until": "2026-02-18T06:01:11Z",
+        "amount": 25.0,
+        "currency": "ZMW",
+        "source": null
+      },
+      "created_at": "2026-02-17T06:01:11.074632Z"
+    },
+    {
+      "event_id": "msme_suspended:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:9071d677e4f7409ab2994b379fe05356",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_suspended",
+      "occurred_at": "2026-02-17T06:01:10.813858Z",
+      "source": "business_service",
+      "correlation_id": "17b4775e-cd9c-4852-941f-e4b725d1f244",
+      "meta": null,
+      "created_at": "2026-02-17T06:01:10.813865Z"
+    },
+    {
+      "event_id": "msme_updated:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:5e36434699c744a5a3c366ae91d8b02b",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_updated",
+      "occurred_at": "2026-02-17T06:01:10.760501Z",
+      "source": "business_service",
+      "correlation_id": "24008531-6c04-4a6c-bc07-fce9cda258e8",
+      "meta": {
+        "name": "Test Business",
+        "is_active": true
+      },
+      "created_at": "2026-02-17T06:01:10.760512Z"
+    },
+    {
+      "event_id": "msme_updated:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:f357885c581a46fa80926af67b135546",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_updated",
+      "occurred_at": "2026-02-17T05:57:34.405821Z",
+      "source": "business_service",
+      "correlation_id": "582c20bc-23da-49fc-86df-2b9320fe142a",
+      "meta": {
+        "is_active": true
+      },
+      "created_at": "2026-02-17T05:57:34.405831Z"
+    },
+    {
+      "event_id": "evt_1771307117",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "payment_success",
+      "occurred_at": "2026-02-17T05:45:17.778581Z",
+      "source": "payment_service",
+      "correlation_id": "803accb0-79c9-4848-aac2-615b92577bdc",
+      "meta": {
+        "event_id": "evt_1771307117",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "plan": "free",
+        "paid_until": "2026-02-18T05:45:17Z",
+        "amount": 25.0,
+        "currency": "ZMW",
+        "source": null
+      },
+      "created_at": "2026-02-17T05:45:17.778591Z"
+    },
+    {
+      "event_id": "msme_suspended:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:fd955fb0b45841ad94164c67cef80ca5",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_suspended",
+      "occurred_at": "2026-02-17T05:45:17.492484Z",
+      "source": "business_service",
+      "correlation_id": "cf08cc77-93ef-42ad-9680-11b53cd34aaa",
+      "meta": null,
+      "created_at": "2026-02-17T05:45:17.492491Z"
+    },
+    {
+      "event_id": "msme_updated:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:8d35759d457b45268f11b24f23e7989b",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_updated",
+      "occurred_at": "2026-02-17T05:45:17.446341Z",
+      "source": "business_service",
+      "correlation_id": "79e1195f-ba52-446d-bed6-1ccefe3c2014",
+      "meta": {
+        "name": "Test Business",
+        "is_active": true
+      },
+      "created_at": "2026-02-17T05:45:17.446351Z"
+    },
+    {
+      "event_id": "msme_registered:37eeeb11-65af-4fbe-bd9e-d332a3ced2da:535e5f8490a74e538de9eeb9ecbfa107",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "event_type": "msme_registered",
+      "occurred_at": "2026-02-17T03:46:52.908820Z",
+      "source": "business_service",
+      "correlation_id": "27fef62c-0803-4c68-9cba-5dcf19e095d0",
+      "meta": {
+        "affiliate_code": null,
+        "referred_by_msme_code": null
+      },
+      "created_at": "2026-02-17T03:46:52.908837Z"
+    }
+  ]
+}

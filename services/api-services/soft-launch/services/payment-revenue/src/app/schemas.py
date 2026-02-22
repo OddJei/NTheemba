@@ -4,6 +4,11 @@ from datetime import datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
+from typing import List
+
+
+class OutboxAckRequest(BaseModel):
+    ids: List[str]
 
 
 class OrmBaseModel(BaseModel):
@@ -126,6 +131,12 @@ class PawaPayDepositInitiateIn(OrmBaseModel):
     provider: Optional[str] = None  # Auto-inferred from phone if not provided
 
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Optional: explicit initiator information (service requesting this deposit)
+    initiator_id: Optional[str] = Field(default=None, alias="initiatorId")
+    initiator_role: Optional[str] = Field(default=None, alias="initiatorRole")
+    # Optional: declared payment type and msme net (minor units)
+    payment_type: Optional[str] = Field(default=None, alias="paymentType")  # "one_time" | "subscription"
+    msme_net_minor: Optional[int] = Field(default=None, alias="msmeNetMinor")
 
 
 class PawaPayPayoutInitiateIn(OrmBaseModel):
@@ -141,6 +152,11 @@ class PawaPayPayoutInitiateIn(OrmBaseModel):
     provider: Optional[str] = None  # Auto-inferred from phone if not provided
 
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Optional initiator information
+    initiator_id: Optional[str] = Field(default=None, alias="initiatorId")
+    initiator_role: Optional[str] = Field(default=None, alias="initiatorRole")
+    # Non-nullable payout type: "msme" or "affiliate"
+    payout_type: Optional[str] = Field(default=None, alias="payoutType")
 
 
 class PawaPayRefundInitiateIn(OrmBaseModel):
@@ -155,6 +171,9 @@ class PawaPayRefundInitiateIn(OrmBaseModel):
     business_id: Optional[str] = None
 
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Optional initiator information
+    initiator_id: Optional[str] = Field(default=None, alias="initiatorId")
+    initiator_role: Optional[str] = Field(default=None, alias="initiatorRole")
 
 
 class PawaPayTxnOut(OrmBaseModel):
@@ -165,6 +184,11 @@ class PawaPayTxnOut(OrmBaseModel):
     currency: str
     provider: Optional[str] = None
     phone_number: Optional[str] = None
+    platform_fee_minor: Optional[int] = 0
+    fee_bps: Optional[int] = None
+    payment_type: Optional[str] = None
+    msme_net_minor: Optional[int] = 0
+    provider_transaction_id: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -201,7 +225,7 @@ class MSMEPayoutInitiateIn(OrmBaseModel):
 class MSMEPayoutOut(OrmBaseModel):
     """MSME payout record response."""
     id: str
-    payout_id: str
+    payout_id: Optional[str]
     order_id: str
     business_id: str
     msme_phone: str
@@ -212,7 +236,7 @@ class MSMEPayoutOut(OrmBaseModel):
     status: str
     failure_code: Optional[str]
     failure_message: Optional[str]
-    initiated_at: datetime
+    initiated_at: Optional[datetime]
     completed_at: Optional[datetime]
 
 

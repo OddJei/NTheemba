@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.sqlite import JSON as SqliteJson
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql.schema import Index
@@ -41,6 +41,9 @@ class User(Base):
 
     password_hash: Mapped[str] = mapped_column(String(400))
     role_id: Mapped[str] = mapped_column(String(36), ForeignKey("roles.id"), index=True)
+
+    # Whether the user has signed the platform agreement
+    signed_terms: Mapped[bool] = mapped_column(Boolean, default=False)
 
     business_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     affiliate_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
@@ -121,11 +124,26 @@ class BusinessSubscription(Base):
     business_id: Mapped[str] = mapped_column(String(36), ForeignKey("businesses.id"), index=True)
 
     plan: Mapped[str] = mapped_column(String(60))
+    billing_interval: Mapped[str] = mapped_column(String(10), default="monthly")
     start_date: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     end_date: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    periods_paid: Mapped[float] = mapped_column(Numeric(8, 4), default=0)
+    paid_through: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class SubscriptionPricing(Base):
+    __tablename__ = "subscription_pricing"
+
+    billing_interval: Mapped[str] = mapped_column(String(10), primary_key=True)
+    amount_minor: Mapped[int] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String(10), default="ZMW")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     status: Mapped[str] = mapped_column(String(30), default="pending_payment")
-    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    
 
 
 class SubscriptionReminder(Base):
@@ -207,7 +225,7 @@ class PaymentInitiation(Base):
     business_id: Mapped[str] = mapped_column(String(36), index=True)
     subscription_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     affiliate_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
-    metadata: Mapped[dict | None] = mapped_column(SqliteJson, nullable=True)
+    meta: Mapped[dict | None] = mapped_column("metadata", SqliteJson, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="pending")
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -215,12 +233,31 @@ class PaymentInitiation(Base):
 class OutboxEvent(Base):
     __tablename__ = "outbox_events"
     __table_args__ = (Index("ix_outbox_event_type", "event_type"),)
-
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    event_type: Mapped[str] = mapped_column(String(100), index=True)
+    # Legacy column retained for compatibility; prefer `topic`/`destination` for new uses.
+    event_type: Mapped[str | None] = mapped_column(String(100), index=True, nullable=True)
+
+    # Canonical / unified columns for dispatcher
+    topic: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    destination: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    # Payload and optional metadata
     payload: Mapped[dict | None] = mapped_column(SqliteJson, nullable=True)
-    target: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    headers: Mapped[dict | None] = mapped_column(SqliteJson, nullable=True)
+
+    producer: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     status: Mapped[str] = mapped_column(String(30), default="pending")
     attempts: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Last delivery error / response information
+    last_error: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    last_response: Mapped[dict | None] = mapped_column(SqliteJson, nullable=True)
+
     scheduled_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

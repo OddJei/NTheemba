@@ -149,6 +149,13 @@ class PawaPayDeposit(Base):
     failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     failure_message: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
+    # Persisted platform/payment fields
+    platform_fee_minor: Mapped[int] = mapped_column(Integer, default=0)
+    fee_bps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payment_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    msme_net_minor: Mapped[int] = mapped_column(Integer, default=0)
+    provider_transaction_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -177,6 +184,8 @@ class PawaPayPayout(Base):
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    # payout_type: 'msme' | 'affiliate' - enforce non-null at DB level
+    payout_type: Mapped[str] = mapped_column(String(32), default='msme')
 
 
 class PawaPayRefund(Base):
@@ -192,6 +201,9 @@ class PawaPayRefund(Base):
 
     currency: Mapped[str] = mapped_column(String(8), default="ZMW")
     amount_minor: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Platform fee portion that corresponds to this refund (for revenue accounting)
+    platform_fee_minor: Mapped[int] = mapped_column(Integer, default=0)
 
     status: Mapped[str] = mapped_column(String(32), default="CREATED")
     failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -281,5 +293,21 @@ class AffiliatePayoutRecord(Base):
     # Timestamps
     initiated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class PlatformFee(Base):
+    __tablename__ = "platform_fees"
+    __table_args__ = (UniqueConstraint("deposit_id", name="uq_platform_fee_deposit"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    deposit_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    order_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    currency: Mapped[str] = mapped_column(String(8), default="ZMW")
+    amount_minor: Mapped[int] = mapped_column(Integer, default=0)
+
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

@@ -1,0 +1,9 @@
+{
+  "method": "GET",
+  "path": "/auth/phone/{user_phone}",
+  "url": "http://localhost:8500/auth/phone/test",
+  "status": 404,
+  "response": {
+    "detail": "user_not_found"
+  }
+}

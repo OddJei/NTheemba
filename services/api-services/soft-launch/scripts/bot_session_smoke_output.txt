@@ -1,0 +1,33 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20260217224506
+Username: DESKTOP-U1FCQ3E\SMART PC
+RunAs User: DESKTOP-U1FCQ3E\SMART PC
+Configuration Name: 
+Machine: DESKTOP-U1FCQ3E (Microsoft Windows NT 10.0.19045.0)
+Host Application: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -noexit -command try { . "c:\Users\SMART PC\AppData\Local\Programs\Microsoft VS Code\c3a26841a8\resources\app\out\vs\workbench\contrib\terminal\common\scripts\shellIntegration.ps1" } catch {}
+Process ID: 6124
+PSVersion: 5.1.19041.6456
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.19041.6456
+BuildVersion: 10.0.19041.6456
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+Transcript started, output file is .\scripts\bot_session_smoke_output.txt
+--- GET /health ---
+{
+    "status":  "ok"
+}
+--- GET /metrics ---
+PS>TerminatingError(Invoke-WebRequest): "{"detail":"Not Found"}"
+ERROR metrics: {"detail":"Not Found"}
+--- POST /bot/create ---
+PS>TerminatingError(Invoke-RestMethod): "{"detail":"missing_token"}"
+ERROR bot_create: {"detail":"missing_token"}
+**********************
+Windows PowerShell transcript end
+End time: 20260217224507
+**********************

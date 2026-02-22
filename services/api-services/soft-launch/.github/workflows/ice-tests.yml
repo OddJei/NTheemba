@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio httpx sqlalchemy aiosqlite redis
+          pip install pytest pytest-asyncio httpx sqlalchemy aiosqlite redis python-multipart
       - name: Run ICE tests
         run: |
           pytest -q services/ice/tests/test_confirm_endpoint.py services/ice/tests/test_confirm_e2e.py

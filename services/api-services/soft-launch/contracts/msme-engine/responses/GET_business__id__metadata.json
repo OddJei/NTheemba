@@ -1,0 +1,20 @@
+{
+  "method": "GET",
+  "path": "/business/{id}/metadata",
+  "url": "http://localhost:8500/business/37eeeb11-65af-4fbe-bd9e-d332a3ced2da/metadata",
+  "status": 200,
+  "response": {
+    "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+    "name": "Test Business",
+    "location": null,
+    "category": null,
+    "tags": null,
+    "delivery_locations": {
+      "Lusaka": {
+        "price_minor": 2500,
+        "currency": "ZMW"
+      }
+    },
+    "is_active": true
+  }
+}

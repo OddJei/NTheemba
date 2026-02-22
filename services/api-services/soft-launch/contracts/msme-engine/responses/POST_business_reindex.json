@@ -1,0 +1,10 @@
+{
+  "method": "POST",
+  "path": "/business/reindex",
+  "url": "http://localhost:8500/business/reindex",
+  "status": 200,
+  "response": {
+    "status": "ok",
+    "count": 84
+  }
+}

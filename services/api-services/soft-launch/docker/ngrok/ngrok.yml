@@ -1,0 +1,13 @@
+# version must be present for the ngrok config format
+version: 2
+
+# Define multiple tunnels. Each will be started with `ngrok start --all`.
+# Public URLs will be printed to logs and visible in the ngrok web UI (mapped to host 4040).
+
+tunnels:
+  payment-revenue:
+    proto: http
+    addr: payment-revenue:8590
+  mini-dashboards:
+    proto: http
+    addr: mini-dashboards:3001

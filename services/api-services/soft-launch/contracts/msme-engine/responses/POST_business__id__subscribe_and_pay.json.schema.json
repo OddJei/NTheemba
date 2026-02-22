@@ -1,0 +1,48 @@
+{
+  "type": "object",
+  "properties": {
+    "subscription": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "business_id": {
+          "type": "string"
+        },
+        "plan": {
+          "type": "string"
+        },
+        "start_date": {
+          "type": "null"
+        },
+        "end_date": {
+          "type": "null"
+        },
+        "status": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        }
+      }
+    },
+    "payment_request": {
+      "type": "object",
+      "properties": {
+        "reference_id": {
+          "type": "string"
+        },
+        "business_id": {
+          "type": "string"
+        },
+        "plan": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

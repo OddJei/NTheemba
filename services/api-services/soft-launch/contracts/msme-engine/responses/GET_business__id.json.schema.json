@@ -1,0 +1,63 @@
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "owner_id": {
+      "type": "string"
+    },
+    "location": {
+      "type": "null"
+    },
+    "category": {
+      "type": "null"
+    },
+    "logo_url": {
+      "type": "null"
+    },
+    "affiliate_code": {
+      "type": "null"
+    },
+    "referred_by_msme_code": {
+      "type": "null"
+    },
+    "subscription_plan": {
+      "type": "string"
+    },
+    "subscription_expiry": {
+      "type": "null"
+    },
+    "delivery_locations": {
+      "type": "object",
+      "properties": {
+        "Lusaka": {
+          "type": "object",
+          "properties": {
+            "price_minor": {
+              "type": "integer"
+            },
+            "currency": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "tags": {
+      "type": "null"
+    },
+    "is_active": {
+      "type": "boolean"
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string"
+    }
+  }
+}

@@ -151,3 +151,42 @@ class MsmeEngineAdapter(MsmeAdapter):
         """Close HTTP session."""
         if self._session:
             await self._session.close()
+
+    async def fetch_business_delivery_locations(self, business_id: str) -> list[dict]:
+        """Fetch delivery locations mapping or list from MSME and normalize to list of dicts.
+
+        Returns empty list on error or when no locations configured.
+        """
+        try:
+            session = await self._get_session()
+            headers = self._build_headers()
+            async with session.get(
+                f"{self.base_url}/businesses/{business_id}/delivery-locations",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    # If MSME returns mapping {name: meta}, convert to list
+                    if isinstance(data, dict):
+                        out: list[dict] = []
+                        for name, meta in data.items():
+                            if not isinstance(meta, dict):
+                                continue
+                            loc = dict(meta)
+                            if "name" not in loc and "label" not in loc:
+                                loc.setdefault("name", name)
+                            out.append(loc)
+                        return out
+                    if isinstance(data, list):
+                        return [d for d in data if isinstance(d, dict)]
+                    return []
+                elif resp.status == 404:
+                    return []
+                else:
+                    error = await resp.text()
+                    logger.error(f"MSME fetch delivery locations failed: {resp.status} - {error}")
+                    return []
+        except Exception as e:
+            logger.error(f"Exception fetching delivery locations: {e}")
+            return []

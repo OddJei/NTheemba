@@ -42,16 +42,16 @@ uvicorn src.app.main:app --reload --port 8500 --host 127.0.0.1
 #### POST /business/register — Notes
 
 - Purpose: register a new business. The request must include exactly one of:
- 	- `owner` — an object with `username`, `email`, `phone`, `password` (service will create a new user), OR
- 	- `owner_user_id` — string id of an existing `User` to link as the business owner.
+  - `owner` — an object with `username`, `email`, `phone`, `password` (service will create a new user), OR
+  - `owner_user_id` — string id of an existing `User` to link as the business owner.
 - Validation / errors:
- 	- 400 `owner_required` — both or neither of `owner`/`owner_user_id` provided.
- 	- 409 `owner_user_conflict` — attempting to create an `owner` with a username/email that already exists.
- 	- 422 — Pydantic validation errors for malformed JSON or invalid fields.
- 	- 500 — unexpected server errors (recently seen when `msme_events.event_id` exceeded the DB column length; migration added to increase length).
+  - 400 `owner_required` — both or neither of `owner`/`owner_user_id` provided.
+  - 409 `owner_user_conflict` — attempting to create an `owner` with a username/email that already exists.
+  - 422 — Pydantic validation errors for malformed JSON or invalid fields.
+  - 500 — unexpected server errors (recently seen when `msme_events.event_id` exceeded the DB column length; migration added to increase length).
 - Idempotency: honor `X-Idempotency-Key` for safe retries.
 - Side-effects:
- 	- Creates `User` (if `owner` provided) and `Business` records, links owner to business, generates an `msme_code`, records a local lifecycle event and emits an audit event.
+  - Creates `User` (if `owner` provided) and `Business` records, links owner to business, generates an `msme_code`, records a local lifecycle event and emits an audit event.
 
 Example payload (create new owner):
 

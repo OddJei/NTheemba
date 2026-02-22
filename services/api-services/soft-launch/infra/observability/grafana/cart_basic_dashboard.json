@@ -1,0 +1,34 @@
+{
+  "id": null,
+  "uid": null,
+  "title": "Cart Service - Basic",
+  "timezone": "browser",
+  "schemaVersion": 16,
+  "version": 0,
+  "refresh": "5s",
+  "panels": [
+    {
+      "type": "graph",
+      "title": "HTTP Requests (by status)",
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 8},
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(http_requests_total{service=\"cart\"}[1m]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Request Latency p95",
+      "gridPos": {"x": 0, "y": 8, "w": 8, "h": 4},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service=\"cart\"}[5m])) by (le))",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

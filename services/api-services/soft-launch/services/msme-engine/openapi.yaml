@@ -1,0 +1,815 @@
+openapi: 3.0.3
+info:
+  title: msme-engine (inferred)
+  version: 1.0.0
+  description: "Auto-generated OpenAPI spec for msme-engine based on source and runtime responses."
+servers:
+  - url: http://localhost:8500
+components:
+  securitySchemes:
+    InternalSecret:
+      type: apiKey
+      in: header
+      name: X-Internal-Secret
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    BusinessOut:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        owner_id:
+          type: string
+        location:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        logo_url:
+          type: string
+          nullable: true
+        affiliate_code:
+          type: string
+          nullable: true
+        referred_by_msme_code:
+          type: string
+          nullable: true
+        subscription_plan:
+          type: string
+          nullable: true
+        subscription_expiry:
+          type: string
+          format: date-time
+          nullable: true
+        delivery_locations:
+          type: object
+          additionalProperties:
+            type: object
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+          nullable: true
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    BusinessEntitlementsOut:
+      type: object
+      properties:
+        business_id:
+          type: string
+        plan:
+          type: string
+        subscription_expiry:
+          type: string
+          format: date-time
+          nullable: true
+        is_active:
+          type: boolean
+        bot_instances_enabled:
+          type: boolean
+        affiliate_promo_links_enabled:
+          type: boolean
+        transaction_fee_pct:
+          type: number
+          format: float
+    BusinessMetadataOut:
+      type: object
+      properties:
+        business_id:
+          type: string
+        name:
+          type: string
+        location:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+          nullable: true
+        delivery_locations:
+          type: object
+          additionalProperties:
+            type: object
+          nullable: true
+        is_active:
+          type: boolean
+    MsmeEventOut:
+      type: object
+      properties:
+        event_id:
+          type: string
+        business_id:
+          type: string
+          nullable: true
+        event_type:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        source:
+          type: string
+          nullable: true
+        correlation_id:
+          type: string
+          nullable: true
+        meta:
+          type: object
+          additionalProperties: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    OutboxAckRequest:
+      type: object
+      properties:
+        ids:
+          type: array
+          items:
+            type: string
+      required:
+        - ids
+    OutboxEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        topic:
+          type: string
+        destination:
+          type: string
+          nullable: true
+        payload:
+          type: object
+          nullable: true
+        headers:
+          type: object
+          nullable: true
+        producer:
+          type: string
+          nullable: true
+        correlation_id:
+          type: string
+          nullable: true
+        dedupe_key:
+          type: string
+          nullable: true
+        status:
+          type: string
+        attempts:
+          type: integer
+        scheduled_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    OutboxPendingResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutboxEvent'
+    DepositCallback:
+      type: object
+      properties:
+        event_type:
+          type: string
+        event_id:
+          type: string
+        depositId:
+          type: string
+        payment_id:
+          type: string
+        business_id:
+          type: string
+        amount_minor:
+          type: integer
+        currency:
+          type: string
+        status:
+          type: string
+      required: []
+    NotificationCallback:
+      type: object
+      properties:
+        event_id:
+          type: string
+        user_id:
+          type: string
+        business_id:
+          type: string
+        template:
+          type: string
+        status:
+          type: string
+        payload:
+          type: object
+      required: []
+    OnboardProfile:
+      type: object
+      properties:
+        fullName:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        city:
+          type: string
+          nullable: true
+    OnboardBusiness:
+      type: object
+      properties:
+        businessName:
+          type: string
+        businessType:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        yearsInBusiness:
+          type: string
+          nullable: true
+    OnboardProduct:
+      type: object
+      properties:
+        name:
+          type: string
+        category:
+          type: string
+          nullable: true
+        price:
+          type: string
+        initialStock:
+          type: string
+    MSMEOnboardRequest:
+      type: object
+      properties:
+        profile:
+          $ref: '#/components/schemas/OnboardProfile'
+        business:
+          $ref: '#/components/schemas/OnboardBusiness'
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/OnboardProduct'
+        signed_terms:
+          type: boolean
+          default: false
+      required:
+        - profile
+        - business
+        - products
+    AffiliatePreferences:
+      type: object
+      properties:
+        categories:
+          type: array
+          items:
+            type: string
+        commissionPreference:
+          type: string
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+    AffiliateOnboardRequest:
+      type: object
+      properties:
+        profile:
+          $ref: '#/components/schemas/OnboardProfile'
+        preferences:
+          $ref: '#/components/schemas/AffiliatePreferences'
+        signed_terms:
+          type: boolean
+          default: false
+      required:
+        - profile
+        - preferences
+    UserOut:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+          nullable: true
+        role:
+          type: string
+        business_id:
+          type: string
+          nullable: true
+        affiliate_id:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        signed_terms:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+paths:
+  /internal/businesses:
+    get:
+      summary: Internal list of businesses
+      security:
+        - InternalSecret: []
+      responses:
+        '200':
+          description: list of businesses
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  value:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BusinessOut'
+  /internal/affiliates:
+    get:
+      summary: Internal list of affiliate users
+      security:
+        - InternalSecret: []
+      responses:
+        '200':
+          description: list of affiliates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  value:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        phone:
+                          type: string
+  /outbox/pending:
+    get:
+      summary: Get pending outbox events (internal)
+      security:
+        - InternalSecret: []
+      responses:
+        '200':
+          description: pending outbox events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxPendingResponse'
+  /outbox/ack:
+    post:
+      summary: Acknowledge outbox events
+      security:
+        - InternalSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OutboxAckRequest'
+      responses:
+        '200':
+          description: acknowledged ids
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  acked:
+                    type: array
+                    items:
+                      type: string
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      responses:
+        '200':
+          description: prometheus text
+          content:
+            text/plain:
+              schema:
+                type: string
+  /business/register:
+    post:
+      summary: Register a new business
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BusinessRegister'
+      responses:
+        '200':
+          description: registered business
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessRegisterOut'
+  /business/{id}:
+    get:
+      summary: Get business
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: business
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessOut'
+    put:
+      summary: Update business
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BusinessUpdate'
+      responses:
+        '200':
+          description: updated business
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessOut'
+    delete:
+      summary: Delete business
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: deleted
+  /business/{id}/subscribe:
+    post:
+      summary: Subscribe business
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscribeRequest'
+      responses:
+        '200':
+          description: subscription initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionInitiateOut'
+  /business/{id}/subscribe_and_pay:
+    post:
+      summary: Subscribe and pay
+      description: |
+        Initiates a subscription for the business. If payment details are provided
+        (amount_minor and phone_number) this endpoint will initiate a payment
+        request and emit a payment initiation Outbox event directed to the
+        `payment-revenue` integration. The response may include a
+        `payment_revenue_response` object when an outbox emit was recorded.
+        Caller MUST provide an `Authorization: Bearer <access_token>` header for
+        payment-initiating requests so downstream services can verify the
+        initiator.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscribeAndPayRequest'
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: subscription and payment initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionInitiateOut'
+  /business/{id}/subscription:
+    get:
+      summary: Get subscription
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: subscription
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionOut'
+        '404':
+          description: subscription not found
+  /business/{id}/entitlements:
+    get:
+      summary: Business entitlements
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: entitlements
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessEntitlementsOut'
+  /business/{id}/metadata:
+    get:
+      summary: Business metadata
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessMetadataOut'
+  /business/phone/{phone_number}:
+    get:
+      summary: Lookup business by phone
+      parameters:
+        - in: path
+          name: phone_number
+          required: true
+          schema:
+            type: string
+      security:
+        - InternalSecret: []
+      responses:
+        '200':
+          description: business lookup
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessPhoneLookupOut'
+        '500':
+          description: server error
+  /business/reindex:
+    post:
+      summary: Reindex business search/catalog
+      security:
+        - InternalSecret: []
+      responses:
+        '200':
+          description: reindex accepted
+  /events/payment_success:
+    post:
+      summary: Ingest payment success event
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentSuccessEvent'
+      responses:
+        '200':
+          description: processed
+  /events/payment_failed:
+    post:
+      summary: Ingest payment failed event
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentFailedEvent'
+      responses:
+        '200':
+          description: processed
+  /events/business/{business_id}:
+    get:
+      summary: Get msme events for a business
+      parameters:
+        - in: path
+          name: business_id
+          required: true
+          schema:
+            type: string
+      security:
+        - InternalSecret: []
+      responses:
+        '200':
+          description: list of events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  value:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MsmeEventOut'
+  /callbacks/payments/deposits:
+    post:
+      summary: Payment deposit callback from payment-revenue
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepositCallback'
+      responses:
+        '200':
+          description: callback accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+  /callbacks/notifications/delivery:
+    post:
+      summary: Notification delivery/callback from notification service
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationCallback'
+      responses:
+        '200':
+          description: callback accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+  /notification/send:
+    post:
+      summary: Send notification
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: notification queued
+  /notification/user/{user_id}:
+    get:
+      summary: Get notifications for a user
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: list of notifications
+  /notification/{id}:
+    get:
+      summary: Get single notification
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: notification
+  /businesses/{business_id}/delivery-locations:
+    get:
+      summary: Get delivery locations for business
+      parameters:
+        - in: path
+          name: business_id
+          required: true
+          schema:
+            type: string
+      security:
+        - InternalSecret: []
+      responses:
+        '200':
+          description: delivery locations mapping
+          content:
+            application/json:
+              schema:
+                type: object
+    put:
+      summary: Update delivery locations
+      parameters:
+        - in: path
+          name: business_id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeliveryLocationsUpdate'
+      responses:
+        '200':
+          description: updated
+  /msme/onboard:
+    post:
+      summary: MSME onboarding (frontend)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MSMEOnboardRequest'
+      responses:
+        '200':
+          description: onboarded
+  /affiliate/onboard:
+    post:
+      summary: Affiliate onboarding (frontend)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AffiliateOnboardRequest'
+      responses:
+        '200':
+          description: affiliate onboarded
+security:
+  - {}

@@ -1,0 +1,11 @@
+{
+  "method": "POST",
+  "path": "/auth/service-token/37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+  "url": "http://localhost:8500/auth/service-token/37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+  "status": 200,
+  "response": {
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZmZpbGlhdGVfaWQiOm51bGwsImJ1c2luZXNzX2lkIjoiMzdlZWViMTEtNjVhZi00ZmJlLWJkOWUtZDMzMmEzY2VkMmRhIiwiZXhwIjoxNzcxMzExNjgyLCJpYXQiOjE3NzEzMDgwODIsInJvbGUiOiJkZWZhdWx0Iiwic3ViIjoiMTE0OGQ1N2ItN2VkYi00YjU4LTk0MWUtZjU3MzM4OTUyNTlmIiwidHlwIjoiYWNjZXNzIn0.K-Dg8CTpeaGYM-FNYc2zdliDtadBt52AHteQ6g5ivr0",
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZmZpbGlhdGVfaWQiOm51bGwsImJ1c2luZXNzX2lkIjoiMzdlZWViMTEtNjVhZi00ZmJlLWJkOWUtZDMzMmEzY2VkMmRhIiwiZXhwIjoxNzczOTAwMDgyLCJpYXQiOjE3NzEzMDgwODIsImp0aSI6Ii12SkMtVVc2TGhtTDRFUFUiLCJyb2xlIjoiZGVmYXVsdCIsInN1YiI6IjExNDhkNTdiLTdlZGItNGI1OC05NDFlLWY1NzMzODk1MjU5ZiIsInR5cCI6InJlZnJlc2gifQ.50TeXuJo9oJS-4FBGBJMMmpEAwVfga7-zhOKJfA4A6s",
+    "token_type": "bearer"
+  }
+}

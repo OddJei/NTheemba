@@ -1,0 +1,14 @@
+{
+  "bot_create": {
+    "status": 401,
+    "body": {
+      "detail": "invalid_token"
+    }
+  },
+  "session_create": {
+    "status": 401,
+    "body": {
+      "detail": "invalid_token"
+    }
+  }
+}

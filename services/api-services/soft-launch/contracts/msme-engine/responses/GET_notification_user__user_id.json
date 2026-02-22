@@ -1,0 +1,383 @@
+{
+  "method": "GET",
+  "path": "/notification/user/{user_id}",
+  "url": "http://localhost:8500/notification/user/1148d57b-7edb-4b58-941e-f5733895259f",
+  "status": 200,
+  "response": [
+    {
+      "id": "ntf_48861617e20cefd797bca905",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "test_notification",
+      "payload": {},
+      "status": "pending",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:49:34.339Z",
+      "sent_at": null,
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_b76b2cfb9387501416e160c8",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_activated",
+      "payload": {
+        "plan": "free",
+        "message": "Welcome — your free subscription is active!"
+      },
+      "status": "pending",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:49:34.159Z",
+      "sent_at": null,
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_6b8b0c18203bbc63df32499d",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_initiated",
+      "payload": {
+        "reference_id": "4b102f74-bd4a-42e1-82af-b714b78e9c02",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "plan": "free",
+        "currency": "ZMW",
+        "message": "Subscription started. Please complete payment if required."
+      },
+      "status": "pending",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:49:34.122Z",
+      "sent_at": null,
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_512214e589e70ba1ba0492e1",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_payment_failed",
+      "payload": {
+        "reason": "test_failure",
+        "plan": null,
+        "message": "Payment failed: test_failure. Please retry."
+      },
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:49:26.080Z",
+      "sent_at": "2026-02-17T06:49:26.118Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_b9c17831354e925faeff669a",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_payment_success",
+      "payload": {
+        "plan": "free",
+        "paid_until": "2026-02-18T06:49:25Z",
+        "message": "Congratulations — payment received and your subscription is active."
+      },
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:49:26.007Z",
+      "sent_at": "2026-02-17T06:49:26.114Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_663163cb77c80870f94c1eda",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "test_notification",
+      "payload": {},
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:36:52.560Z",
+      "sent_at": "2026-02-17T06:36:55.704Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_35bf6473f819d1961a2323d7",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_payment_failed",
+      "payload": {
+        "reason": "test_failure",
+        "plan": null,
+        "message": "Payment failed: test_failure. Please retry."
+      },
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:36:35.548Z",
+      "sent_at": "2026-02-17T06:36:35.715Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_3807845613fb8f576cf519bb",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_payment_success",
+      "payload": {
+        "plan": "free",
+        "paid_until": "2026-02-18T06:36:35Z",
+        "message": "Congratulations — payment received and your subscription is active."
+      },
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:36:35.446Z",
+      "sent_at": "2026-02-17T06:36:35.698Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_717469d2564cdd29960eb1ec",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "test_notification",
+      "payload": {},
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:24:32.781Z",
+      "sent_at": "2026-02-17T06:24:35.357Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_3026667945429c4f66c83cec",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_payment_failed",
+      "payload": {
+        "reason": "test_failure",
+        "plan": null,
+        "message": "Payment failed: test_failure. Please retry."
+      },
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:24:13.364Z",
+      "sent_at": "2026-02-17T06:24:15.370Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_1f979e84bb88118f0e24b8ac",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_payment_success",
+      "payload": {
+        "plan": "free",
+        "paid_until": "2026-02-18T06:24:12Z",
+        "message": "Congratulations — payment received and your subscription is active."
+      },
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:24:13.106Z",
+      "sent_at": "2026-02-17T06:24:15.352Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_9cb77662207ecbe14b74b94d",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "test_notification",
+      "payload": {},
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:01:42.286Z",
+      "sent_at": "2026-02-17T06:01:44.619Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_fd3185b21c238d8c964557c1",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_payment_failed",
+      "payload": {
+        "reason": "test_failure",
+        "plan": null,
+        "message": "Payment failed: test_failure. Please retry."
+      },
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:01:42.198Z",
+      "sent_at": "2026-02-17T06:01:44.613Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_45e1a92ef2f364fd36a75de7",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_payment_success",
+      "payload": {
+        "plan": "free",
+        "paid_until": "2026-02-18T06:01:41Z",
+        "message": "Congratulations — payment received and your subscription is active."
+      },
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:01:42.107Z",
+      "sent_at": "2026-02-17T06:01:44.609Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_93d14eb1fce831937204177a",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "test_notification",
+      "payload": {},
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:01:11.480Z",
+      "sent_at": "2026-02-17T06:01:14.619Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_74b1966d3db999cf5b9f7fc5",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_payment_failed",
+      "payload": {
+        "reason": "test_failure",
+        "plan": null,
+        "message": "Payment failed: test_failure. Please retry."
+      },
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:01:11.277Z",
+      "sent_at": "2026-02-17T06:01:14.611Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_cf9a64dcdf343b1b021ddba4",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_payment_success",
+      "payload": {
+        "plan": "free",
+        "paid_until": "2026-02-18T06:01:11Z",
+        "message": "Congratulations — payment received and your subscription is active."
+      },
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T06:01:11.141Z",
+      "sent_at": "2026-02-17T06:01:14.604Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_70ddf1d701e33fb459bc6c5e",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "test_notification",
+      "payload": {},
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T05:45:18.041Z",
+      "sent_at": "2026-02-17T05:45:24.093Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_0e8f7cf908bce17530533849",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_payment_failed",
+      "payload": {
+        "reason": "test_failure",
+        "plan": null,
+        "message": "Payment failed: test_failure. Please retry."
+      },
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T05:45:17.952Z",
+      "sent_at": "2026-02-17T05:45:24.090Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_12c3d250601aa3c453bef4f0",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "subscription_payment_success",
+      "payload": {
+        "plan": "free",
+        "paid_until": "2026-02-18T05:45:17Z",
+        "message": "Congratulations — payment received and your subscription is active."
+      },
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T05:45:17.853Z",
+      "sent_at": "2026-02-17T05:45:24.085Z",
+      "failed_at": null,
+      "next_retry_at": null
+    },
+    {
+      "id": "ntf_46b944647f1f5dd14d9434ce",
+      "user_id": "1148d57b-7edb-4b58-941e-f5733895259f",
+      "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+      "channel": "in_app",
+      "template": "msme_registered",
+      "payload": {
+        "business_name": "Test Business 12",
+        "msme_code": "MSME-28462"
+      },
+      "status": "sent",
+      "error_message": null,
+      "retry_count": 0,
+      "created_at": "2026-02-17T03:46:53.025Z",
+      "sent_at": "2026-02-17T03:47:00.713Z",
+      "failed_at": null,
+      "next_retry_at": null
+    }
+  ]
+}

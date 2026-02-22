@@ -1,0 +1,12 @@
+﻿{
+  "event_type": "payment_success",
+  "event_id": "test-deposit-20260217-2",
+  "depositId": "test-deposit-20260217-2",
+  "payment_id": "test-deposit-20260217-2",
+  "order_id": "order-test-456",
+  "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+  "amount": 200.0,
+  "amount_zmw": 200.0,
+  "occurred_at": "2026-02-17T07:00:00Z",
+  "user_phone": "+260971000001"
+}

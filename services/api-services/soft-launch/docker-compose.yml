@@ -15,6 +15,8 @@ services:
       - ./services/msme-engine:/app
     command: >-
       python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8500
+    env_file:
+      - .env
     environment:
       PG_USER: postgres
       PG_PASSWORD: "!ladybug!#!"
@@ -29,6 +31,8 @@ services:
       # Forward important service logs (WARNING+) to audit-service as `python_log` events
       AUDIT_FORWARD_LOGS_ENABLED: "true"
       AUDIT_FORWARD_LOGS_LEVEL: "INFO"
+      AFFILIATE_INTERNAL_SECRET: "e2b6c1a9-8f4d-4d3b-9c2e-1f0a6b5c4d3e"
+      AFFILIATE_ENGINE_BASE_URL: http://affiliate-engine:8510
     ports:
       - "8500:8500"
     networks:
@@ -50,10 +54,12 @@ services:
       PG_DB: ntheemba
       PG_SCHEMA: affiliate_engine
       MSME_BASE_URL: http://msme-engine:8500
+      PAYMENT_REVENUE_BASE_URL: http://payment-revenue:8590
       AUDIT_SERVICE_URL: http://audit-service:8290
       AUDIT_EMIT_ENABLED: "true"
       AUDIT_FORWARD_LOGS_ENABLED: "true"
       AUDIT_FORWARD_LOGS_LEVEL: "INFO"
+      AFFILIATE_INTERNAL_SECRET: "e2b6c1a9-8f4d-4d3b-9c2e-1f0a6b5c4d3e"
     ports:
       - "8510:8510"
     networks:
@@ -64,6 +70,8 @@ services:
       context: ./services/catalog-inventory
     volumes:
       - ./services/catalog-inventory:/app
+      - ./libs:/app/libs
+      - ./services/catalog-inventory/src/app/helpers/outbox:/app/libs/outbox
     environment:
       DATABASE_URL: "postgresql+asyncpg://postgres:!ladybug!%23!@postgres:5432/ntheemba"
       PG_SCHEMA: catalog_inventory
@@ -128,8 +136,10 @@ services:
 
   payment-revenue:
     build:
-      context: ./services/payment-revenue
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/payment-revenue/Dockerfile
+    env_file:
+      - .env
     environment:
       # Use Postgres in this stack (schema via search_path).
       DATABASE_URL: "postgresql+asyncpg://postgres:!ladybug!%23!@postgres:5432/ntheemba"
@@ -192,8 +202,10 @@ services:
 
   bot-session:
     build:
-      context: ./services/bot-session
+      context: .
+      dockerfile: services/bot-session/Dockerfile
     environment:
+      MSME_JWT_SECRET: 0x9f3a7c2b5e481d60
       DATABASE_URL: "postgresql+asyncpg://postgres:!ladybug!%23!@postgres:5432/ntheemba"
       PG_SCHEMA: bot_session
       AUDIT_SERVICE_URL: http://audit-service:8290
@@ -246,6 +258,8 @@ services:
       - ./services/outbox-dispatcher:/app
     command: >-
       python -m uvicorn src.app.main:app --host 0.0.0.0 --port 8550
+    env_file:
+      - .env
     environment:
       OUTBOX_SERVICES: "http://msme-engine:8500,http://order-delivery:8560,http://payment-revenue:8590,http://affiliate-engine:8510,http://ice-service:8100"
       OUTBOX_BATCH_SIZE: "50"
@@ -322,15 +336,36 @@ services:
     image: ngrok/ngrok:latest
     depends_on:
       - payment-revenue
+      - mini-dashboards
     environment:
       # Provide your ngrok authtoken via environment or .env file
       NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
-    entrypoint: ["ngrok"]
-    command: ["http", "payment-revenue:8590", "--log=stdout", "--authtoken=${NGROK_AUTHTOKEN}"]
+    entrypoint: ["sh", "-c"]
+    command: >-
+      ngrok http payment-revenue:8590 --authtoken "$NGROK_AUTHTOKEN" --log=stdout &
+      ngrok http mini-dashboards:3001 --authtoken "$NGROK_AUTHTOKEN" --log=stdout &
+      wait
     ports:
       - "4040:4040" # ngrok web UI
     networks:
       - softlaunch-net
+
+  mini-dashboards:
+    image: node:18
+    working_dir: /app
+    volumes:
+      - ./services/frontend/web-services/mini_dashboards:/app
+      - /app/node_modules
+    command: sh -c "npm install --no-audit --no-fund && npm run dev -- --host 0.0.0.0 --port 3001"
+    environment:
+      NODE_ENV: development
+      VITE_API_BASE_URL: http://msme-engine:8500
+    ports:
+      - "3001:3001"
+    networks:
+      - softlaunch-net
+    depends_on:
+      - msme-engine
 
   postgres:
     image: postgres:15
@@ -398,3 +433,13 @@ services:
       - "8580:80"
     networks:
       - softlaunch-net
+    
+  openclaw:
+    image: openclaw-docker
+    build:
+      context: ./docker/openclaw
+      dockerfile: Dockerfile
+    networks:
+      - softlaunch-net
+    depends_on:
+      - postgres

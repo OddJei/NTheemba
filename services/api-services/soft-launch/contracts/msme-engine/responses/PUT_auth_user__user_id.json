@@ -1,0 +1,18 @@
+{
+  "method": "PUT",
+  "path": "/auth/user/{user_id}",
+  "url": "http://localhost:8500/auth/user/1148d57b-7edb-4b58-941e-f5733895259f",
+  "status": 422,
+  "response": {
+    "detail": [
+      {
+        "type": "model_attributes_type",
+        "loc": [
+          "body"
+        ],
+        "msg": "Input should be a valid dictionary or object to extract fields from",
+        "input": "string"
+      }
+    ]
+  }
+}

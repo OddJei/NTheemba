@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'msme-engine'
+    metrics_path: /metrics
+    static_configs:
+      # When running msme locally, run it on port 8500. Use host.docker.internal for Docker Desktop.
+      # When running inside Docker Compose use the service name with port 8500 (msme-engine:8500).
+      - targets: ['host.docker.internal:8500']

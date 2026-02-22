@@ -1,0 +1,23 @@
+﻿
+=================================== ERRORS ====================================
+___ ERROR collecting services/order-delivery/tests/test_payment_helpers.py ____
+..\..\..\..\..\AppData\Local\Programs\Python\Python310\lib\site-packages\_pytest\python.py:493: in importtestmodule
+    mod = import_path(
+..\..\..\..\..\AppData\Local\Programs\Python\Python310\lib\site-packages\_pytest\pathlib.py:561: in import_path
+    mod = _import_module_using_spec(
+..\..\..\..\..\AppData\Local\Programs\Python\Python310\lib\site-packages\_pytest\pathlib.py:715: in _import_module_using_spec
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+..\..\..\..\..\AppData\Local\Programs\Python\Python310\lib\site-packages\_pytest\assertion\rewrite.py:175: in exec_module
+    source_stat, co = _rewrite_test(fn, self.config)
+..\..\..\..\..\AppData\Local\Programs\Python\Python310\lib\site-packages\_pytest\assertion\rewrite.py:355: in _rewrite_test
+    tree = ast.parse(source, filename=strfn)
+..\..\..\..\..\AppData\Local\Programs\Python\Python310\lib\ast.py:50: in parse
+    return compile(source, filename, mode, flags,
+E     File "C:\Users\SMART PC\Documents\NTheemba\services\api-services\soft-launch\services\order-delivery\tests\test_payment_helpers.py", line 28
+E       now = datetime.now(timezone.utc)
+E       ^^^
+E   IndentationError: expected an indented block after 'with' statement on line 27
+=========================== short test summary info ===========================
+ERROR services/order-delivery/tests/test_payment_helpers.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.80s

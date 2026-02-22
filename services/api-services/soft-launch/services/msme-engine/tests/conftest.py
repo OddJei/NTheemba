@@ -1,5 +1,16 @@
 import os
 import sys
+
+# Ensure the package source is on sys.path when pytest runs from repo root
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+SRC = os.path.join(ROOT, "services", "msme-engine", "src")
+if SRC not in sys.path:
+    sys.path.insert(0, SRC)
+
+# Provide a sensible default DATABASE_URL for local test Postgres started via docker-compose.test.yml
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@127.0.0.1:5433/ntheemba")
+import os
+import sys
 import tempfile
 from pathlib import Path
 

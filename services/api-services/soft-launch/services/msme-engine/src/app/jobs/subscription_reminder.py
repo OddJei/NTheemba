@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Any
 import asyncio
 import logging
 from sqlalchemy import select
@@ -80,7 +80,7 @@ def compute_reminder_actions(biz: BizSnapshot, record: ReminderRecord, now: Opti
     return actions
 
 
-async def background_loop(get_db_session_provider: Callable[[], object], app, interval_seconds: int = 3600) -> None:
+async def background_loop(get_db_session_provider: Callable[[], Any], app, interval_seconds: int = 3600) -> None:
     """Background loop that periodically processes subscriptions.
 
     For robustness in this soft-launch repo the implementation is best-effort and logs errors.
@@ -93,12 +93,58 @@ async def background_loop(get_db_session_provider: Callable[[], object], app, in
             # We attempt to call a optional hook `process_due_subscriptions` if present on the module
             # using the provided provider.
             if hasattr(process_due_subscriptions, "__call__"):
-                async for db in get_db_session_provider():
-                    try:
-                        await process_due_subscriptions(db)
-                    except Exception:
-                        logger.exception("error_processing_due_subscriptions")
-                    break
+                provider_obj = get_db_session_provider() if callable(get_db_session_provider) else get_db_session_provider
+
+                try:
+                    # Coroutine that returns a session
+                    if asyncio.iscoroutine(provider_obj):
+                        try:
+                            db = await provider_obj
+                            await process_due_subscriptions(db)
+                        except Exception:
+                            logger.exception("error_processing_due_subscriptions")
+
+                    # Async context manager (e.g., an async generator wrapped elsewhere)
+                    elif hasattr(provider_obj, "__aenter__"):
+                        async with provider_obj as db:
+                            try:
+                                await process_due_subscriptions(db)
+                            except Exception:
+                                logger.exception("error_processing_due_subscriptions")
+
+                    # If provider_obj is a direct AsyncSession (or duck-typed), use it directly
+                    elif isinstance(provider_obj, AsyncSession) or hasattr(provider_obj, "execute"):
+                        try:
+                            await process_due_subscriptions(provider_obj)
+                        except Exception:
+                            logger.exception("error_processing_due_subscriptions")
+
+                    # Async iterable (async generator)
+                    elif hasattr(provider_obj, "__aiter__"):
+                        try:
+                            async for db in provider_obj:
+                                try:
+                                    await process_due_subscriptions(db)
+                                except Exception:
+                                    logger.exception("error_processing_due_subscriptions")
+                                break
+                        except Exception:
+                            logger.exception("invalid_db_session_provider")
+
+                    # Fallback: synchronous iterable/provider
+                    else:
+                        try:
+                            for db in provider_obj:
+                                try:
+                                    await process_due_subscriptions(db)
+                                except Exception:
+                                    logger.exception("error_processing_due_subscriptions")
+                                break
+                        except Exception:
+                            # provider_obj not iterable
+                            logger.exception("invalid_db_session_provider")
+                except Exception:
+                    logger.exception("error_handling_db_session_provider")
         except Exception:
             logger.exception("subscription_reminder_loop_error")
         await asyncio.sleep(interval_seconds)

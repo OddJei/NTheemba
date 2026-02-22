@@ -22,6 +22,14 @@ def create_engine() -> AsyncEngine:
         schema = get_pg_schema()
         return create_async_engine(url, future=True, connect_args={"server_settings": {"search_path": schema}})
 
+    # Special handling for SQLite in-memory to allow multiple connections
+    # (tests set DATABASE_URL to sqlite+aiosqlite:///:memory:). Use a
+    # shared-cache memory URI so create_all in startup is visible to other
+    # connections used by request handling during tests.
+    if url.startswith("sqlite+aiosqlite:///:memory:"):
+        sqlite_uri = "sqlite+aiosqlite:///file:memdb1?mode=memory&cache=shared"
+        return create_async_engine(sqlite_uri, future=True, connect_args={"uri": True})
+
     return create_async_engine(url, future=True)
 
 

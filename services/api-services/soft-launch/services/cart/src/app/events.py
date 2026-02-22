@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.models import OutboxEvent
+from src.app.helpers.outbox.outbox import create_outbox_row
 
 
 async def add_outbox_event(
@@ -17,14 +18,13 @@ async def add_outbox_event(
     entity_id: str | None = None,
     correlation_id: str | None = None,
 ) -> None:
-    # store event for later delivery (outbox pattern)
-    ev = OutboxEvent(
-        event_type=event_type,
-        business_id=business_id,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        payload=payload,
+    # store event in canonical public.outbox for later delivery
+    await create_outbox_row(
+        db,
+        event_type,
+        payload,
+        destination=None,
         correlation_id=correlation_id,
+        producer="cart",
     )
-    db.add(ev)
     await db.commit()

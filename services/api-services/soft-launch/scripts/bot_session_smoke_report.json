@@ -1,0 +1,40 @@
+{
+  "base": "http://127.0.0.1:8540",
+  "client": "httpx",
+  "timestamp": 1771362540.6415012,
+  "results": [
+    {
+      "path": "/health",
+      "status": 200,
+      "body": {
+        "status": "ok"
+      }
+    },
+    {
+      "path": "/metrics",
+      "status": 404,
+      "body": "{\"detail\":\"Not Found\"}"
+    },
+    {
+      "path": "/bot/create",
+      "status": 401,
+      "body": {
+        "detail": "missing_token"
+      }
+    },
+    {
+      "path": "/session/create",
+      "status": 401,
+      "body": {
+        "detail": "missing_token"
+      }
+    },
+    {
+      "path": "/bot/by-phone/+260971234567",
+      "status": 401,
+      "body": {
+        "detail": "missing_token"
+      }
+    }
+  ]
+}

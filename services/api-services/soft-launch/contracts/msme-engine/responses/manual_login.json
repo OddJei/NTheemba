@@ -1,0 +1,11 @@
+{
+  "method": "POST",
+  "path": "/auth/login",
+  "url": "http://localhost:8500/auth/login",
+  "status": 200,
+  "response": {
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZmZpbGlhdGVfaWQiOm51bGwsImJ1c2luZXNzX2lkIjpudWxsLCJleHAiOjE3NzEzMTA3MTUsImlhdCI6MTc3MTMwNzExNSwicm9sZSI6ImRlZmF1bHQiLCJzdWIiOiIwYjY4ZWQ4MS1iZTM0LTRlMjAtODgxZC1mYWY4MjIzMGM1N2MiLCJ0eXAiOiJhY2Nlc3MifQ.81BYpJWIMLDKXNaXqESsSlMr3m0cWorK7u28q7A0Kyg",
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZmZpbGlhdGVfaWQiOm51bGwsImJ1c2luZXNzX2lkIjpudWxsLCJleHAiOjE3NzM4OTkxMTUsImlhdCI6MTc3MTMwNzExNSwianRpIjoibE9zc3hONEN4Yjdpa3RfZyIsInJvbGUiOiJkZWZhdWx0Iiwic3ViIjoiMGI2OGVkODEtYmUzNC00ZTIwLTg4MWQtZmFmODIyMzBjNTdjIiwidHlwIjoicmVmcmVzaCJ9.plyeg45fYYmCemVN-YUJHgCvDaxcGT0exonXEVYL-vw",
+    "token_type": "bearer"
+  }
+}

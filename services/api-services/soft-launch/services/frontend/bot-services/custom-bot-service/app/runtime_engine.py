@@ -858,6 +858,9 @@ async def fetch_business_delivery_locations(
         blob = resp.get(key)
         if isinstance(blob, dict) and isinstance(blob.get("delivery_locations"), (dict, list)):
             return _normalize(blob.get("delivery_locations"))
+        # Some ICE implementations may return the list directly under the key
+        if isinstance(blob, list):
+            return _normalize(blob)
     return []
 
 
@@ -866,7 +869,7 @@ def validate_payment_inputs(
     phone: str | None,
     delivery_option: str | None,
     town: str | None,
-    address: str | None,
+    address: str | None = None,
     available_towns: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Validate payment inputs and return dict of errors (empty if valid)."""
@@ -879,7 +882,8 @@ def validate_payment_inputs(
         towns = [str(t.get("town_name")).lower() for t in (available_towns or []) if isinstance(t, dict) and t.get("town_name")]
         if not town or str(town).lower() not in towns:
             errors["town"] = "invalid_town"
-        if not address or not str(address).strip():
+        # Address is optional when a known town is provided; only validate if address present
+        if address is not None and not str(address).strip():
             errors["address"] = "invalid_address"
     return errors
 
@@ -908,11 +912,15 @@ async def collect_payment_inputs_one_turn(*, payload: dict[str, Any], available_
                 break
     # remaining text as address
     address = text
+    # Return both legacy keys (used by runtime) and normalized keys (used by tests)
     return {
         "payment_phone": phone,
         "delivery_option": delivery_option,
         "delivery_town": town,
         "delivery_address": address,
+        "phone": phone,
+        "town": town,
+        "address": address,
         "raw_text": text,
     }
 

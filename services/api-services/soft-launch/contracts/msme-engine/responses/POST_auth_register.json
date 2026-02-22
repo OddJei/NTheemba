@@ -1,0 +1,18 @@
+{
+  "method": "POST",
+  "path": "/auth/register",
+  "url": "http://localhost:8500/auth/register",
+  "status": 201,
+  "response": {
+    "id": "4e26827e-1b58-42c6-93fa-3a54577328df",
+    "username": "user_1771310966",
+    "email": "user_1771310966@example.com",
+    "phone": "testuser_1771310966@example.com",
+    "role": "default",
+    "business_id": null,
+    "affiliate_id": null,
+    "is_active": true,
+    "created_at": "2026-02-17T06:49:26.462003Z",
+    "updated_at": "2026-02-17T06:49:26.462010Z"
+  }
+}

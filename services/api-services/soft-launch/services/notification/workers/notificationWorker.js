@@ -1,7 +1,6 @@
 const logger = require('../utils/logger');
 const { loadDb, saveDb } = require('../storage/db');
 const { sendEmail } = require('../services/emailService');
-const { sendSMS } = require('../services/smsService');
 
 /**
  * Background worker that processes pending notifications from queue.
@@ -17,13 +16,10 @@ async function processNotification(notification) {
   const { id, channel, payload, retry_count = 0 } = notification;
 
   try {
-    if (channel === 'sms') {
-      const to = payload && payload.to ? payload.to : undefined;
-      const recipients = payload && Array.isArray(payload.recipients) ? payload.recipients : undefined;
-      const message = payload && payload.message ? payload.message : undefined;
-      
-      await sendSMS({ to, recipients, message });
-    } else if (channel === 'email') {
+    // Only process email deliveries in this worker. SMS is ignored and
+    // channels backed by outbox (whatsapp/push) are handled by the outbox
+    // dispatcher. This keeps delivery responsibilities consistent.
+    if (channel === 'email') {
       const to = payload && payload.to ? payload.to : undefined;
       const subject = payload && payload.subject ? payload.subject : undefined;
       const message = payload && payload.message ? payload.message : undefined;
@@ -34,11 +30,13 @@ async function processNotification(notification) {
       }
       
       await sendEmail({ to, subject, text: message, html });
-    } else if (channel === 'in_app' || channel === 'inapp') {
-      // In-app notifications are stored as-is, no external delivery needed
-      // Just mark as sent immediately
     } else {
-      throw new Error(`unsupported_channel: ${channel}`);
+      // Ignore non-email channels here (sms, whatsapp, push, in_app).
+      // Outbox entries are created by the controller for whatsapp/push
+      // and will be dispatched by the outbox dispatcher. For SMS we
+      // intentionally ignore here as requested.
+      logger.info(`Skipping delivery for non-email channel: ${channel}`);
+      return;
     }
 
     // Mark as sent

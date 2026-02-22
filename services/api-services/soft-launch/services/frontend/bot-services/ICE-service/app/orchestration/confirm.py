@@ -16,6 +16,7 @@ This workflow ensures atomic order confirmation with proper error handling and r
 import logging
 from typing import Any, Dict, Optional
 from uuid import uuid4
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.factory import AdapterFactory
@@ -164,6 +165,17 @@ class ConfirmationWorkflow:
                 logger.info(f"Affiliate attribution recorded for: {affiliate_context['affiliate_id']}")
             
             # 7. Create order confirmed blob
+            order_result = {
+                "order_id": order_id,
+                "payment_ref": payment_ref,
+            }
+            delivery_result = None
+            if delivery_id:
+                delivery_result = {
+                    "delivery_id": delivery_id,
+                    "delivery_code": delivery_code,
+                }
+
             order_confirmed_blob = create_order_confirmed_blob(
                 session_id=session_id,
                 order_id=order_id,
@@ -183,7 +195,7 @@ class ConfirmationWorkflow:
                 metadata={
                     "order_draft_snapshot": order_draft,
                     "order_result": order_result,
-                    "delivery_result": delivery_result if delivery_id else None,
+                    "delivery_result": delivery_result,
                     "affiliate_context": affiliate_context,
                     "attribution_success": attribution_success,
                     "correlation_id": correlation_id,
@@ -232,8 +244,10 @@ class ConfirmationWorkflow:
             
             # 11. Update order draft status to CONFIRMED
             order_draft["status"] = "CONFIRMED"
-            order_draft["metadata"]["confirmed_order_id"] = order_id
-            order_draft["metadata"]["confirmed_at"] = str(uuid4())  # TODO: Use actual timestamp
+            metadata = order_draft.get("metadata") or {}
+            metadata["confirmed_order_id"] = order_id
+            metadata["confirmed_at"] = datetime.utcnow().isoformat()
+            order_draft["metadata"] = metadata
             await self.repo.save_order_draft(
                 order_draft_id=order_draft_id,
                 blob=order_draft,

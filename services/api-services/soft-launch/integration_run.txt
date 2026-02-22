@@ -1,0 +1,42 @@
+﻿=== HYDRATE ERROR ===
+422
+
+=== RESERVE RESPONSE ===
+{
+    "status":  "FAILED",
+    "order_draft_id":  null,
+    "reservation_ref":  null,
+    "error_code":  "ICE_RESERVE_FAILED",
+    "error_message":  "\u0027IceRepository\u0027 object has no attribute \u0027save_order_draft\u0027"
+}
+
+=== CONFIRM ERROR ===
+"Invoke-RestMethod : \r\n{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\",\"order_draft_id\"],\"msg\":\"Field \r\nrequired\",\"input\":{\"amount_minor\":10000,\"session_id\":\"sess-123\",\"payment_r\r\neference\":\"\",\"currency\":\"ZMW\"}},{\"type\":\"missing\",\"loc\":[\"body\",\"payment_d\r\netails\"],\"msg\":\"Field required\",\"input\":{\"amount_minor\":10000,\"session_id\"\r\n:\"sess-123\",\"payment_reference\":\"\",\"currency\":\"ZMW\"}}]}\r\nAt C:\\Users\\SMART PC\\Documents\\NTheemba\\services\\api-services\\soft-launch\\\r\nscripts\\integration_run.ps1:58 char:10\r\n+     $r = Invoke-RestMethod -Uri \u0027http://127.0.0.1:8100/api/v1/confirm \r\n...\r\n+          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : InvalidOperation: (System.Net.HttpWebReques \r\n   t:HttpWebRequest) [Invoke-RestMethod], WebException\r\n    + FullyQualifiedErrorId : WebCmdletWebResponseException,Microsoft.Pow \r\n   erShell.Commands.InvokeRestMethodCommand\r\n"
+
+=== CREATE_CYCLE ERROR ===
+"Invoke-RestMethod : {\"detail\":\"Not Found\"}\r\nAt C:\\Users\\SMART PC\\Documents\\NTheemba\\services\\api-services\\soft-launch\\\r\nscripts\\integration_run.ps1:68 char:10\r\n+     $r = Invoke-RestMethod -Uri \u0027http://127.0.0.1:8100/api/v1/session \r\n...\r\n+          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : InvalidOperation: (System.Net.HttpWebReques \r\n   t:HttpWebRequest) [Invoke-RestMethod], WebException\r\n    + FullyQualifiedErrorId : WebCmdletWebResponseException,Microsoft.Pow \r\n   erShell.Commands.InvokeRestMethodCommand\r\n"
+
+=== UPDATE_STAGE ERROR ===
+"Invoke-RestMethod : {\"detail\":\"Not Found\"}\r\nAt C:\\Users\\SMART PC\\Documents\\NTheemba\\services\\api-services\\soft-launch\\\r\nscripts\\integration_run.ps1:78 char:10\r\n+     $r = Invoke-RestMethod -Uri \u0027http://127.0.0.1:8100/api/v1/session \r\n...\r\n+          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : InvalidOperation: (System.Net.HttpWebReques \r\n   t:HttpWebRequest) [Invoke-RestMethod], WebException\r\n    + FullyQualifiedErrorId : WebCmdletWebResponseException,Microsoft.Pow \r\n   erShell.Commands.InvokeRestMethodCommand\r\n"
+
+=== LOG RESPONSE ===
+{
+    "id":  "a7061bbd-efd1-4eb9-bd49-984cc008e327",
+    "correlation_id":  null,
+    "session_id":  "sess-123",
+    "status":  null
+}
+
+=== MSME OUTBOX ERROR ===
+"Invoke-RestMethod : {\"detail\":\"invalid_internal_secret\"}\r\nAt C:\\Users\\SMART PC\\Documents\\NTheemba\\services\\api-services\\soft-launch\\\r\nscripts\\integration_run.ps1:97 char:10\r\n+     $r = Invoke-RestMethod -Uri \u0027http://127.0.0.1:8500/outbox/pending \r\n...\r\n+          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : InvalidOperation: (System.Net.HttpWebReques \r\n   t:HttpWebRequest) [Invoke-RestMethod], WebException\r\n    + FullyQualifiedErrorId : WebCmdletWebResponseException,Microsoft.Pow \r\n   erShell.Commands.InvokeRestMethodCommand\r\n"
+
+=== AFF OUTBOX ERROR ===
+"Invoke-RestMethod : {\"detail\":\"missing_token\"}\r\nAt C:\\Users\\SMART PC\\Documents\\NTheemba\\services\\api-services\\soft-launch\\\r\nscripts\\integration_run.ps1:106 char:10\r\n+     $r = Invoke-RestMethod -Uri \u0027http://127.0.0.1:8510/outbox/pending \r\n...\r\n+          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : InvalidOperation: (System.Net.HttpWebReques \r\n   t:HttpWebRequest) [Invoke-RestMethod], WebException\r\n    + FullyQualifiedErrorId : WebCmdletWebResponseException,Microsoft.Pow \r\n   erShell.Commands.InvokeRestMethodCommand\r\n"
+
+=== DISPATCHER RUN_ONCE ===
+{
+    "dispatched":  0,
+    "acked":  0,
+    "failed":  0
+}
+

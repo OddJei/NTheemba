@@ -5,10 +5,11 @@ import os
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+import json
+from sqlalchemy import text
 
 from src.app.db import SessionLocal
-from src.app.models import OutboxEvent
+from datetime import datetime
 
 
 def _sink_url() -> str:
@@ -22,32 +23,38 @@ async def dispatch_once(*, batch_size: int = 50) -> int:
     sink_url = _sink_url()
 
     async with SessionLocal() as db:
-        events = (
-            await db.execute(
-                select(OutboxEvent)
-                .where(OutboxEvent.processed.is_(False))
-                .order_by(OutboxEvent.created_at.asc())
-                .limit(int(batch_size))
-            )
-        ).scalars().all()
-
-        if not events:
+        sql = text(
+            """
+            SELECT id, topic, payload::text as payload, dedupe_key, destination, attempts, scheduled_at, correlation_id
+            FROM public.outbox
+            WHERE status = 'pending' AND producer = 'cart'
+            ORDER BY created_at ASC
+            LIMIT :limit
+            """
+        )
+        res = await db.execute(sql, {"limit": int(batch_size)})
+        rows = res.fetchall()
+        if not rows:
             return 0
 
         async with httpx.AsyncClient(timeout=10.0) as client:
-            for ev in events:
+            processed = 0
+            for r in rows:
+                try:
+                    payload = json.loads(r.payload) if r.payload else {}
+                except Exception:
+                    payload = {}
                 body: dict[str, Any] = {
-                    "id": ev.id,
-                    "event_type": ev.event_type,
-                    "business_id": ev.business_id,
-                    "entity_type": ev.entity_type,
-                    "entity_id": ev.entity_id,
-                    "payload": ev.payload,
-                    "correlation_id": ev.correlation_id,
-                    "created_at": ev.created_at.isoformat(),
+                    "id": str(r.id),
+                    "event_type": r.topic,
+                    "business_id": None,
+                    "entity_type": None,
+                    "entity_id": None,
+                    "payload": payload,
+                    "correlation_id": r.correlation_id,
+                    "created_at": None,
                 }
 
-                # basic retry
                 last_exc: Exception | None = None
                 for attempt in range(3):
                     try:
@@ -61,13 +68,13 @@ async def dispatch_once(*, batch_size: int = 50) -> int:
                     await asyncio.sleep(0.25 * (2**attempt))
 
                 if last_exc is not None:
-                    # stop processing batch; will retry next run
                     break
 
-                ev.processed = True
+                await db.execute(text("UPDATE public.outbox SET status='sent', updated_at = :now WHERE id = :id"), {"id": r.id, "now": datetime.utcnow()})
                 await db.commit()
+                processed += 1
 
-        return len([e for e in events if e.processed])
+        return processed
 
 
 async def run_forever(*, poll_seconds: float = 2.0, batch_size: int = 50) -> None:

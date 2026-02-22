@@ -22,6 +22,7 @@ from src.app import config as _config
 from src.app import audit_client
 from src.app import security
 import os
+from src.app.observability import instrument_app
 
 
 async def _notify_in_app(*, user_id: str | None, business_id: str | None, template: str, payload: dict | None, correlation_id: str | None) -> None:
@@ -47,6 +48,11 @@ async def _notify_in_app(*, user_id: str | None, business_id: str | None, templa
         logger.info("notification_unreachable", extra={"template": template, "correlation_id": correlation_id})
 
 app = FastAPI(title="Cart Service (Soft Launch)")
+try:
+    app = instrument_app(app)
+except Exception:
+    # Keep app running even if instrumentation fails
+    pass
 
 logger = logging.getLogger("cart")
 

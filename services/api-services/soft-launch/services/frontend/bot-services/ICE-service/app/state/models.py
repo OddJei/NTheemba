@@ -192,3 +192,20 @@ class IceMessageLog(Base):
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class IceHydratedBlob(Base):
+    """Persisted hydrated blobs (keyed cache for blobs returned by ICE)."""
+    __tablename__ = "ice_hydrated_blobs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid4()))
+    key = Column(String, nullable=False, unique=True, index=True)
+    blob = Column(JSON, nullable=False, default={})
+    schema_version = Column(String, default="1.0")
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("ix_hydrated_blobs_key", "key"),
+    )

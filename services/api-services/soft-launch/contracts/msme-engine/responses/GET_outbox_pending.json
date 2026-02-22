@@ -1,0 +1,878 @@
+{
+  "method": "GET",
+  "path": "/outbox/pending",
+  "url": "http://localhost:8500/outbox/pending",
+  "status": 200,
+  "response": [
+    {
+      "id": "f7505c2c-e0a1-42a4-bb69-38b4c9fddc22",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771300608",
+        "deposit_id": "pay_test_123",
+        "business_id": null,
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771300608",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": null,
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "57e925f6-55d8-444e-8191-c3f16af5b699",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771300781",
+        "deposit_id": "pay_test_123",
+        "business_id": "3d12c07e-3192-4b6d-baed-a6f746165ec6",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771300781",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "3d12c07e-3192-4b6d-baed-a6f746165ec6",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "8b0205b4-4737-475f-97eb-c893647610d8",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771301126",
+        "deposit_id": "pay_test_123",
+        "business_id": "d4094cb2-bce4-4502-9b4b-4eea3528bc28",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771301126",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "d4094cb2-bce4-4502-9b4b-4eea3528bc28",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "4c2d1e52-a285-44fc-aab1-0d5f0374c32c",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771301335",
+        "deposit_id": "pay_test_123",
+        "business_id": "5e644d1b-ffb4-4864-b2b8-c88863e5b15b",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771301335",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "5e644d1b-ffb4-4864-b2b8-c88863e5b15b",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "8798c8c3-35f9-4e24-80fc-3ffdb9f90a4b",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771301437",
+        "deposit_id": "pay_test_123",
+        "business_id": "116f8a4d-ee22-4f41-adf5-b9c5907e88c0",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771301437",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "116f8a4d-ee22-4f41-adf5-b9c5907e88c0",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "050dd6ed-07ff-44d2-a5ce-2b39fa1be0e5",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771301490",
+        "deposit_id": "pay_test_123",
+        "business_id": "f11e20eb-777f-4ce3-bceb-d6646b5ee692",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771301490",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "f11e20eb-777f-4ce3-bceb-d6646b5ee692",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "4d0de316-afaf-4e2b-aa1d-85c373219893",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771303018",
+        "deposit_id": "pay_test_123",
+        "business_id": "7f59c14d-b1b2-4790-8d66-fba88346f196",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771303018",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "7f59c14d-b1b2-4790-8d66-fba88346f196",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "ea7b4f2b-5870-41f5-9a4f-22ddd41e327e",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771303951",
+        "deposit_id": "pay_test_123",
+        "business_id": "1ac82ec5-5c53-445c-9b5a-52d8c5acdebf",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771303951",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "1ac82ec5-5c53-445c-9b5a-52d8c5acdebf",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "79df2ddb-9513-4c0a-b03c-6281dc91540c",
+      "event_type": "notification.in_app",
+      "payload": {
+        "user_id": null,
+        "business_id": "c8a4386d-bb08-4d34-a22a-ce8cd7a2bc8f",
+        "channel": "in_app",
+        "payload": {
+          "status": "completed",
+          "deposit_id": "pay_test_123",
+          "metadata": {
+            "event_type": "deposit.completed",
+            "event_id": "evt_1771305579",
+            "depositId": null,
+            "payment_id": "pay_test_123",
+            "id": null,
+            "business_id": "c8a4386d-bb08-4d34-a22a-ce8cd7a2bc8f",
+            "amount_minor": 5000,
+            "currency": "ZMW",
+            "status": "completed"
+          }
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://notification:8570/notification/send",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "ffcc7caf-1efe-44c2-a1b1-aed52956f578",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771305579",
+        "deposit_id": "pay_test_123",
+        "business_id": "c8a4386d-bb08-4d34-a22a-ce8cd7a2bc8f",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771305579",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "c8a4386d-bb08-4d34-a22a-ce8cd7a2bc8f",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "38d9263a-203e-401d-a4b7-13b04181c76e",
+      "event_type": "notification.in_app",
+      "payload": {
+        "user_id": null,
+        "business_id": "0c46a27d-0972-4c1f-918f-a641c1dd9800",
+        "channel": "in_app",
+        "payload": {
+          "status": "completed",
+          "deposit_id": "pay_test_123",
+          "metadata": {
+            "event_type": "deposit.completed",
+            "event_id": "evt_1771306058",
+            "depositId": null,
+            "payment_id": "pay_test_123",
+            "id": null,
+            "business_id": "0c46a27d-0972-4c1f-918f-a641c1dd9800",
+            "amount_minor": 5000,
+            "currency": "ZMW",
+            "status": "completed"
+          }
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://notification:8570/notification/send",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "c436db1a-282e-4580-90ba-0f528f4950ce",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771306058",
+        "deposit_id": "pay_test_123",
+        "business_id": "0c46a27d-0972-4c1f-918f-a641c1dd9800",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771306058",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "0c46a27d-0972-4c1f-918f-a641c1dd9800",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "bb2e766d-5604-4265-9fa7-e9e0b8d0200c",
+      "event_type": "notification.in_app",
+      "payload": {
+        "user_id": null,
+        "business_id": null,
+        "channel": "in_app",
+        "payload": {
+          "status": "completed",
+          "deposit_id": "pay_test_123",
+          "metadata": {
+            "event_type": "deposit.completed",
+            "event_id": "evt_1771306724",
+            "depositId": null,
+            "payment_id": "pay_test_123",
+            "id": null,
+            "business_id": null,
+            "amount_minor": 5000,
+            "currency": "ZMW",
+            "status": "completed"
+          }
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://notification:8570/notification/send",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "0dd3add5-e907-41ca-ad63-03c0e376a2a8",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771306724",
+        "deposit_id": "pay_test_123",
+        "business_id": null,
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771306724",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": null,
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "aa58ba08-fb4b-44b0-805c-c74081f7d48a",
+      "event_type": "notification.in_app",
+      "payload": {
+        "user_id": null,
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "channel": "in_app",
+        "payload": {
+          "status": "completed",
+          "deposit_id": "pay_test_123",
+          "metadata": {
+            "event_type": "deposit.completed",
+            "event_id": "evt_1771307116",
+            "depositId": null,
+            "payment_id": "pay_test_123",
+            "id": null,
+            "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+            "amount_minor": 5000,
+            "currency": "ZMW",
+            "status": "completed"
+          }
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://notification:8570/notification/send",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "4716fed8-52d1-43ec-b601-5768bfe910a4",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771307116",
+        "deposit_id": "pay_test_123",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771307116",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "f24db594-49ee-4fe8-bf75-6a95b1b51ae7",
+      "event_type": "notification.in_app",
+      "payload": {
+        "user_id": null,
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "channel": "in_app",
+        "payload": {
+          "status": "completed",
+          "deposit_id": "pay_test_123",
+          "metadata": {
+            "event_type": "deposit.completed",
+            "event_id": "evt_1771308061",
+            "depositId": null,
+            "payment_id": "pay_test_123",
+            "id": null,
+            "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+            "amount_minor": 5000,
+            "currency": "ZMW",
+            "status": "completed"
+          }
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://notification:8570/notification/send",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "e8472717-9de4-4cf7-849d-932fab1f0e80",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771308061",
+        "deposit_id": "pay_test_123",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771308061",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "9e6f4b08-bd5f-4b50-b007-5dfda721dca9",
+      "event_type": "notification.in_app",
+      "payload": {
+        "user_id": null,
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "channel": "in_app",
+        "payload": {
+          "status": "completed",
+          "deposit_id": "pay_test_123",
+          "metadata": {
+            "event_type": "deposit.completed",
+            "event_id": "evt_1771308082",
+            "depositId": null,
+            "payment_id": "pay_test_123",
+            "id": null,
+            "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+            "amount_minor": 5000,
+            "currency": "ZMW",
+            "status": "completed"
+          }
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://notification:8570/notification/send",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "a92d48c9-7663-4f4b-9ad2-abf2d1f89257",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771308082",
+        "deposit_id": "pay_test_123",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771308082",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "64f3cbf3-7696-4a2e-8b01-b32679e0ae39",
+      "event_type": "notification.in_app",
+      "payload": {
+        "user_id": null,
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "channel": "in_app",
+        "payload": {
+          "status": "completed",
+          "deposit_id": "pay_test_123",
+          "metadata": {
+            "event_type": "deposit.completed",
+            "event_id": "evt_1771308260",
+            "depositId": null,
+            "payment_id": "pay_test_123",
+            "id": null,
+            "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+            "amount_minor": 5000,
+            "currency": "ZMW",
+            "status": "completed"
+          }
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://notification:8570/notification/send",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "6a9d504a-fcd0-4f96-835c-f785a487ca7c",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771308260",
+        "deposit_id": "pay_test_123",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771308260",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "ad815a65-773c-4023-9a27-3d89216607e7",
+      "event_type": "notification.in_app",
+      "payload": {
+        "user_id": null,
+        "business_id": null,
+        "channel": "in_app",
+        "payload": {
+          "status": "completed",
+          "deposit_id": "pay_test_123",
+          "metadata": {
+            "event_type": "deposit.completed",
+            "event_id": "evt_1771309313",
+            "depositId": null,
+            "payment_id": "pay_test_123",
+            "id": null,
+            "business_id": null,
+            "amount_minor": 5000,
+            "currency": "ZMW",
+            "status": "completed"
+          }
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://notification:8570/notification/send",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "d494f2c3-ffb6-450f-872d-95a24df829df",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771309313",
+        "deposit_id": "pay_test_123",
+        "business_id": null,
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771309313",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": null,
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "1e9ce639-873d-4b7a-94e5-dc1d2136c99b",
+      "event_type": "notification.in_app",
+      "payload": {
+        "user_id": null,
+        "business_id": null,
+        "channel": "in_app",
+        "payload": {
+          "status": "completed",
+          "deposit_id": "pay_test_123",
+          "metadata": {
+            "event_type": "deposit.completed",
+            "event_id": "evt_1771309406",
+            "depositId": null,
+            "payment_id": "pay_test_123",
+            "id": null,
+            "business_id": null,
+            "amount_minor": 5000,
+            "currency": "ZMW",
+            "status": "completed"
+          }
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://notification:8570/notification/send",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "e98d4d03-5351-426b-9090-b6dafa8148b5",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771309406",
+        "deposit_id": "pay_test_123",
+        "business_id": null,
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771309406",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": null,
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "bd640c59-f678-4a93-914d-6abf51f02f48",
+      "event_type": "notification.in_app",
+      "payload": {
+        "user_id": null,
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "channel": "in_app",
+        "payload": {
+          "status": "completed",
+          "deposit_id": "pay_test_123",
+          "metadata": {
+            "event_type": "deposit.completed",
+            "event_id": "evt_1771309453",
+            "depositId": null,
+            "payment_id": "pay_test_123",
+            "id": null,
+            "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+            "amount_minor": 5000,
+            "currency": "ZMW",
+            "status": "completed"
+          }
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://notification:8570/notification/send",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "fd708be8-9c43-4ea1-8b12-5ee24a62341f",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771309453",
+        "deposit_id": "pay_test_123",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771309453",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "2eadeed3-0b81-4368-80ac-b11d04b4610d",
+      "event_type": "notification.in_app",
+      "payload": {
+        "user_id": null,
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "channel": "in_app",
+        "payload": {
+          "status": "completed",
+          "deposit_id": "pay_test_123",
+          "metadata": {
+            "event_type": "deposit.completed",
+            "event_id": "evt_1771310195",
+            "depositId": null,
+            "payment_id": "pay_test_123",
+            "id": null,
+            "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+            "amount_minor": 5000,
+            "currency": "ZMW",
+            "status": "completed"
+          }
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://notification:8570/notification/send",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    },
+    {
+      "id": "691d948f-7417-49b9-ad25-f2c64bf94026",
+      "event_type": "pawapay.deposit.callback",
+      "payload": {
+        "event_type": "deposit.completed",
+        "event_id": "evt_1771310195",
+        "deposit_id": "pay_test_123",
+        "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+        "amount": 5000,
+        "currency": "ZMW",
+        "status": "completed",
+        "meta": {
+          "event_type": "deposit.completed",
+          "event_id": "evt_1771310195",
+          "depositId": null,
+          "payment_id": "pay_test_123",
+          "id": null,
+          "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+          "amount_minor": 5000,
+          "currency": "ZMW",
+          "status": "completed"
+        }
+      },
+      "dedupe_key": null,
+      "destination": "http://127.0.0.1:8580/callbacks/payments/deposits",
+      "attempts": 0,
+      "scheduled_at": null,
+      "correlation_id": null
+    }
+  ]
+}

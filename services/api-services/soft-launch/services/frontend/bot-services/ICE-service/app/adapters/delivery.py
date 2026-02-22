@@ -91,3 +91,45 @@ class DeliveryServiceAdapter(DeliveryAdapter):
             if resp.status not in (200, 201):
                 return {"status": "FAILED", "reason": f"HTTP_{resp.status}"}
             return await resp.json()
+
+    async def set_order_delivery_location(self, order_id: str, chosen: str, *, auth_token: Optional[str] = None) -> Dict[str, Any]:
+        """Set or update delivery location for an order via Order-Delivery PUT endpoint.
+
+        `chosen` may be an id, name or label. Returns JSON response or failure dict.
+        """
+        if not self.use_http:
+            return {"status": "FAILED", "reason": "ORDER_SERVICE_NOT_CONFIGURED"}
+
+        session = await self._get_session()
+        headers = {"Content-Type": "application/json"}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+
+        body = {"delivery_location": chosen}
+        async with session.put(f"{self.base_url}/orders/{order_id}/delivery_location", json=body, headers=headers) as resp:
+            if resp.status not in (200, 201):
+                text = await resp.text()
+                logger.error("set_order_delivery_location failed %s %s", resp.status, text)
+                return {"status": "FAILED", "reason": f"HTTP_{resp.status}", "detail": text}
+            return await resp.json()
+
+    async def set_order_payment_method(self, order_id: str, phone_number: str, *, auth_token: Optional[str] = None) -> Dict[str, Any]:
+        """Set or update the payment phone for an order via Order-Delivery PUT endpoint.
+
+        Returns the JSON response or a failure dict.
+        """
+        if not self.use_http:
+            return {"status": "FAILED", "reason": "ORDER_SERVICE_NOT_CONFIGURED"}
+
+        session = await self._get_session()
+        headers = {"Content-Type": "application/json"}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+
+        body = {"phone_number": phone_number}
+        async with session.put(f"{self.base_url}/orders/{order_id}/payment_method", json=body, headers=headers) as resp:
+            if resp.status not in (200, 201):
+                text = await resp.text()
+                logger.error("set_order_payment_method failed %s %s", resp.status, text)
+                return {"status": "FAILED", "reason": f"HTTP_{resp.status}", "detail": text}
+            return await resp.json()

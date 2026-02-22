@@ -1,0 +1,9 @@
+{
+  "method": "GET",
+  "path": "/notification/{id}",
+  "url": "http://localhost:8500/notification/37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+  "status": 404,
+  "response": {
+    "detail": "notification not found"
+  }
+}

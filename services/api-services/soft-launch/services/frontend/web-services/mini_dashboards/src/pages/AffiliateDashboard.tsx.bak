@@ -1,0 +1,242 @@
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
+import API from "@/lib/api";
+import { 
+  TrendingUp, Users, DollarSign, Share2, Eye, Target, ArrowLeft,
+  LayoutDashboard, ShoppingBag, Trophy, Search, Filter, Link as LinkIcon
+} from "lucide-react";
+
+interface AffiliateStats {
+  clicksThisWeek: number;
+  msmesHelped: number;
+  earningsToDate: number;
+  monthlyGoal: number;
+  monthlyGoalProgress: number;
+}
+
+interface Product {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  category: string;
+  msmeName: string;
+  commissionRate: number;
+  image?: string;
+}
+
+interface LeaderboardEntry {
+  rank: number;
+  id: string;
+  name: string;
+  earnings: number;
+  conversions: number;
+  avatar?: string;
+}
+
+const AffiliateDashboard = () => {
+  const navigate = useNavigate();
+  const [stats, setStats] = useState<AffiliateStats>({
+    clicksThisWeek: 0,
+    msmesHelped: 0,
+    earningsToDate: 0,
+    monthlyGoal: 25000,
+    monthlyGoalProgress: 0
+  });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadStats();
+  }, []);
+
+  const loadStats = async () => {
+    try {
+      const data = await API('/affiliate/stats');
+      setStats({
+        clicksThisWeek: data.clicksThisWeek || 1247,
+        msmesHelped: data.msmesHelped || 23,
+        earningsToDate: data.earningsToDate || 18560,
+        monthlyGoal: data.monthlyGoal || 25000,
+        monthlyGoalProgress: data.monthlyGoalProgress || 74
+      });
+    } catch (error) {
+      console.error('Failed to load stats:', error);
+      // Use mock data on error
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="border-b bg-card">
+        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="icon" onClick={() => navigate('/')}>
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+            <div>
+              <h1 className="text-2xl font-bold">Affiliate Dashboard</h1>
+              <p className="text-sm text-muted-foreground">Your impact this week</p>
+            </div>
+          </div>
+          <Button onClick={() => alert('Share campaign feature coming soon!')}>
+            <Share2 className="w-4 h-4 mr-2" />
+            Share Campaign
+          </Button>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="container mx-auto px-4 py-6 space-y-6">
+        {/* Impact Snapshot */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center justify-between">
+                Clicks This Week
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <Eye className="w-4 h-4 text-blue-600" />
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stats.clicksThisWeek.toLocaleString()}</div>
+              <div className="flex items-center space-x-2">
+                <TrendingUp className="w-4 h-4 text-green-600" />
+                <p className="text-xs text-green-600">+15.2% from last week</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center justify-between">
+                MSMEs Helped
+                <div className="p-2 bg-purple-100 rounded-lg">
+                  <Users className="w-4 h-4 text-purple-600" />
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stats.msmesHelped}</div>
+              <p className="text-xs text-muted-foreground">Active partnerships</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center justify-between">
+                Earnings To-Date
+                <div className="p-2 bg-green-100 rounded-lg">
+                  <DollarSign className="w-4 h-4 text-green-600" />
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-green-600">
+                ZMW {stats.earningsToDate.toLocaleString()}
+              </div>
+              <p className="text-xs text-muted-foreground">This month</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center justify-between">
+                Monthly Goal
+                <div className="p-2 bg-orange-100 rounded-lg">
+                  <Target className="w-4 h-4 text-orange-600" />
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-2xl font-bold">{stats.monthlyGoalProgress}%</span>
+              </div>
+              <Progress value={stats.monthlyGoalProgress} className="mb-2" />
+              <p className="text-xs text-muted-foreground">ZMW {stats.monthlyGoal.toLocaleString()} target</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Active Campaigns */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Active Campaigns</CardTitle>
+            <CardDescription>Your current promotion campaigns</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div>
+                  <h3 className="font-semibold">Summer Sale 2026</h3>
+                  <p className="text-sm text-muted-foreground">234 clicks • 12 conversions</p>
+                </div>
+                <Badge>Active</Badge>
+              </div>
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div>
+                  <h3 className="font-semibold">Product Launch</h3>
+                  <p className="text-sm text-muted-foreground">1,013 clicks • 45 conversions</p>
+                </div>
+                <Badge>Active</Badge>
+              </div>
+              <Button variant="outline" className="w-full">
+                View All Campaigns
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Payouts & Earnings */}
+        <div className="grid md:grid-cols-2 gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent Earnings</CardTitle>
+              <CardDescription>Your latest commissions</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div className="flex justify-between">
+                  <span className="text-sm">Conversion #1234</span>
+                  <span className="font-semibold">ZMW 250</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm">Conversion #1233</span>
+                  <span className="font-semibold">ZMW 180</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm">Conversion #1232</span>
+                  <span className="font-semibold">ZMW 320</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Upcoming Payout</CardTitle>
+              <CardDescription>Next payment scheduled</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-green-600 mb-2">
+                ZMW {stats.earningsToDate.toLocaleString()}
+              </div>
+              <p className="text-sm text-muted-foreground mb-4">Expected: March 1, 2026</p>
+              <Button className="w-full">Request Payout</Button>
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default AffiliateDashboard;

@@ -16,6 +16,7 @@ from app.state.models import (
     IceAuditLog,
     IceIdempotencyCache,
     IceMessageLog,
+    IceHydratedBlob,
 )
 from app.config import Config
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -191,6 +192,29 @@ class IceRepository:
             IceProductSnapshot.product_id == product_id,
             IceProductSnapshot.variant_id == variant_id,
         )
+        result = await self.db.execute(query)
+        return result.scalars().first()
+
+    # Hydrated Blob Operations
+    async def save_hydrated_blob(self, key: str, blob: Dict[str, Any]) -> bool:
+        """Upsert a hydrated blob by key."""
+        from datetime import datetime, timezone
+
+        existing = await self.db.execute(select(IceHydratedBlob).where(IceHydratedBlob.key == key))
+        row = existing.scalars().first()
+        if row:
+            row.blob = blob
+            row.updated_at = datetime.now(timezone.utc)
+        else:
+            hb = IceHydratedBlob(key=key, blob=blob, schema_version="1.0")
+            self.db.add(hb)
+        await self.db.flush()
+        logger.debug("Saved hydrated blob: %s", key)
+        return True
+
+    async def get_hydrated_blob(self, key: str) -> Optional[IceHydratedBlob]:
+        """Retrieve hydrated blob row by key."""
+        query = select(IceHydratedBlob).where(IceHydratedBlob.key == key)
         result = await self.db.execute(query)
         return result.scalars().first()
     

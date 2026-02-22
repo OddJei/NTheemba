@@ -237,6 +237,17 @@ def _effective_multiplier(
         else:
             effective_multiplier = float(m.tier_multiplier)
 
+    # Compute an activity gate: require minimal operational signals so the multiplier
+    # only applies to affiliates with sufficient activity. Use provided `min_clicks`
+    # or fall back to environment defaults for other thresholds.
+    min_clicks_actual = int(min_clicks) if min_clicks is not None else _op_min_clicks()
+    activity_ok = (
+        int(m.clicks or 0) >= int(min_clicks_actual)
+        and int(m.paid_attributions or 0) >= int(_op_min_paid_attributions())
+        and int(m.unique_buyers or 0) >= int(_op_min_unique_buyers())
+        and float(m.sales_volume or 0.0) >= float(_op_min_sales_volume())
+    )
+
     return True, float(effective_multiplier), str(effective_tier), {
         "assigned_tier": assigned,
         "tier_thresholds_met": int(met_count),
@@ -814,3 +825,175 @@ async def record_metric_snapshot(
     await db.refresh(snapshot)
     
     return snapshot
+
+
+async def run_hybrid_epoch_scoring(db: AsyncSession, *, epoch_id: str | None = None) -> dict:
+    """Run the updated hybrid scoring algorithm and persist snapshots.
+
+    - Uses MSME referrals (once-ever) as referral metric
+    - Pulls gross revenue from internal endpoint `/internal/gross-revenue`
+    - Normalizes each metric by the epoch maxima (top performer anchors at 1.0)
+    - Computes weighted_score using fixed weights: referrals 0.3, sales 0.5, buyers 0.2, sessions 0.1
+    - Applies tier multipliers and computes pool shares and projected payouts
+    - Updates `affiliate_metric_snapshots` rows and `pool_epochs.gross_revenue_zmw`/`effective_pool_zmw`
+    """
+
+    # 1) Resolve epoch
+    epoch: PoolEpoch | None
+    if epoch_id:
+        epoch = (await db.execute(select(PoolEpoch).where(PoolEpoch.id == epoch_id))).scalar_one_or_none()
+        if not epoch:
+            raise ValueError("epoch_not_found")
+    else:
+        epoch = await get_open_epoch(db)
+        if not epoch:
+            raise ValueError("no_open_epoch")
+
+    # 2) Fetch gross revenue from internal endpoint if available
+    gross = float(getattr(epoch, "gross_revenue_zmw", 0.0) or 0.0)
+    try:
+        # internal endpoint base is expected to be configured via env (msme base or same service)
+        import httpx
+        msme_base = os.getenv("MSME_BASE_URL") or os.getenv("AFFILIATE_ENGINE_BASE_URL") or "http://localhost:8500"
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{msme_base.rstrip('/')}/internal/gross-revenue")
+            if r.status_code == 200:
+                j = r.json() if isinstance(r.json(), dict) else {}
+                gross_val = j.get("gross_revenue_zmw") or j.get("gross") or j.get("amount")
+                if gross_val is not None:
+                    try:
+                        gross = float(gross_val)
+                    except Exception:
+                        gross = float(gross or 0.0)
+    except Exception:
+        # If internal call fails, proceed with existing epoch.gross_revenue_zmw
+        pass
+
+    epoch.gross_revenue_zmw = float(gross)
+    # Effective pool = gross revenue + bonus_pool_zmw
+    effective_pool = float((epoch.gross_revenue_zmw or 0.0) + (epoch.bonus_pool_zmw or 0.0))
+    epoch.effective_pool_zmw = float(effective_pool)
+    await db.commit()
+
+    # 3) Compute raw metrics for epoch
+    metrics = await compute_metrics_for_epoch(db, epoch)
+
+    # 4) Determine maxima per metric (top performer values)
+    max_referrals = max((float(m.msme_referrals) for m in metrics), default=0.0)
+    max_sales = max((float(m.sales_volume) for m in metrics), default=0.0)
+    max_buyers = max((float(m.unique_buyers) for m in metrics), default=0.0)
+    max_sessions = max((float(m.session_cycles) for m in metrics), default=0.0)
+
+    # 5) Fixed weights per request
+    weights = {
+        "msme_referrals": 0.3,
+        "sales_volume": 0.5,
+        "unique_buyers": 0.2,
+        "session_cycles": 0.1,
+    }
+
+    # 6) Compute normalized scores, weighted_score, apply tier multipliers, and compute shares
+    details = {}
+    raw_scores: dict[str, float] = {}
+    weighted_scores: dict[str, float] = {}
+
+    for m in metrics:
+        rnorm = _norm(float(m.msme_referrals), max_referrals)
+        snorm = _norm(float(m.sales_volume), max_sales)
+        bnorm = _norm(float(m.unique_buyers), max_buyers)
+        cnorm = _norm(float(m.session_cycles), max_sessions)
+
+        weighted = (
+            float(weights["msme_referrals"]) * rnorm
+            + float(weights["sales_volume"]) * snorm
+            + float(weights["unique_buyers"]) * bnorm
+            + float(weights["session_cycles"]) * cnorm
+        )
+
+        # Resolve tiers and effective multiplier
+        thresholds_by_tier = await _tier_thresholds(db)
+        eligible, effective_multiplier, effective_tier, extra = _effective_multiplier(
+            m, min_clicks=_op_min_clicks(), thresholds_by_tier=thresholds_by_tier
+        )
+
+        final_score = float(weighted) * float(effective_multiplier)
+        raw_scores[m.affiliate_id] = float(weighted)
+        weighted_scores[m.affiliate_id] = float(final_score)
+        details[m.affiliate_id] = {
+            "normalized": {"referrals": rnorm, "sales": snorm, "buyers": bnorm, "sessions": cnorm},
+            "raw_weighted": float(weighted),
+            "final_weighted": float(final_score),
+            "effective_tier": effective_tier,
+            "effective_multiplier": float(effective_multiplier),
+            "tier_details": extra,
+        }
+
+    # 7) Total score and pool_pct per affiliate
+    total_score = sum(weighted_scores.values())
+
+    # Protect against division by zero
+    if total_score <= 0:
+        # set everything to zero and persist snapshots
+        for m in metrics:
+            # persist snapshot
+            await record_metric_snapshot(
+                db,
+                epoch_id=epoch.id,
+                affiliate_metrics=m,
+                qualified_tiers=await get_qualified_tiers(db, m),
+                effective_tier=details.get(m.affiliate_id, {}).get("effective_tier"),
+                pool_amount_zmw=float(epoch.pool_amount_zmw or 0.0),
+                gross_revenue_zmw=float(epoch.gross_revenue_zmw or 0.0),
+                weighted_score=0.0,
+            )
+        return {"epoch_id": epoch.id, "status": "ok", "note": "total_score_zero"}
+
+    # 8) Persist snapshots with computed values
+    for m in metrics:
+        ws = float(weighted_scores.get(m.affiliate_id, 0.0))
+        pool_pct = float(ws) / float(total_score) if total_score > 0 else 0.0
+        affiliate_share_pct = float(pool_pct) * float(m.tier_multiplier or 1.0)
+        projected_payout_zmw = float(affiliate_share_pct) * float(effective_pool)
+
+        # Compose meta with details
+        meta = {
+            "normalized": details.get(m.affiliate_id, {}).get("normalized"),
+            "raw_weighted": details.get(m.affiliate_id, {}).get("raw_weighted"),
+            "final_weighted": details.get(m.affiliate_id, {}).get("final_weighted"),
+            "tier_details": details.get(m.affiliate_id, {}).get("tier_details"),
+        }
+
+        # Upsert snapshot for affiliate+epoch
+        res = await db.execute(
+            select(AffiliateMetricSnapshot).where(AffiliateMetricSnapshot.epoch_id == epoch.id, AffiliateMetricSnapshot.affiliate_id == m.affiliate_id)
+        )
+        snap = res.scalar_one_or_none()
+        if not snap:
+            snap = AffiliateMetricSnapshot(epoch_id=epoch.id, affiliate_id=m.affiliate_id)
+            db.add(snap)
+            await db.flush()
+
+        snap.sales_volume = float(m.sales_volume)
+        snap.unique_buyers = int(m.unique_buyers)
+        snap.msme_referrals = int(m.msme_referrals)
+        snap.session_cycles = int(m.session_cycles)
+
+        snap.weighted_score = float(ws)
+        snap.qualified_tiers = await get_qualified_tiers(db, m)
+        snap.effective_tier = details.get(m.affiliate_id, {}).get("effective_tier")
+        snap.tier_multiplier = float(m.tier_multiplier or 1.0)
+        snap.pool_pct = float(pool_pct)
+        snap.affiliate_share_pct = float(affiliate_share_pct)
+        snap.projected_payout_zmw = float(projected_payout_zmw)
+        snap.meta = meta
+        snap.recorded_at = datetime.now(timezone.utc)
+
+    await db.commit()
+
+    return {
+        "epoch_id": epoch.id,
+        "status": "ok",
+        "gross_revenue_zmw": float(epoch.gross_revenue_zmw or 0.0),
+        "effective_pool_zmw": float(epoch.effective_pool_zmw or 0.0),
+        "total_score": float(total_score),
+    }

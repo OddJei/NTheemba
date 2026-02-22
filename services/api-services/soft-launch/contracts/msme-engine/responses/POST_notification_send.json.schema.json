@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "user_id": {
+      "type": "string"
+    },
+    "business_id": {
+      "type": "string"
+    },
+    "channel": {
+      "type": "string"
+    },
+    "template": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object",
+      "properties": {}
+    },
+    "status": {
+      "type": "string"
+    },
+    "error_message": {
+      "type": "null"
+    },
+    "retry_count": {
+      "type": "integer"
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "sent_at": {
+      "type": "null"
+    },
+    "failed_at": {
+      "type": "null"
+    },
+    "next_retry_at": {
+      "type": "null"
+    }
+  }
+}

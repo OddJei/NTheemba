@@ -1,0 +1,9 @@
+{
+  "method": "GET",
+  "path": "/health",
+  "url": "http://localhost:8500/health",
+  "status": 200,
+  "response": {
+    "status": "ok"
+  }
+}

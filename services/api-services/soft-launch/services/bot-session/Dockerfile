@@ -2,10 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python deps (copy only requirements first for layer cache)
+COPY services/bot-session/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-COPY . .
+# Copy service source and shared libs from repo root into the image
+COPY services/bot-session /app
+COPY libs /app/libs
 
 ENV PYTHONUNBUFFERED=1
 

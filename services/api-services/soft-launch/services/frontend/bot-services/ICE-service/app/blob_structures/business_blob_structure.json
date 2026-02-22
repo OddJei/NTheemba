@@ -1,0 +1,57 @@
+{
+  "business": {
+    "profile": {
+      "id": "0706bb81-73d8-4632-8ed8-64e90b527721",
+      "name": "Copilot Test Biz 521445703",
+      "phone": "+260970000000",
+      "owner_id": "6fa05697-98f3-4652-91b0-e4f40a86c822",
+      "owner_phone": "+260970000000",
+      "location": "Lusaka",
+      "category": "retail",
+      "logo_url": null,
+      "affiliate_code": null,
+      "referred_by_msme_code": null,
+      "subscription_plan": "paid",
+      "subscription_expiry": null,
+      "delivery_locations": null,
+      "tags": null,
+      "is_active": true,
+      "created_at": "2026-01-30T17:18:06.375826Z",
+      "updated_at": "2026-01-30T17:18:09.134317Z"
+    },
+
+    "policies": {
+      "business_id": "0706bb81-73d8-4632-8ed8-64e90b527721",
+      "plan": "paid",
+      "subscription_expiry": null,
+      "is_active": true,
+      "bot_instances_enabled": true,
+      "affiliate_promo_links_enabled": true,
+      "transaction_fee_pct": 0.05
+    },
+
+    "owners": [
+      {
+        "id": "6fa05697-98f3-4652-91b0-e4f40a86c822",
+        "phone": "+260970000000",
+        "name": "Owner Name",
+        "email": null,
+        "roles": ["owner"]
+      }
+    ],
+
+    "service_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9....",
+
+    "_meta": {
+      "ttl": 3600,
+      "fetched_by": "build_business_blob",
+      "session_id": "sess1",
+      "phone_used": "+260970000000",
+      "business_id_used": "0706bb81-73d8-4632-8ed8-64e90b527721",
+      "persisted_at": "2026-02-19T12:00:00.000000Z",
+      "cached": true,
+      "redis_key": "business:+260970000000",
+      "redis_key_template": "business:{phone}"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "business_id": {
+      "type": "string"
+    },
+    "plan": {
+      "type": "string"
+    },
+    "start_date": {
+      "type": "null"
+    },
+    "end_date": {
+      "type": "null"
+    },
+    "status": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string"
+    }
+  }
+}

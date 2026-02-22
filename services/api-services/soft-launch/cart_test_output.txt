@@ -1,0 +1,4 @@
+﻿GET /health -> 200 {"status":"ok"}
+GET /metrics -> 200 (metrics returned)
+POST /cart/create -> 201 {"id":"d4010b9d-445e-4dbd-8e89-ffa967a72f3b","session_id":"sess-3b22fbfb","user_phone":"+260971000001","business_id":"biz-test-1","status":"active","meta":null,"created_at":"2026-02-17T21:47:21.535445Z","updated_at":"2026-02-17T21:47:21.535455Z"}
+created cart id: d4010b9d-445e-4dbd-8e89-ffa967a72f3b

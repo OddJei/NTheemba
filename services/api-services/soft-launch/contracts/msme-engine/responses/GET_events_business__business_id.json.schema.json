@@ -1,0 +1,46 @@
+{
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "event_id": {
+        "type": "string"
+      },
+      "business_id": {
+        "type": "string"
+      },
+      "event_type": {
+        "type": "string"
+      },
+      "occurred_at": {
+        "type": "string"
+      },
+      "source": {
+        "type": "string"
+      },
+      "correlation_id": {
+        "type": "string"
+      },
+      "meta": {
+        "type": "object",
+        "properties": {
+          "reference_id": {
+            "type": "string"
+          },
+          "business_id": {
+            "type": "string"
+          },
+          "plan": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          }
+        }
+      },
+      "created_at": {
+        "type": "string"
+      }
+    }
+  }
+}

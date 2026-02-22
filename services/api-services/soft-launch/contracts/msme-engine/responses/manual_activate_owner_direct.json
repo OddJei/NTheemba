@@ -1,0 +1,15 @@
+{
+  "status": 200,
+  "response": {
+    "id": "1148d57b-7edb-4b58-941e-f5733895259f",
+    "username": "testuser_13l802",
+    "email": "testuser_13l802@example.com",
+    "phone": null,
+    "role": "default",
+    "business_id": "37eeeb11-65af-4fbe-bd9e-d332a3ced2da",
+    "affiliate_id": null,
+    "is_active": true,
+    "created_at": "2026-02-17T03:46:52.773867Z",
+    "updated_at": "2026-02-17T06:01:21.438725Z"
+  }
+}

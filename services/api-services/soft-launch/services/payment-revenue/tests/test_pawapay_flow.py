@@ -28,6 +28,9 @@ def test_pawapay_deposit_callback_creates_row_and_can_be_fetched(client, auth_he
     assert body["status"] == "COMPLETED"
     assert body["currency"] == "ZMW"
     assert body["amount_minor"] == 1500
+    # New fields persisted for bookkeeping
+    assert "platform_fee_minor" in body
+    assert "payment_type" in body
 
 
 def test_pawapay_initiate_deposit_is_idempotent(client, auth_headers, monkeypatch):
@@ -52,6 +55,8 @@ def test_pawapay_initiate_deposit_is_idempotent(client, auth_headers, monkeypatc
         "currency": "ZMW",
         "phoneNumber": "260973456789",
         "provider": "MTN_MOMO_ZMB",
+        "paymentType": "one_time",
+        "msmeNetMinor": 1200,
     }
 
     r1 = client.post("/pawapay/deposits/initiate", headers={**auth_headers, "X-Idempotency-Key": "idem-1"}, json=payload)
@@ -59,6 +64,14 @@ def test_pawapay_initiate_deposit_is_idempotent(client, auth_headers, monkeypatc
     b1 = r1.json()
     assert b1["external_id"] == deposit_id
     assert b1["status"] == "ACCEPTED"
+
+    # Verify the stored deposit row reflects msme_net and platform fee
+    g = client.get(f"/pawapay/deposits/{deposit_id}", headers=auth_headers)
+    assert g.status_code == 200
+    got = g.json()
+    assert got["external_id"] == deposit_id
+    assert got.get("platform_fee_minor") == 300
+    assert got.get("payment_type") in ("one_time", "one-time", "one_time")
 
     # Second call with same idempotency key should return same response.
     r2 = client.post("/pawapay/deposits/initiate", headers={**auth_headers, "X-Idempotency-Key": "idem-1"}, json=payload)

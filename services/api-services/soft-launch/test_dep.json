@@ -1,0 +1,9 @@
+﻿{
+  "depositId": "test-dep-002",
+  "business_id": "biz-123",
+  "amount_minor": 1500,
+  "currency": "ZMW",
+  "phoneNumber": "260973456789",
+  "provider": "MTN_MOMO_ZMB",
+  "metadata": {"source": "test-2"}
+}

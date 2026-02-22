@@ -1,0 +1,12 @@
+{
+  "method": "PUT",
+  "path": "/businesses/{business_id}/delivery-locations",
+  "url": "http://localhost:8500/businesses/37eeeb11-65af-4fbe-bd9e-d332a3ced2da/delivery-locations",
+  "status": 200,
+  "response": {
+    "Lusaka": {
+      "price_minor": 2500,
+      "currency": "ZMW"
+    }
+  }
+}

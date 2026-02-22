@@ -7,8 +7,10 @@ import uuid
 import urllib.parse
 from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, cast, Any
+from decimal import Decimal, InvalidOperation
 
+import logging
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response, JSONResponse
 import logging
@@ -17,6 +19,8 @@ import uuid
 import asyncio
 import json
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest, CollectorRegistry
+_PROM_REGISTRY = CollectorRegistry()
+from src.app.observability import init_sentry_from_env, get_registry, instrument_app
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +43,7 @@ from src.app.config import (
 from sqlalchemy import text
 import httpx
 from src.app.db import Base, engine, get_db_session
+from src.app import audit_client
 from src.app.idempotency import idempotent_execute, scope_for
 from src.app.models import (
     Affiliate,
@@ -80,133 +85,51 @@ from src.app.schemas import (
     AffiliateLinkResolveOut,
     TokenResolveRequest,
     TokenResolveOut,
-    ClickCreate,
-    ClickOut,
-    EarningOut,
-    EarningsByDay,
-    EarningsSummary,
-    AffiliateDashboard,
     LinkCreate,
     LinkOut,
-    PaymentSuccessEvent,
-    CommissionSettingsOut,
-    CommissionSettingsUpdate,
-    EpochOut,
-    EpochSetGrossRevenue,
-    TierOut,
-    TierAssign,
-    TierThreshold,
-    TierThresholdUpdate,
-    PoolStanding,
-    PoolStandingsOut,
-    PoolAllocationOut,
-    AffiliateEventOut,
-    ProjectedPayoutOut,
-    MetricSnapshotOut,
-    MetricHistoryOut,
-    PayoutStatusCallback,
-    SessionCycleCreatedEvent,
+    ClickCreate,
+    ClickOut,
 )
 
-from fastapi import Depends
-from contextlib import asynccontextmanager
-
-from src.app.events import OrderCreatedEvent
-from src.app import audit_client
+# Bring all schemas into module namespace for decorators/annotations used below
+from src.app.schemas import *
+from src.app.events import *
 from src.app import security
+from src.app.schemas import MSMEReferralEvent
+import os
 
 
-@app.get("/outbox/pending")
-async def outbox_pending_aff(request: Request):
-    expected = (os.environ.get("OUTBOX_INTERNAL_SECRET") or "").strip()
-    provided = (request.headers.get("X-Internal-Secret") or "").strip()
-    if expected and (not provided or not secrets.compare_digest(expected, provided)):
-        raise HTTPException(status_code=401, detail="invalid_internal_secret")
+# Application instance
+app: FastAPI = FastAPI(title="affiliate-engine")
 
-    now = datetime.now(timezone.utc)
-    async with get_db_session() as db:
-        q = select(Outbox).where(Outbox.status == "pending")
-        # Only return items ready to be sent
-        q = q.where((Outbox.send_after == None) | (Outbox.send_after <= now))
-        res = await db.execute(q)
-        rows = res.scalars().all()
+# Ensure logger exists before any early instrumentation/exception handling.
+logger = logging.getLogger("affiliate_engine")
 
-    out = []
-    for r in rows:
-        out.append(
-            {
-                "id": r.id,
-                "event_type": r.topic,
-                "payload": r.payload,
-                "dedupe_key": r.dedupe_key,
-                "destination": r.destination,
-                "attempts": r.attempts,
-                "scheduled_at": (r.send_after.isoformat() if r.send_after else None),
-                "correlation_id": None,
-            }
-        )
-
-    return out
-
-
-@app.post("/outbox/ack")
-async def outbox_ack_aff(request: Request, body: dict):
-    expected = (os.environ.get("OUTBOX_INTERNAL_SECRET") or "").strip()
-    provided = (request.headers.get("X-Internal-Secret") or "").strip()
-    if expected and (not provided or not secrets.compare_digest(expected, provided)):
-        raise HTTPException(status_code=401, detail="invalid_internal_secret")
-
-    ids = body.get("ids") or []
-    if not ids:
-        return {"acked": []}
-
-    async with get_db_session() as db:
-        res = await db.execute(select(Outbox).where(Outbox.id.in_(ids)))
-        rows = res.scalars().all()
-        acked = []
-        for r in rows:
-            r.status = "sent"
-            r.updated_at = datetime.now(timezone.utc)
-            acked.append(r.id)
-        if acked:
-            await db.commit()
-
-    return {"acked": acked}
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Ensure per-service schema exists (Postgres) and set search_path so
-    # `Base.metadata.create_all()` creates tables in the correct schema.
-    async with engine.begin() as conn:
-        try:
-            schema = get_pg_schema()
-            await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
-            await conn.execute(text(f"SET search_path TO {schema}"))
-        except Exception:
-            # Non-Postgres backends will ignore schema operations.
-            pass
-
-        await conn.run_sync(Base.metadata.create_all)
-
-    # Ensure default pool config exists.
-    await _ensure_schema_and_defaults()
-
-    yield
-
-
-app = FastAPI(title="Affiliate Engine (Soft Launch)", lifespan=lifespan)
+# Optionally wrap the ASGI app with Sentry middleware if configured.
+try:
+    app = cast(FastAPI, instrument_app(app))
+except Exception:
+    logger.exception("instrument_app_failed")
 
 
 async def _ensure_schema_and_defaults() -> None:
+    """Ensure default tiers/settings and open epoch exist."""
     async with get_db_session() as db:
+        # Ensure commission/settings row exists and load it (supply defaults)
         settings = await get_or_create_settings(
             db,
-            pool_pct_default=get_pool_pct_default(),
-            epoch_days_default=get_epoch_days_default(),
+            pool_pct_default=float(get_pool_pct_default()),
+            epoch_days_default=int(get_epoch_days_default()),
         )
         await ensure_default_tiers(db)
         await ensure_default_tier_settings(db)
         await get_or_open_epoch(db, pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days))
+
+
+async def db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Dependency that yields an async DB session (defined early so Depends() can reference it)."""
+    async with get_db_session() as session:
+        yield session
 
 
 async def startup_event() -> None:
@@ -223,6 +146,48 @@ async def startup_event() -> None:
 
         await conn.run_sync(Base.metadata.create_all)
 
+        # Best-effort: ensure pool_epochs columns exist (so startup queries don't fail)
+        try:
+            await conn.execute(text("ALTER TABLE pool_epochs ADD COLUMN IF NOT EXISTS bonus_pool_zmw double precision DEFAULT 0.0"))
+            await conn.execute(text("ALTER TABLE pool_epochs ADD COLUMN IF NOT EXISTS effective_pool_zmw double precision DEFAULT 0.0"))
+        except Exception:
+            # Fallback for SQLite and other DBs that may not support IF NOT EXISTS
+            try:
+                await conn.execute(text("ALTER TABLE pool_epochs ADD COLUMN bonus_pool_zmw REAL DEFAULT 0.0"))
+            except Exception:
+                pass
+            try:
+                await conn.execute(text("ALTER TABLE pool_epochs ADD COLUMN effective_pool_zmw REAL DEFAULT 0.0"))
+            except Exception:
+                pass
+
+        # Ensure new affiliate columns exist for deployments without alembic.
+        # Try Postgres-friendly ALTERs first, fall back to SQLite ALTERs.
+        try:
+            await conn.execute(text("ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS preferences jsonb"))
+            await conn.execute(text("ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS signed_terms boolean DEFAULT false"))
+            await conn.execute(text("ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS about text"))
+        except Exception:
+            # SQLite or other DBs: attempt to add columns if they don't exist.
+            try:
+                await conn.execute(text("ALTER TABLE affiliates ADD COLUMN preferences TEXT"))
+            except Exception:
+                pass
+            try:
+                await conn.execute(text("ALTER TABLE affiliates ADD COLUMN signed_terms BOOLEAN DEFAULT 0"))
+            except Exception:
+                pass
+            try:
+                await conn.execute(text("ALTER TABLE affiliates ADD COLUMN about TEXT"))
+            except Exception:
+                pass
+
+    # Initialize observability (Sentry) if configured.
+    try:
+        init_sentry_from_env()
+    except Exception:
+        logger.exception("sentry_init_failed")
+
     # Ensure default pool config exists.
     await _ensure_schema_and_defaults()
 
@@ -230,13 +195,32 @@ async def startup_event() -> None:
 # Register startup handler for test compatibility without using the deprecated decorator.
 app.add_event_handler("startup", startup_event)
 
+
+async def startup() -> None:
+    """Backward-compatible startup coroutine for tests.
+
+    Some tests import the module and call `startup()`/`shutdown()` directly.
+    Provide lightweight wrappers that invoke the real startup handler.
+    """
+    await startup_event()
+
+
+async def shutdown() -> None:
+    # No-op shutdown wrapper for test compatibility.
+    return None
+
 logger = logging.getLogger("affiliate_engine")
 
 _SERVICE = "affiliate-engine"
 _PROM_REGISTRY = CollectorRegistry()
 
+# Typed metric holders so the type-checker knows these are concrete metrics or None.
+_REQ_COUNT: Optional[Counter] = None
+_REQ_LATENCY: Optional[Histogram] = None
+
 # Use a dedicated registry so tests can import the app multiple times without
 # causing duplicate timeseries errors in the global CollectorRegistry.
+_PROM_REGISTRY = get_registry()
 try:
     _REQ_COUNT = Counter(
         "http_requests_total",
@@ -253,8 +237,10 @@ try:
 except ValueError:
     # If metrics were already registered in this registry (re-imports/tests),
     # reuse the existing collectors to avoid ValueError on duplicated timeseries.
-    _REQ_COUNT = _PROM_REGISTRY._names_to_collectors.get("http_requests_total")
-    _REQ_LATENCY = _PROM_REGISTRY._names_to_collectors.get("http_request_duration_seconds")
+    # The registry stores generic Collector instances; cast to the concrete
+    # types so the type-checker knows `.labels()` exists at runtime.
+    _REQ_COUNT = cast(Optional[Counter], _PROM_REGISTRY._names_to_collectors.get("http_requests_total"))
+    _REQ_LATENCY = cast(Optional[Histogram], _PROM_REGISTRY._names_to_collectors.get("http_request_duration_seconds"))
 
 # Forward important Python logs (WARNING+) to audit-service.
 audit_client.install_audit_log_forwarding(service=_SERVICE)
@@ -268,6 +254,12 @@ _AUTH_SKIP_PATHS = {
     "/redoc",
     "/callbacks/payout-status",
 }
+# Allow payment-revenue initiator callbacks without bearer tokens
+_AUTH_SKIP_PATHS.update({
+    "/callbacks/payments/deposits",
+    "/callbacks/payments/payouts",
+    "/callbacks/payments/refunds",
+})
 
 # Prefix-based public routes (e.g. affiliate click landing/resolve endpoints).
 _AUTH_SKIP_PREFIXES = (
@@ -341,8 +333,10 @@ async def correlation_id_middleware(request: Request, call_next):
 
     route = request.scope.get("route")
     route_path = getattr(route, "path", request.url.path)
-    _REQ_COUNT.labels(_SERVICE, request.method, route_path, str(response.status_code)).inc()
-    _REQ_LATENCY.labels(_SERVICE, request.method, route_path).observe(time.perf_counter() - start)
+    if _REQ_COUNT is not None and hasattr(_REQ_COUNT, "labels"):
+        _REQ_COUNT.labels(_SERVICE, request.method, route_path, str(response.status_code)).inc()
+    if _REQ_LATENCY is not None and hasattr(_REQ_LATENCY, "labels"):
+        _REQ_LATENCY.labels(_SERVICE, request.method, route_path).observe(time.perf_counter() - start)
 
     logger.info("request", extra={"method": request.method, "path": route_path, "status": response.status_code, "correlation_id": correlation_id})
     return response
@@ -350,48 +344,543 @@ async def correlation_id_middleware(request: Request, call_next):
 
 @app.post("/events/order/delivered")
 async def ingest_order_delivered(request: Request, payload: OrderDeliveredEvent):
-    """Mark affiliate sale events as delivered when order-delivery confirms delivery.
+    """Handle delivered events from order-delivery.
 
-    This updates `AffiliateEvent.delivered_at` for any sale events matching the `order_id` and
-    marks corresponding `AffiliateAttribution` as `delivered`.
+    - Update any existing AffiliateEvent.delivered_at for matching order_id.
+    - If no AffiliateAttribution exists and affiliate info is present in the payload,
+      create an attribution and record a sale event (including amount if provided).
     """
+    # When FastAPI binds `payload` it will already be validated and parsed.
+    order_id = getattr(payload, "order_id", None)
+    occurred_at_raw = getattr(payload, "occurred_at", None)
+
+    def _parse_iso_to_dt(val):
+        if val is None:
+            return None
+        if isinstance(val, datetime):
+            return val
+        if isinstance(val, str):
+            try:
+                # RFC3339 with trailing Z (UTC)
+                if val.endswith("Z"):
+                    return datetime.fromisoformat(val[:-1]).replace(tzinfo=timezone.utc)
+                # ISO with offset or naive offset-less ISO
+                return datetime.fromisoformat(val)
+            except Exception:
+                return None
+        return None
+
+    occurred_at = _parse_iso_to_dt(occurred_at_raw)
+
+    affiliate_id = getattr(payload, "affiliate_id", None)
+    business_id = getattr(payload, "business_id", None)
+    affiliate_code = getattr(payload, "affiliate_code", None)
+    amount = getattr(payload, "amount_zmw", None) or getattr(payload, "order_amount", None) or getattr(payload, "amount", None)
+    user_phone = getattr(payload, "user_phone", None)
+    cycle_id = getattr(payload, "cycle_id", None)
+
     updated = 0
-    attr = None
+    created_attr = None
+    link: AffiliateLink | None = None
     async with get_db_session() as db:
         # Update matching sale events
-        res = await db.execute(
-            select(AffiliateEvent).where(AffiliateEvent.order_id == payload.order_id, AffiliateEvent.event_type == "sale")
-        )
-        rows = res.scalars().all()
-        for ev in rows:
-            ev.delivered_at = payload.occurred_at
-            updated += 1
+        if order_id:
+            res = await db.execute(
+                select(AffiliateEvent).where(AffiliateEvent.order_id == order_id, AffiliateEvent.event_type == "sale")
+            )
+            rows = res.scalars().all()
+            for ev in rows:
+                try:
+                    ev.delivered_at = occurred_at
+                except Exception:
+                    ev.delivered_at = occurred_at
+                updated += 1
 
         # Update attribution status if present
-        res2 = await db.execute(select(AffiliateAttribution).where(AffiliateAttribution.order_id == payload.order_id))
-        attr = res2.scalar_one_or_none()
-        if attr:
-            attr.status = "delivered"
+        attr_res = None
+        if order_id:
+            res2 = await db.execute(select(AffiliateAttribution).where(AffiliateAttribution.order_id == order_id))
+            attr_res = res2.scalar_one_or_none()
+            if attr_res:
+                attr_res.status = "delivered"
 
-        if updated or attr:
-            await db.commit()
+        # If no attribution exists but affiliate info provided, create attribution + sale event
+        if not attr_res and (affiliate_id or affiliate_code) and order_id:
+            # Resolve affiliate_id from code if needed
+            if not affiliate_id and affiliate_code:
+                r = await db.execute(select(AffiliateLink).where(AffiliateLink.code == affiliate_code))
+                link = r.scalar_one_or_none()
+                if link:
+                    affiliate_id = link.affiliate_id
 
-    # Emit audit event when attribution is marked as delivered
-    if attr:
+            if affiliate_id:
+                now = occurred_at or datetime.now(timezone.utc)
+                attribution = AffiliateAttribution(
+                    affiliate_id=affiliate_id,
+                    link_id=(link.id if 'link' in locals() and link else None),
+                    order_id=order_id,
+                    business_id=business_id,
+                    session_id=cycle_id,
+                    user_phone=user_phone,
+                    status="delivered",
+                    created_at=now,
+                )
+                db.add(attribution)
+                try:
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                else:
+                    await db.refresh(attribution)
+                    created_attr = attribution
+
+                # Record a sale event
+                try:
+                    event_id = getattr(payload, "event_id", None) or f"order-delivered-{order_id}"
+                    ev = AffiliateEvent(
+                        event_id=event_id,
+                        affiliate_id=affiliate_id,
+                        event_type="sale",
+                        occurred_at=occurred_at or now,
+                        source="order-delivery",
+                        correlation_id=getattr(payload, "correlation_id", None) or getattr(request.state, "correlation_id", None),
+                        buyer_phone=user_phone,
+                            session_id=cycle_id,
+                            cycle_id=cycle_id,
+                            cycle_state=getattr(payload, "cycle_state", None),
+                            producer=getattr(payload, "producer", None),
+                            raw_payload=(getattr(payload, "model_dump", lambda: None)() or {}),
+                            order_id=order_id,
+                            business_id=business_id,
+                            amount_zmw=(float(amount) if amount is not None else None),
+                            meta=getattr(payload, "meta", {}) or {},
+                    )
+                    await _record_event(db, ev)
+                except Exception:
+                    logger.exception("record_sale_event_failed", extra={"order_id": order_id})
+
+                # Update epoch metrics: sales_volume and unique_buyers for this affiliate
+                try:
+                    if affiliate_id:
+                        epoch = await get_open_epoch(db)
+                        if not epoch:
+                            settings = await get_or_create_settings(db, pool_pct_default=float(get_pool_pct_default()), epoch_days_default=int(get_epoch_days_default()))
+                            epoch = await get_or_open_epoch(db, pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days))
+
+                        res_snap = await db.execute(
+                            select(AffiliateMetricSnapshot).where(AffiliateMetricSnapshot.epoch_id == epoch.id, AffiliateMetricSnapshot.affiliate_id == str(affiliate_id))
+                        )
+                        snap = res_snap.scalar_one_or_none()
+                        if not snap:
+                            snap = AffiliateMetricSnapshot(epoch_id=epoch.id, affiliate_id=str(affiliate_id))
+                            db.add(snap)
+                            await db.flush()
+
+                        # Increment sales volume
+                        if amount is not None:
+                            try:
+                                snap.sales_volume = float((snap.sales_volume or 0.0)) + float(amount)
+                            except Exception:
+                                snap.sales_volume = float(amount or 0.0)
+
+                        # Increment unique buyers if buyer is new in this epoch
+                        buyer = user_phone or None
+                        if buyer:
+                            from sqlalchemy import and_
+
+                            prior_q = select(AffiliateEvent).where(
+                                AffiliateEvent.affiliate_id == str(affiliate_id),
+                                AffiliateEvent.buyer_phone == buyer,
+                                AffiliateEvent.occurred_at >= epoch.starts_at,
+                            )
+                            if getattr(epoch, "ends_at", None):
+                                prior_q = prior_q.where(AffiliateEvent.occurred_at <= epoch.ends_at)
+                            prior = await db.execute(prior_q)
+                            prior_row = prior.scalar_one_or_none()
+                            if prior_row is None:
+                                snap.unique_buyers = int((snap.unique_buyers or 0)) + 1
+                except Exception:
+                    logger.exception("update_epoch_snapshot_failed", extra={"affiliate_id": affiliate_id, "order_id": order_id})
+
+        if (updated and order_id) or attr_res:
+            try:
+                await db.commit()
+            except Exception:
+                await db.rollback()
+
+    # Emit audit event when attribution is marked as delivered or created
+    if created_attr:
+        delivered_at_str = None
+        if isinstance(occurred_at, datetime):
+            delivered_at_str = occurred_at.isoformat()
+        elif occurred_at is not None:
+            delivered_at_str = str(occurred_at)
+        
         audit_client.emit_audit_sync(
             service="affiliate-engine",
-            event_type="affiliate_attribution_delivered",
+            event_type="affiliate_attribution_created_from_delivery",
             payload={
-                "order_id": payload.order_id,
-                "affiliate_id": attr.affiliate_id,
-                "delivered_at": payload.occurred_at.isoformat(),
+                "order_id": order_id,
+                "affiliate_id": created_attr.affiliate_id,
+                "amount_zmw": amount,
+                "delivered_at": delivered_at_str,
             },
             entity_type="affiliate_attribution",
-            entity_id=attr.id,
+            entity_id=created_attr.id,
             metadata={"correlation_id": getattr(request.state, "correlation_id", None)},
         )
 
-    return {"updated_events": updated, "attribution_updated": bool(attr)}
+    return {"updated_events": updated, "attribution_created": bool(created_attr)}
+
+
+@app.post("/callbacks/payments/deposits")
+async def pawapay_deposit_callback(payload: PaymentCallback, db: AsyncSession = Depends(db_session)):
+    """Receive deposit initiator callbacks from payment-revenue and record affiliate events.
+
+    Request model: `PaymentCallback` (see `src.app.schemas.PaymentCallback`).
+    """
+    body = payload.model_dump()
+    logger.info("pawapay_deposit_callback_received", extra={"payload": body})
+
+    event_type = body.get("event_type") or body.get("status")
+    event_id = body.get("event_id") or body.get("payment_id") or f"deposit-{body.get('depositId') or body.get('payment_id') or uuid.uuid4().hex}"
+    order_id = body.get("order_id")
+    business_id = body.get("business_id")
+    occurred_at = body.get("occurred_at")
+
+    # Build a generic affiliate event when possible
+    async with get_db_session() as dbs:
+        try:
+            ev = AffiliateEvent(
+                event_id=str(event_id),
+                affiliate_id=None,
+                event_type=("sale" if str(event_type).lower().startswith("payment_success") else "payment_failed"),
+                occurred_at=(datetime.fromisoformat(occurred_at) if isinstance(occurred_at, str) else datetime.now(timezone.utc)),
+                source=body.get("producer") or "payment-revenue",
+                correlation_id=body.get("correlation_id"),
+                buyer_phone=body.get("user_phone") or (body.get("meta") or {}).get("user_phone"),
+                session_id=(body.get("meta") or {}).get("session_id"),
+                order_id=order_id,
+                business_id=business_id,
+                amount_zmw=float(body.get("amount") or 0),
+                meta=body,
+            )
+            await _record_event(dbs, ev)
+            await dbs.commit()
+        except Exception:
+            logger.exception("affiliate_deposit_callback_failed")
+
+    return {"ok": True}
+
+
+
+@app.post("/events/msme/referral")
+async def ingest_msme_referral(
+    request: Request,
+    payload: MSMEReferralEvent,
+    db: AsyncSession = Depends(db_session),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+) -> dict:
+    async def _run():
+        deposit_id = getattr(payload, "deposit_id", None)
+        affiliate_id = getattr(payload, "affiliate_id", None)
+        business_id = getattr(payload, "business_id", None)
+
+        if not deposit_id:
+            raise HTTPException(status_code=400, detail="deposit_id_required")
+        if not affiliate_id:
+            raise HTTPException(status_code=400, detail="affiliate_id_required")
+        if not business_id:
+            raise HTTPException(status_code=400, detail="business_id_required")
+
+        # Validate deposit via payment-revenue service
+        base = get_payment_revenue_base_url().rstrip("/")
+        # Attempt to obtain MSME-issued service auth for this business so payment-revenue will accept the lookup.
+        headers: dict = {}
+        msme_base = get_msme_base_url().rstrip("/")
+        auth_path = os.getenv("MSME_SERVICE_AUTH_PATH", "/internal/service-token")
+        if business_id:
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    auth_url = f"{msme_base}{auth_path}/{business_id}"
+                    r_auth = await client.get(auth_url)
+                    if r_auth.status_code == 200:
+                        j = r_auth.json() if isinstance(r_auth.json(), dict) else {}
+                        token = j.get("token") or j.get("access_token")
+                        if token:
+                            headers["Authorization"] = f"Bearer {token}"
+            except httpx.RequestError:
+                # If we cannot reach MSME for a token, continue without it (payment-revenue may accept unauthenticated calls in dev).
+                logger.debug("msme_service_auth_unreachable", extra={"business_id": business_id})
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                r = await client.get(f"{base}/pawapay/deposits/{deposit_id}", headers=headers)
+        except httpx.RequestError:
+            raise HTTPException(status_code=502, detail="payment_revenue_unreachable")
+
+        if r.status_code == 404:
+            raise HTTPException(status_code=422, detail="deposit_not_found")
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail="payment_revenue_error")
+
+        deposit = r.json() if isinstance(r.json(), dict) else {}
+
+        dep_status = (deposit.get("status") or deposit.get("event_type") or "").lower()
+        if not dep_status or not dep_status.startswith("completed"):
+            raise HTTPException(status_code=422, detail="deposit_not_completed")
+
+        dep_business = deposit.get("business_id") or deposit.get("businessId")
+        if dep_business and str(dep_business) != str(business_id):
+            raise HTTPException(status_code=422, detail="deposit_business_mismatch")
+
+        # Determine occurred_at and amount
+        occurred_at = getattr(payload, "occurred_at", None)
+        def _safe_amount_to_float(x: Any) -> Optional[float]:
+            if x is None:
+                return None
+            # Prefer Decimal for stable parsing of numeric-like inputs, but
+            # fall back to float parsing for other convertible values.
+            try:
+                return float(Decimal(str(x)))
+            except (InvalidOperation, TypeError, ValueError):
+                try:
+                    return float(x)
+                except Exception:
+                    return None
+
+        amount = None
+        # Prefer explicit fields in order of precedence. If `amount_minor` is
+        # provided treat it as minor units (e.g. cents) and convert to major.
+        a = deposit.get("amount")
+        if a is not None:
+            amount = _safe_amount_to_float(a)
+        else:
+            a2 = deposit.get("amount_zmw")
+            if a2 is not None:
+                amount = _safe_amount_to_float(a2)
+            else:
+                am_minor = deposit.get("amount_minor")
+                if am_minor is not None:
+                    minor = _safe_amount_to_float(am_minor)
+                    if minor is not None:
+                        # convert minor units (e.g. cents) to major units
+                        amount = float(minor) / 100.0
+
+        event_id = getattr(payload, "event_id", None) or f"msme-referral-{deposit_id}"
+
+        ev = AffiliateEvent(
+            event_id=str(event_id),
+            affiliate_id=str(affiliate_id),
+            event_type="sale",
+            occurred_at=occurred_at or datetime.now(timezone.utc),
+            source="msme-engine",
+            correlation_id=getattr(payload, "correlation_id", None) or getattr(request.state, "correlation_id", None),
+            buyer_phone=None,
+            session_id=None,
+            order_id=None,
+            business_id=str(business_id),
+            deposit_id=str(deposit_id),
+            payment_id=(str(deposit.get("payment_id") or deposit.get("paymentId")) if isinstance(deposit, dict) and (deposit.get("payment_id") or deposit.get("paymentId")) else None),
+            amount_zmw=(float(amount) if amount is not None else None),
+            producer=getattr(payload, "producer", None),
+            raw_payload=(getattr(payload, "model_dump", lambda: None)() or {}),
+            meta={"deposit": deposit, **(getattr(payload, "meta", {}) or {})},
+        )
+
+        # Persist the sale event and, in the same transaction, create an attribution
+        # (if one doesn't already exist for this deposit) and update the current
+        # epoch's AffiliateMetricSnapshot for this affiliate so msme_referrals and
+        # sales_volume are incremented atomically.
+        await _record_event(db, ev)
+
+        # Create an attribution using the deposit id as a unique order identifier
+        # so it can be idempotent and referenced later. If another attribution
+        # exists for this order_id the unique constraint will prevent duplication.
+        created_attr = None
+        try:
+            now = ev.occurred_at or datetime.now(timezone.utc)
+            res_attr = await db.execute(select(AffiliateAttribution).where(AffiliateAttribution.order_id == str(deposit_id)))
+            existing_attr = res_attr.scalar_one_or_none()
+            if not existing_attr:
+                attribution = AffiliateAttribution(
+                    affiliate_id=str(affiliate_id),
+                    link_id=None,
+                    click_id=None,
+                    order_id=str(deposit_id),
+                    business_id=str(business_id),
+                    session_id=None,
+                    user_phone=None,
+                    status="attributed",
+                    created_at=now,
+                )
+                db.add(attribution)
+                try:
+                    await db.flush()
+                    created_attr = attribution
+                except IntegrityError:
+                    # concurrent creation — ignore and continue
+                    await db.rollback()
+                    # re-add nested record marker for the event (no-op)
+                    await _record_event(db, ev)
+
+        except Exception:
+            logger.exception("create_attribution_failed", extra={"deposit_id": deposit_id})
+
+        # Update metric snapshot for current open epoch
+        epoch = None
+        first_for_business: bool = False
+        try:
+            epoch = await get_open_epoch(db)
+            if not epoch:
+                settings = await get_or_create_settings(db, pool_pct_default=float(get_pool_pct_default()), epoch_days_default=int(get_epoch_days_default()))
+                epoch = await get_or_open_epoch(db, pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days))
+
+            # Load or create snapshot for this affiliate in the epoch
+            res_snap = await db.execute(
+                select(AffiliateMetricSnapshot).where(AffiliateMetricSnapshot.epoch_id == epoch.id, AffiliateMetricSnapshot.affiliate_id == str(affiliate_id))
+            )
+            snap = res_snap.scalar_one_or_none()
+            if not snap:
+                snap = AffiliateMetricSnapshot(epoch_id=epoch.id, affiliate_id=str(affiliate_id))
+                db.add(snap)
+                await db.flush()
+
+            # Increment sales volume
+            if amount is not None:
+                try:
+                    snap.sales_volume = float((snap.sales_volume or 0.0)) + float(amount)
+                except Exception:
+                    snap.sales_volume = float(amount or 0.0)
+
+            # Determine if this is the first-ever sale for the business (msme_referral semantics)
+            try:
+                prior = await db.execute(
+                    select(AffiliateEvent).where(
+                        AffiliateEvent.event_type == "sale", AffiliateEvent.business_id == str(business_id), AffiliateEvent.event_id != str(ev.event_id)
+                    )
+                )
+                prior_row = prior.scalar_one_or_none()
+                if prior_row is None:
+                    # No prior sale for this business recorded — count as a referral
+                    snap.msme_referrals = int((snap.msme_referrals or 0)) + 1
+                    first_for_business = True
+            except Exception:
+                logger.exception("msme_referral_check_failed", extra={"business_id": business_id})
+
+        except Exception:
+            logger.exception("update_snapshot_failed", extra={"affiliate_id": affiliate_id, "epoch": getattr(epoch, "id", None)})
+
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+        # Emit audit with details about created attribution and metric increments
+        audit_client.emit_audit_sync(
+            service="affiliate-engine",
+            event_type="msme_referral_recorded",
+            payload={
+                "deposit_id": deposit_id,
+                "affiliate_id": affiliate_id,
+                "business_id": business_id,
+                "amount_zmw": amount,
+                "created_attribution": bool(created_attr),
+                "incremented_msme_referral": bool(first_for_business),
+            },
+            entity_type="affiliate_event",
+            entity_id=ev.event_id,
+            metadata={"correlation_id": getattr(request.state, "correlation_id", None)},
+        )
+
+        return 200, {"ok": True, "recorded": True, "created_attribution": bool(created_attr), "first_for_business": bool(first_for_business)}
+
+    status_code, body = await idempotent_execute(
+        db=db,
+        scope=scope_for("POST", request.url.path),
+        key=x_idempotency_key or getattr(payload, "event_id", None) or getattr(payload, "deposit_id", None),
+        run=_run,
+    )
+    if status_code != 200:
+        raise HTTPException(status_code=status_code, detail="unexpected_status")
+    return body
+
+
+# Note: legacy raw-JSON session-cycle handler removed to avoid duplicate
+# route/function definition. The typed `ingest_session_cycle_created`
+# handler (using `SessionCycleCreatedEvent`) later in this file is kept.
+
+
+@app.post("/callbacks/payments/payouts")
+async def pawapay_payout_callback_aff(payload: PaymentCallback, db: AsyncSession = Depends(db_session)):
+    """Receive payout initiator callbacks from payment-revenue and update payout records.
+
+    Request model: `PaymentCallback` (see `src.app.schemas.PaymentCallback`).
+    """
+    body = payload.model_dump()
+    logger.info("pawapay_payout_callback_received_aff", extra={"payload": body})
+
+    payout_id = body.get("payment_id") or body.get("payout_id") or body.get("payoutId")
+    status = body.get("event_type") or body.get("status")
+
+    if payout_id:
+        async with get_db_session() as dbs:
+            try:
+                # Update any pool allocation that references this payout_id
+                res = await dbs.execute(select(PoolAllocation).where(PoolAllocation.payout_id == str(payout_id)))
+                rows = res.scalars().all()
+                for r in rows:
+                    if str(status).lower().startswith("payout_success") or str(status).lower() == "completed":
+                        r.payout_status = "completed"
+                        r.payout_completed_at = datetime.now(timezone.utc)
+                    else:
+                        r.payout_status = "failed"
+                        r.payout_error = str(body.get("failure_message") or body.get("error") or "failed")
+                if rows:
+                    await dbs.commit()
+            except Exception:
+                await dbs.rollback()
+                logger.exception("update_pool_allocation_on_payout_failed")
+
+    return {"ok": True}
+
+
+@app.post("/callbacks/payments/refunds")
+async def pawapay_refund_callback_aff(payload: PaymentCallback, db: AsyncSession = Depends(db_session)):
+    """Receive refund initiator callbacks and record a refund event for affiliates.
+
+    Request model: `PaymentCallback` (see `src.app.schemas.PaymentCallback`).
+    """
+    body = payload.model_dump()
+    logger.info("pawapay_refund_callback_received", extra={"payload": body})
+
+    refund_id = body.get("refund_id") or body.get("payment_id") or body.get("refundId")
+    order_id = body.get("order_id")
+    occurred_at_raw = body.get("occurred_at")
+
+    async with get_db_session() as dbs:
+        try:
+            ev = AffiliateEvent(
+                event_id=str(refund_id or f"refund-{uuid.uuid4().hex}"),
+                affiliate_id=None,
+                event_type=("refund_success" if str(body.get("event_type")).lower().find("success") >= 0 else "refund_failed"),
+                occurred_at=(datetime.fromisoformat(occurred_at_raw) if isinstance(occurred_at_raw, str) else datetime.now(timezone.utc)),
+                source=body.get("producer") or "payment-revenue",
+                correlation_id=body.get("correlation_id"),
+                buyer_phone=None,
+                session_id=None,
+                order_id=order_id,
+                business_id=body.get("business_id"),
+                amount_zmw=float(body.get("amount") or 0),
+                meta=body,
+            )
+            await _record_event(dbs, ev)
+            await dbs.commit()
+        except Exception:
+            logger.exception("affiliate_refund_callback_failed")
+
+    return {"ok": True}
 
 
 @app.middleware("http")
@@ -421,7 +910,7 @@ async def admin_debug_epoch_scores(epoch_id: str, db: AsyncSession = Depends(get
 
     # Load settings (weights) if present
     settings_row = (await db.execute(select(CommissionSettings).where(CommissionSettings.id == 1))).scalar_one_or_none()
-    weights = (settings_row.weights if settings_row else None)
+    weights = (settings_row.weights if settings_row else None) or {}
 
     scores, details = await compute_op_scores(db, metrics, weights)
 
@@ -451,6 +940,15 @@ async def admin_debug_epoch_scores(epoch_id: str, db: AsyncSession = Depends(get
         "scores": scores,
         "details": details,
     }
+
+
+@app.post("/admin/epochs/{epoch_id}/run-scoring")
+async def admin_run_epoch_scoring(epoch_id: str, db: AsyncSession = Depends(get_db_session), x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key")):
+    _require_admin(x_admin_key)
+    from src.app.pool import run_hybrid_epoch_scoring
+
+    res = await run_hybrid_epoch_scoring(db, epoch_id=epoch_id)
+    return JSONResponse(status_code=200, content={"ok": True, "result": res})
 
 
 # db_session is defined above token_resolve to make it available to Depends()
@@ -667,7 +1165,7 @@ async def resolve_affiliate_link(
                         campaign=link.campaign,
                     )
                 ent = r.json() if isinstance(r.json(), dict) else {}
-                if not bool(ent.get("is_active", True)):
+                if isinstance(ent, dict) and ent and not bool(ent.get("is_active", True)):
                     return AffiliateLinkResolveOut(
                         status="unavailable",
                         reason="business_inactive",
@@ -678,7 +1176,7 @@ async def resolve_affiliate_link(
                         product_id=link.product_id,
                         campaign=link.campaign,
                     )
-                if not bool(ent.get("affiliate_promo_links_enabled", False)):
+                if isinstance(ent, dict) and not bool(ent.get("affiliate_promo_links_enabled", False)):
                     return AffiliateLinkResolveOut(
                         status="unavailable",
                         reason="affiliate_links_not_allowed_for_plan",
@@ -886,20 +1384,31 @@ async def _record_event(db: AsyncSession, event: AffiliateEvent) -> None:
         return
 
 
-async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    async with get_db_session() as session:
-        yield session
-
-
 @app.post("/affiliates", response_model=AffiliateOut)
 async def create_affiliate(
     request: Request,
     payload: AffiliateCreate,
     db: AsyncSession = Depends(db_session),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+    x_internal_secret: Optional[str] = Header(default=None, alias="X-Internal-Secret"),
 ) -> AffiliateOut:
+    # Allow service-to-service creation using an internal secret when
+    # `AFFILIATE_INTERNAL_SECRET` is set in the environment. This avoids
+    # requiring a JWT for creating a brand-new affiliate (no affiliate yet).
+    internal_secret_env = os.getenv("AFFILIATE_INTERNAL_SECRET")
+    if internal_secret_env:
+        # If an internal secret is configured, require it on this route.
+        if not x_internal_secret or x_internal_secret != internal_secret_env:
+            raise HTTPException(status_code=401, detail="internal_secret_invalid")
+
     async def _run():
-        affiliate = Affiliate(name=payload.name, phone=payload.phone)
+        affiliate = Affiliate(
+            name=payload.name,
+            phone=payload.phone,
+            preferences=(payload.preferences if hasattr(payload, 'preferences') else None),
+            signed_terms=(bool(payload.signed_terms) if hasattr(payload, 'signed_terms') else False),
+            about=(payload.about if hasattr(payload, 'about') else None),
+        )
         db.add(affiliate)
         await db.commit()
         await db.refresh(affiliate)
@@ -941,6 +1450,39 @@ async def get_affiliate(affiliate_id: str, db: AsyncSession = Depends(db_session
     if not affiliate:
         raise HTTPException(status_code=404, detail="affiliate_not_found")
     return AffiliateOut(**affiliate.__dict__)
+
+
+@app.get("/affiliates/lookup", response_model=AffiliateLookupOut)
+async def lookup_affiliate(
+    phone: str | None = None,
+    code: str | None = None,
+    db: AsyncSession = Depends(db_session),
+) -> JSONResponse:
+    """Lookup an affiliate by phone or affiliate code.
+
+    Returns the affiliate id and sets a `Location` header pointing to the canonical
+    `/affiliates/{id}` resource.
+    """
+    if not (phone or code):
+        raise HTTPException(status_code=400, detail="phone_or_code_required")
+
+    affiliate = None
+    if phone:
+        res = await db.execute(select(Affiliate).where(Affiliate.phone == phone))
+        affiliate = res.scalar_one_or_none()
+
+    if not affiliate and code:
+        # resolve via affiliate link code
+        res2 = await db.execute(
+            select(Affiliate).join(AffiliateLink).where(AffiliateLink.code == code)
+        )
+        affiliate = res2.scalar_one_or_none()
+
+    if not affiliate:
+        raise HTTPException(status_code=404, detail="affiliate_not_found")
+
+    loc = f"/affiliates/{affiliate.id}"
+    return JSONResponse(content={"affiliate_id": affiliate.id, "location": loc}, headers={"Location": loc})
 
 
 @app.get("/affiliates", response_model=list[AffiliateOut])
@@ -1541,11 +2083,15 @@ async def ingest_session_cycle_created(
                 event_type="session_cycle_created",
                 occurred_at=payload.occurred_at,
                 source=payload.producer,
+                producer=getattr(payload, "producer", None),
                 correlation_id=payload.correlation_id,
                 buyer_phone=payload.user_phone,
                 session_id=payload.session_id,
+                cycle_id=payload.cycle_id,
+                cycle_state=payload.cycle_state,
                 order_id=None,
                 business_id=payload.business_id,
+                raw_payload=(getattr(payload, "model_dump", lambda: None)() or {}),
                 meta={
                     "cycle_id": payload.cycle_id,
                     "cycle_state": payload.cycle_state,
@@ -1553,6 +2099,27 @@ async def ingest_session_cycle_created(
                 },
             ),
         )
+
+        # Atomically increment session_cycles in the current epoch's snapshot
+        try:
+            epoch = await get_open_epoch(db)
+            if not epoch:
+                settings = await get_or_create_settings(db, pool_pct_default=float(get_pool_pct_default()), epoch_days_default=int(get_epoch_days_default()))
+                epoch = await get_or_open_epoch(db, pool_pct=float(settings.pool_pct), epoch_days=int(settings.epoch_days))
+
+            res_snap = await db.execute(
+                select(AffiliateMetricSnapshot).where(AffiliateMetricSnapshot.epoch_id == epoch.id, AffiliateMetricSnapshot.affiliate_id == str(payload.affiliate_id))
+            )
+            snap = res_snap.scalar_one_or_none()
+            if not snap:
+                snap = AffiliateMetricSnapshot(epoch_id=epoch.id, affiliate_id=str(payload.affiliate_id))
+                db.add(snap)
+                await db.flush()
+
+            snap.session_cycles = int((snap.session_cycles or 0)) + 1
+        except Exception:
+            logger.exception("increment_session_cycles_failed", extra={"affiliate_id": payload.affiliate_id})
+
         return 200, {"status": "ok"}
 
     status_code, body = await idempotent_execute(
@@ -1688,8 +2255,19 @@ async def _build_affiliate_dashboard(db: AsyncSession, *, affiliate_id: str, day
 
     conversion_rate = (conversions / clicks) if clicks else 0.0
 
-    # SQLite-friendly day bucket.
-    day_bucket = func.strftime("%Y-%m-%d", AffiliateEarning.created_at)
+    # Day bucket expression: use Postgres `to_char` when running against
+    # a Postgres dialect, otherwise fall back to SQLite `strftime`.
+    try:
+        dialect_name = engine.dialect.name
+    except Exception:
+        dialect_name = None
+
+    if dialect_name and dialect_name.startswith("postgres"):
+        # Postgres: use to_char(timestamp, 'YYYY-MM-DD')
+        day_bucket = func.to_char(AffiliateEarning.created_at, "YYYY-MM-DD")
+    else:
+        # SQLite (and others) may support strftime
+        day_bucket = func.strftime("%Y-%m-%d", AffiliateEarning.created_at)
     series_q = (
         select(day_bucket.label("day"), func.coalesce(func.sum(AffiliateEarning.amount), 0.0).label("amount"))
         .where(AffiliateEarning.affiliate_id == affiliate_id, AffiliateEarning.created_at >= since)

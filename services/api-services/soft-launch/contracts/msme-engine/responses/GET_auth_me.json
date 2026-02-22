@@ -1,0 +1,9 @@
+{
+  "method": "GET",
+  "path": "/auth/me",
+  "url": "http://localhost:8500/auth/me",
+  "status": 401,
+  "response": {
+    "detail": "missing_token"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "base": "http://localhost:3001",
+  "routes": [
+    { "path": "/", "name": "Landing", "component": "src/pages/Landing.tsx" },
+    { "path": "/login", "name": "Login", "component": "src/pages/Login.tsx" },
+    { "path": "/affiliate", "name": "AffiliateDashboard", "component": "src/pages/AffiliateDashboard.tsx" },
+    { "path": "/msme", "name": "MSMEDashboard", "component": "src/pages/MSMEDashboard.tsx" },
+    { "path": "/admin", "name": "AdminDashboard", "component": "src/pages/AdminDashboard.tsx" },
+    { "path": "/how-it-works", "name": "HowItWorks", "component": "src/pages/HowItWorks.tsx" },
+    { "path": "/resources", "name": "Resources", "component": "src/pages/Resources.tsx" },
+    { "path": "/pricing", "name": "Pricing", "component": "src/pages/Pricing.tsx" },
+    { "path": "/onboarding/msme", "name": "OnboardingMSME", "component": "src/pages/OnboardingMSME.tsx" },
+    { "path": "/onboarding/affiliate", "name": "OnboardingAffiliate", "component": "src/pages/OnboardingAffiliate.tsx" },
+    { "path": "/landing-page", "name": "LandingPage", "component": "src/pages/LandingPage.tsx" }
+  ]
+}

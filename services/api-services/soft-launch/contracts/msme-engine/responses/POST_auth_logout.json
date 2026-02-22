@@ -1,0 +1,19 @@
+{
+  "method": "POST",
+  "path": "/auth/logout",
+  "url": "http://localhost:8500/auth/logout",
+  "status": 422,
+  "response": {
+    "detail": [
+      {
+        "type": "missing",
+        "loc": [
+          "body",
+          "refresh_token"
+        ],
+        "msg": "Field required",
+        "input": {}
+      }
+    ]
+  }
+}
