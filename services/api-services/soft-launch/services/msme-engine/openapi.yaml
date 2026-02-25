@@ -34,7 +34,7 @@ components:
         logo_url:
           type: string
           nullable: true
-        affiliate_code:
+        affiliate_id:
           type: string
           nullable: true
         referred_by_msme_code:

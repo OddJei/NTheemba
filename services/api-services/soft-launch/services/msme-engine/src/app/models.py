@@ -3,8 +3,9 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint, Text, func, text
 from sqlalchemy.dialects.sqlite import JSON as SqliteJson
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql.schema import Index
 
@@ -88,7 +89,7 @@ class Business(Base):
     __tablename__ = "businesses"
     __table_args__ = (
         Index("ix_business_owner", "owner_id"),
-        Index("ix_business_affiliate", "affiliate_code"),
+        Index("ix_business_affiliate", "affiliate_id"),
         Index("ix_business_referred", "referred_by_msme_code"),
     )
 
@@ -100,7 +101,7 @@ class Business(Base):
     category: Mapped[str | None] = mapped_column(String(120), nullable=True)
     logo_url: Mapped[str | None] = mapped_column(String(400), nullable=True)
 
-    affiliate_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    affiliate_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     referred_by_msme_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     subscription_plan: Mapped[str | None] = mapped_column(String(60), nullable=True)
@@ -124,6 +125,7 @@ class BusinessSubscription(Base):
     business_id: Mapped[str] = mapped_column(String(36), ForeignKey("businesses.id"), index=True)
 
     plan: Mapped[str] = mapped_column(String(60))
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending_payment", server_default=text("'pending_payment'"))
     billing_interval: Mapped[str] = mapped_column(String(10), default="monthly")
     start_date: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     end_date: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -232,32 +234,25 @@ class PaymentInitiation(Base):
 
 class OutboxEvent(Base):
     __tablename__ = "outbox_events"
-    __table_args__ = (Index("ix_outbox_event_type", "event_type"),)
+    __table_args__ = {"schema": "msme_engine"}
+
+    # Changed to String(36) to match legacy callers that pass string IDs.
+    # DB migration should convert the column from uuid -> varchar(36).
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    # Legacy column retained for compatibility; prefer `topic`/`destination` for new uses.
-    event_type: Mapped[str | None] = mapped_column(String(100), index=True, nullable=True)
-
-    # Canonical / unified columns for dispatcher
-    topic: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
-    destination: Mapped[str | None] = mapped_column(String(200), nullable=True)
-
-    # Payload and optional metadata
-    payload: Mapped[dict | None] = mapped_column(SqliteJson, nullable=True)
-    headers: Mapped[dict | None] = mapped_column(SqliteJson, nullable=True)
-
-    producer: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    correlation_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
-    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
-
-    status: Mapped[str] = mapped_column(String(30), default="pending")
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-
-    # Last delivery error / response information
-    last_error: Mapped[str | None] = mapped_column(String(2000), nullable=True)
-    last_response: Mapped[dict | None] = mapped_column(SqliteJson, nullable=True)
-
+    target: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     scheduled_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    priority: Mapped[int] = mapped_column(Integer, default=0)
-
-    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    topic: Mapped[str | None] = mapped_column(Text, nullable=True)
+    destination: Mapped[str | None] = mapped_column(Text, nullable=True)
+    headers: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    producer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    correlation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dedupe_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # JSON payload for the outbox event (matches DB jsonb `payload` column)
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

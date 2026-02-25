@@ -1,0 +1,27 @@
+# Failing endpoints (non-2xx) — run 2026-02-23T07:24:41Z
+
+POST /auth/service-token/biz_test -> 404
+GET /auth/phone/+260971000000 -> 404
+PUT /auth/user/biz_test -> 404
+GET /auth/verify/test -> 404
+POST /business/register -> 400
+GET /business/biz_test -> 404
+PUT /business/biz_test -> 404
+POST /business/biz_test/subscribe -> 404
+POST /business/biz_test/subscribe_and_pay -> 404
+GET /business/biz_test/subscription -> 404
+GET /business/biz_test/entitlements -> 404
+GET /business/biz_test/metadata -> 404
+GET /business/phone/+260971000000 -> 404
+POST /events/payment_success -> 404
+POST /events/payment_failed -> 404
+POST /notification/send -> 502
+GET /notification/user/biz_test -> 502
+GET /notification/biz_test -> 502
+GET /businesses/biz_test/delivery-locations -> 404
+PUT /businesses/biz_test/delivery-locations -> 404
+
+# Notes:
+# - Many 404s are expected because the tester uses synthetic ids like "biz_test" or "id_test".
+# - 502s indicate the notification service is unreachable; start or mock the notification service to resolve.
+# - 400 on /business/register indicates missing owner field in the test payload; update payload if you want to exercise business creation.

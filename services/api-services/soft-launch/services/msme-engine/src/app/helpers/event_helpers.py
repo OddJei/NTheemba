@@ -23,7 +23,7 @@ async def emit_payment_success_outbox(
 
     Returns the OutboxEvent id.
     """
-    from app.helpers.outbox.outbox import create_outbox_row
+    from src.app.helpers.outbox.outbox import create_outbox_row
     from src.app.config import get_pg_schema
 
     base = os.getenv("AFFILIATE_ENGINE_BASE_URL") or "http://affiliate-engine:8510"

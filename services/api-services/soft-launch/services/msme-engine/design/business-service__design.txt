@@ -19,7 +19,7 @@ Core Features:
 
 Onboarding Logic:
 - During MSME registration, the service checks for referral codes:
-  - If affiliate_code is provided → emits affiliate_onboarded to Affiliate Event Service
+  - If affiliate_id is provided → emits affiliate_onboarded to Affiliate Event Service
   - If referred_by_msme_code is provided → emits msme_referred to MSME Referral Tracker Service
   - If no code is provided → emits msme_registered to Index/Search Service
 - This enables clean tracking of onboarding source and contributor/referrer impact
@@ -32,7 +32,7 @@ Table: business_service.businesses
 - location: TEXT
 - category: TEXT
 - logo_url: TEXT
-- affiliate_code: TEXT (optional)
+- affiliate_id: TEXT (optional)
 - referred_by_msme_code: TEXT (optional)
 - subscription_plan: TEXT
 - subscription_expiry: TIMESTAMP
@@ -101,7 +101,7 @@ Background Work:
 Scaling Readiness:
 Current Target (1–500 MSMEs):
 - Single instance deployment with connection pooling
-- Indexed queries on business_id, affiliate_code, referred_by_msme_code
+  - Indexed queries on business_id, affiliate_id, referred_by_msme_code
 - Basic background jobs for expiry and reminders
 
 Ready for 1,000 MSMEs:

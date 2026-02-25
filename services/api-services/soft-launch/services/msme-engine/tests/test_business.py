@@ -12,7 +12,7 @@ def test_business_register_lookup_and_payment_success(client):
         "name": "My Shop",
         "location": "Lusaka",
         "category": "Grocery",
-        "affiliate_code": "AFF-123",
+        "affiliate_id": "AFF-123",
     }
 
     r = client.post("/business/register", json=payload)

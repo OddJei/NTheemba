@@ -1,0 +1,17 @@
+# Passing endpoints (2xx) — run 2026-02-23T07:24:41Z
+
+POST /callbacks/payments/payouts -> 200
+POST /callbacks/payments/deposits -> 200
+GET /outbox/pending -> 200
+POST /outbox/ack -> 200
+GET /health -> 200
+GET /metrics -> 200
+POST /auth/register -> 201
+POST /auth/login -> 200
+POST /auth/refresh -> 200
+POST /auth/logout -> 200
+GET /auth/me -> 200
+DELETE /auth/user/biz_test -> 200
+DELETE /business/biz_test -> 200
+POST /business/reindex -> 200
+GET /events/business/biz_test -> 200

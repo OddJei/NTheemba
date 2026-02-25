@@ -29,7 +29,26 @@ def get_pg_schema() -> str:
 
 
 def get_jwt_secret() -> str:
-    return os.getenv("MSME_JWT_SECRET", "change-me")
+    # In production require an explicit secret; do not fall back to a guessable default.
+    val = os.getenv("MSME_JWT_SECRET")
+    if os.getenv("ENV", "development") == "production":
+        if not val:
+            raise RuntimeError("MSME_JWT_SECRET must be set in production")
+    return val or "change-me"
+
+
+def get_required_secret(env_name: str, hint: str | None = None) -> str:
+    """Fetch a required secret, with a hint for migrating to a secret manager.
+
+    Raises RuntimeError in production if missing.
+    """
+    val = os.getenv(env_name)
+    if os.getenv("ENV", "development") == "production" and not val:
+        msg = f"{env_name} must be set in production"
+        if hint:
+            msg += f"; hint: {hint}"
+        raise RuntimeError(msg)
+    return val or ""
 
 
 def get_access_token_minutes() -> int:

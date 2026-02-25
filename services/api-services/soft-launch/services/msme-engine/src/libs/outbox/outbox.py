@@ -26,7 +26,7 @@ from sqlalchemy import text
 logger = logging.getLogger("libs.outbox.outbox")
 
 
-DEFAULT_OUTBOX_TABLE = "public.outbox"
+DEFAULT_OUTBOX_TABLE = "msme_engine.outbox_events"
 
 
 async def create_outbox_row(
@@ -58,6 +58,9 @@ async def create_outbox_row(
     # Ensure an id is present and compatible across DBs (avoid DB-specific gen_random_uuid()).
     if not id:
       id = str(_uuid.uuid4())
+
+    # Always return string ids so legacy callers receive string values.
+    # Callers that need UUID objects should convert explicitly.
 
     # Normalize payload/headers to JSON string for transport; DB driver may handle json/jsonb.
     payload_json = json.dumps(payload) if payload is not None else None
@@ -133,6 +136,7 @@ async def create_outbox_row(
         pass
       # Attempt fallbacks but log failures and re-raise if all fail.
       last_exc = exc_primary
+      alt_table = None
       try:
         # Make fallback schema-aware: if target_table is schema.table, use same schema for fallback
         if "." in target_table:
@@ -165,6 +169,7 @@ async def create_outbox_row(
         except Exception:
           pass
         last_exc = exc_alt
+        legacy_table = None
         try:
           if "." in target_table:
             schema_name = target_table.split('.', 1)[0]

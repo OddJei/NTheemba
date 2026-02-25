@@ -77,7 +77,7 @@ CREATE TABLE msme_engine.businesses (
     location character varying(200),
     category character varying(120),
     logo_url character varying(400),
-    affiliate_code character varying(80),
+    affiliate_id character varying(36),
     referred_by_msme_code character varying(80),
     subscription_plan character varying(60),
     subscription_expiry timestamp with time zone,
@@ -432,7 +432,7 @@ ac825acb-452c-4382-b8f8-f67eabc702bc	b94e0df9-7f8d-4fca-8c43-81741a5aac00	paid	2
 -- Data for Name: businesses; Type: TABLE DATA; Schema: msme_engine; Owner: postgres
 --
 
-COPY msme_engine.businesses (id, name, owner_id, location, category, logo_url, affiliate_code, referred_by_msme_code, subscription_plan, subscription_expiry, delivery_locations, tags, is_active, created_at, updated_at, subscription_price_minor, subscription_currency) FROM stdin;
+COPY msme_engine.businesses (id, name, owner_id, location, category, logo_url, affiliate_id, referred_by_msme_code, subscription_plan, subscription_expiry, delivery_locations, tags, is_active, created_at, updated_at, subscription_price_minor, subscription_currency) FROM stdin;
 5181949d-729e-4d2c-8827-5fe6265f3052	SMART PC Store	b24a8e2f-1814-463c-94b8-22316618f914	Lusaka, Zambia	electronics	\N	AFF-123	\N	\N	\N	null	null	t	2026-01-29 19:39:33.236644+00	2026-01-29 19:39:33.23665+00	\N	\N
 5fe78467-a2a8-4e17-9c35-ba5f4e6f449b	msme_shop2_shop	5a4b75d9-c27f-4a21-8ba9-82c23106c277	\N	\N	\N	\N	\N	\N	\N	\N	\N	t	2026-01-30 00:34:06.219164+00	2026-01-30 00:34:06.219164+00	\N	\N
 0706bb81-73d8-4632-8ed8-64e90b527721	Copilot Test Biz 521445703	6fa05697-98f3-4652-91b0-e4f40a86c822	Lusaka	retail	\N	\N	\N	paid	\N	null	null	t	2026-01-30 17:18:06.375826+00	2026-01-30 17:18:09.134317+00	5000	ZMW
@@ -996,7 +996,7 @@ CREATE INDEX ix_auth_sessions_user_id ON msme_engine.auth_sessions USING btree (
 -- Name: ix_business_affiliate; Type: INDEX; Schema: msme_engine; Owner: postgres
 --
 
-CREATE INDEX ix_business_affiliate ON msme_engine.businesses USING btree (affiliate_code);
+CREATE INDEX ix_business_affiliate ON msme_engine.businesses USING btree (affiliate_id);
 
 
 --

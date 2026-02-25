@@ -1,0 +1,201 @@
+{
+  "seed_file": "src\\scripts\\seed_output.json",
+  "login": {
+    "status": 200,
+    "body": {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZmZpbGlhdGVfaWQiOm51bGwsImJ1c2luZXNzX2lkIjpudWxsLCJleHAiOjE3NzIwMjg5MTMsImlhdCI6MTc3MjAyNTMxMywicm9sZSI6ImRlZmF1bHQiLCJzdWIiOiJlYWM2MjI2ZC00ODRlLTQxNzQtOTY1OS1lMjM0ZDA5NjllNWMiLCJ0eXAiOiJhY2Nlc3MifQ.X5E0c0_OmkBvwzLMzXxcPgxZ1nliaXQoFqQGHUqTS78",
+      "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZmZpbGlhdGVfaWQiOm51bGwsImJ1c2luZXNzX2lkIjpudWxsLCJleHAiOjE3NzQ2MTczMTMsImlhdCI6MTc3MjAyNTMxMywianRpIjoiVzdaVXgtSnV2VHBIY3ktVyIsInJvbGUiOiJkZWZhdWx0Iiwic3ViIjoiZWFjNjIyNmQtNDg0ZS00MTc0LTk2NTktZTIzNGQwOTY5ZTVjIiwidHlwIjoicmVmcmVzaCJ9.fYyZ0DB6_emWbqUfj1hO6QgNPJ1jpgGKXIr0X3Mi008",
+      "token_type": "bearer"
+    }
+  },
+  "auth_me": {
+    "status": 200,
+    "body": {
+      "id": "eac6226d-484e-4174-9659-e234d0969e5c",
+      "username": "seeduser_9cdfb2c7",
+      "email": "seed-user-9cdfb2c7@example.com",
+      "phone": "+260971132702",
+      "role": "default",
+      "business_id": null,
+      "affiliate_id": null,
+      "is_active": true,
+      "signed_terms": false,
+      "created_at": "2026-02-25T13:15:07.886936Z",
+      "updated_at": "2026-02-25T13:15:07.886936Z"
+    }
+  },
+  "service_token_business": {
+    "status": 404,
+    "body": {
+      "detail": "user_not_found"
+    }
+  },
+  "service_token_user": {
+    "status": 200,
+    "body": {
+      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZmZpbGlhdGVfaWQiOm51bGwsImJ1c2luZXNzX2lkIjpudWxsLCJleHAiOjE3NzIwMjg5MTMsImlhdCI6MTc3MjAyNTMxMywicm9sZSI6ImRlZmF1bHQiLCJzdWIiOiJlYWM2MjI2ZC00ODRlLTQxNzQtOTY1OS1lMjM0ZDA5NjllNWMiLCJ0eXAiOiJhY2Nlc3MifQ.X5E0c0_OmkBvwzLMzXxcPgxZ1nliaXQoFqQGHUqTS78",
+      "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZmZpbGlhdGVfaWQiOm51bGwsImJ1c2luZXNzX2lkIjpudWxsLCJleHAiOjE3NzQ2MTczMTMsImlhdCI6MTc3MjAyNTMxMywianRpIjoiZ1NuZ3NFeTlvVnVRWXNjMSIsInJvbGUiOiJkZWZhdWx0Iiwic3ViIjoiZWFjNjIyNmQtNDg0ZS00MTc0LTk2NTktZTIzNGQwOTY5ZTVjIiwidHlwIjoicmVmcmVzaCJ9.Y0L2OnB3JfnCGa27DAmUxBdg0YL7ncPUAxwumHTczEk",
+      "token_type": "bearer"
+    }
+  },
+  "auth_phone": {
+    "status": 200,
+    "body": {
+      "user": {
+        "id": "eac6226d-484e-4174-9659-e234d0969e5c",
+        "username": "seeduser_9cdfb2c7",
+        "email": "seed-user-9cdfb2c7@example.com",
+        "phone": "+260971132702",
+        "role": "default",
+        "business_id": null,
+        "affiliate_id": null,
+        "is_active": true,
+        "signed_terms": false,
+        "created_at": "2026-02-25T13:15:07.886936Z",
+        "updated_at": "2026-02-25T13:15:07.886936Z"
+      },
+      "business": null
+    }
+  },
+  "business_get": {
+    "status": 200,
+    "body": {
+      "id": "f88ccae4-f348-472f-9772-96258269ffff",
+      "name": "Seed Business 3bbb4208",
+      "owner_id": "86df2262-c6cc-4f2e-927e-21578b181281",
+      "location": null,
+      "category": null,
+      "logo_url": null,
+      "affiliate_id": null,
+      "referred_by_msme_code": null,
+      "subscription_plan": null,
+      "subscription_expiry": null,
+      "delivery_locations": null,
+      "tags": null,
+      "is_active": true,
+      "created_at": "2026-02-25T13:15:10.639164Z",
+      "updated_at": "2026-02-25T13:15:10.639164Z"
+    }
+  },
+  "business_put": {
+    "status": 200,
+    "body": {
+      "id": "f88ccae4-f348-472f-9772-96258269ffff",
+      "name": "Seed Business 3bbb4208",
+      "owner_id": "86df2262-c6cc-4f2e-927e-21578b181281",
+      "location": "Automation-Update",
+      "category": null,
+      "logo_url": null,
+      "affiliate_id": null,
+      "referred_by_msme_code": null,
+      "subscription_plan": null,
+      "subscription_expiry": null,
+      "delivery_locations": null,
+      "tags": null,
+      "is_active": true,
+      "created_at": "2026-02-25T13:15:10.639164Z",
+      "updated_at": "2026-02-25T13:15:14.038897Z"
+    }
+  },
+  "business_subscription": {
+    "status": 404,
+    "body": {
+      "detail": "subscription_not_found"
+    }
+  },
+  "business_entitlements": {
+    "status": 200,
+    "body": {
+      "business_id": "f88ccae4-f348-472f-9772-96258269ffff",
+      "plan": "free",
+      "subscription_expiry": null,
+      "is_active": true,
+      "bot_instances_enabled": true,
+      "affiliate_promo_links_enabled": false,
+      "transaction_fee_pct": 0.07
+    }
+  },
+  "business_metadata": {
+    "status": 200,
+    "body": {
+      "business_id": "f88ccae4-f348-472f-9772-96258269ffff",
+      "name": "Seed Business 3bbb4208",
+      "location": "Automation-Update",
+      "category": null,
+      "tags": null,
+      "delivery_locations": null,
+      "is_active": true
+    }
+  },
+  "events_business": {
+    "status": 200,
+    "body": []
+  },
+  "business_by_phone": {
+    "status": 404,
+    "body": {
+      "detail": "business_not_found_for_phone"
+    }
+  },
+  "notification_user": {
+    "status": 502,
+    "body": {
+      "detail": "notification_service_unreachable"
+    }
+  },
+  "delivery_locations_put": {
+    "status": 403,
+    "body": {
+      "detail": "not_authorized"
+    }
+  },
+  "delivery_locations_get": {
+    "status": 200,
+    "body": {}
+  },
+  "business_reindex": {
+    "status": 200,
+    "body": {
+      "status": "ok",
+      "count": 24
+    }
+  },
+  "outbox_ack": {
+    "status": 200,
+    "body": {
+      "acked": []
+    }
+  },
+  "notification_broadcast_all": {
+    "status": 500,
+    "body": {
+      "detail": "commit_failed"
+    }
+  },
+  "notification_broadcast_role_admin": {
+    "status": 200,
+    "body": {
+      "role": "admin",
+      "count": 0,
+      "ids": []
+    }
+  },
+  "notification_broadcast_user": {
+    "status": 500,
+    "body": {
+      "detail": "emit_failed"
+    }
+  },
+  "delete_user": {
+    "status": 200,
+    "body": {
+      "status": "ok"
+    }
+  },
+  "delete_business": {
+    "status": 200,
+    "body": {
+      "status": "ok"
+    }
+  }
+}

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import uuid
 from typing import Optional, Dict, Any
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import SQLAlchemyError
 
-from app.models_outbox import OutboxEvent
+from src.app.helpers.outbox.outbox import create_outbox_row
+
+logger = logging.getLogger(__name__)
 
 
 async def create_msme_outbox_row(
@@ -19,41 +20,22 @@ async def create_msme_outbox_row(
     producer: Optional[str] = None,
     correlation_id: Optional[str] = None,
     dedupe_key: Optional[str] = None,
-    status: str = "pending",
-    attempts: int = 0,
-    priority: int = 0,
     commit: bool = True,
-) -> None:
-    """Insert a row into msme_engine.outbox_events.
+) -> str:
+    """Compatibility wrapper that writes into `msme_engine.outbox_events`.
 
-    By default this helper will commit the transaction; set `commit=False`
-    if the caller wants to make the insert atomic with other changes.
+    Delegates to the unified `create_outbox_row` implementation.
     """
-    event = OutboxEvent(
-        id=uuid.uuid4(),
-        target=target,
-        topic=topic,
+    logger.debug("msme_outbox.create_msme_outbox_row - delegating to unified emitter", extra={"topic": topic})
+    out_id = await create_outbox_row(
+        db,
+        topic,
+        payload or {},
         destination=destination,
         headers=headers,
         producer=producer,
         correlation_id=correlation_id,
-        dedupe_key=dedupe_key,
-        last_response=payload,
-        status=status,
-        attempts=attempts,
-        priority=priority,
+        idempotency_key=dedupe_key,
+        commit=commit,
     )
-
-    try:
-        db.add(event)
-        if commit:
-            await db.commit()
-        else:
-            await db.flush()
-    except SQLAlchemyError:
-        # let caller observe/handle exceptions; roll back to clean session
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        raise
+    return str(out_id)

@@ -1,0 +1,1487 @@
+{
+  "collected_at": "2026-02-25T13:26:28.599332Z",
+  "artifacts": {
+    "seed_output.json": {
+      "path": "C:\\Users\\SMART PC\\Documents\\NTheemba\\services\\api-services\\soft-launch\\services\\msme-engine\\src\\scripts\\seed_output.json",
+      "mtime": 1772025311.6683116,
+      "data": {
+        "auth": {
+          "request": {
+            "phone": "+260971132702",
+            "name": "seed-user",
+            "username": "seeduser_9cdfb2c7",
+            "email": "seed-user-9cdfb2c7@example.com",
+            "password": "pass1234"
+          },
+          "status": 201,
+          "body": {
+            "id": "eac6226d-484e-4174-9659-e234d0969e5c",
+            "username": "seeduser_9cdfb2c7",
+            "email": "seed-user-9cdfb2c7@example.com",
+            "phone": "+260971132702",
+            "role": "default",
+            "business_id": null,
+            "affiliate_id": null,
+            "is_active": true,
+            "signed_terms": false,
+            "created_at": "2026-02-25T13:15:07.886936Z",
+            "updated_at": "2026-02-25T13:15:07.886936Z"
+          },
+          "password": "pass1234"
+        },
+        "affiliate": {
+          "request": {
+            "profile": {
+              "phone": "+260971117901",
+              "fullName": "Seed Affiliate",
+              "username": "seedaffiliate_2bd20d2b",
+              "email": "seed-aff-2bd20d2b@example.com"
+            },
+            "preferences": {
+              "channels": [
+                "email"
+              ],
+              "categories": [
+                "promotions"
+              ]
+            },
+            "affiliate_id": "4d3be885-34aa-4af9-85ea-b808fb42845a"
+          },
+          "status": 502,
+          "body": {
+            "detail": "affiliate_engine_unreachable"
+          }
+        },
+        "msme_onboard": {
+          "request": {
+            "profile": {
+              "phone": "+260971638514",
+              "fullName": "Seed MSME",
+              "username": "seed-msme-3bbb4208",
+              "email": "seed-msme-3bbb4208@example.com"
+            },
+            "business": {
+              "businessName": "Seed Business 3bbb4208",
+              "phone": "+260971036441",
+              "location": "Lusaka"
+            },
+            "products": [
+              {
+                "name": "Seed Product",
+                "price": "3518",
+                "initialStock": "21"
+              }
+            ]
+          },
+          "status": 201,
+          "body": {
+            "business": {
+              "id": "f88ccae4-f348-472f-9772-96258269ffff",
+              "name": "Seed Business 3bbb4208",
+              "owner_id": "86df2262-c6cc-4f2e-927e-21578b181281",
+              "location": null,
+              "category": null,
+              "logo_url": null,
+              "affiliate_id": null,
+              "referred_by_msme_code": null,
+              "subscription_plan": null,
+              "subscription_expiry": null,
+              "delivery_locations": null,
+              "tags": null,
+              "is_active": true,
+              "created_at": "2026-02-25T13:15:10.639164Z",
+              "updated_at": "2026-02-25T13:15:10.639164Z"
+            },
+            "user": {
+              "id": "86df2262-c6cc-4f2e-927e-21578b181281",
+              "username": "seed-msme-3bbb4208",
+              "email": "seed-msme-3bbb4208@example.com",
+              "phone": "+260971638514",
+              "role": "msme",
+              "business_id": "f88ccae4-f348-472f-9772-96258269ffff",
+              "affiliate_id": null,
+              "is_active": true,
+              "signed_terms": false,
+              "created_at": "2026-02-25T13:15:10.631375Z",
+              "updated_at": "2026-02-25T13:15:10.649906Z"
+            },
+            "msme_code": "MSME-44426"
+          }
+        },
+        "business_register": {
+          "request": {
+            "name": "Manual Seed Biz 5a04d3f6",
+            "phone": "+260971638506",
+            "owner": {
+              "phone": "+260971132702",
+              "name": "seed-user",
+              "username": "seeduser_9cdfb2c7",
+              "email": "seed-user-9cdfb2c7@example.com",
+              "password": "pass1234"
+            },
+            "location": "Lusaka"
+          },
+          "status": 409,
+          "body": {
+            "detail": "owner_user_conflict"
+          }
+        },
+        "deposit": {
+          "request": {
+            "event_type": "deposit.created",
+            "event_id": "evt-seed-7a348b0e",
+            "depositId": "dep-seed-8c076f08",
+            "business_id": "Manual Seed Biz 5a04d3f6",
+            "amount_minor": 10000,
+            "currency": "ZMW",
+            "status": "completed"
+          },
+          "status": 200,
+          "body": {
+            "ok": true
+          }
+        },
+        "_debug_env": {
+          "status": 200,
+          "body": {
+            "OUTBOX_INTERNAL_SECRET": "641c7813-f647-4a7b-9432-3bf314a81708"
+          }
+        },
+        "outbox_pending": {
+          "status": 200,
+          "body": [
+            {
+              "id": "dad31aad-8f82-47bc-82bd-9ed7d65c29e9",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-1",
+                "business_id": "test-biz",
+                "occurred_at": "2026-02-24T21:21:16.380001+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-c908ce28be28484e8c7c6029234be8e0",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "d15b081a-719c-4d14-afbd-f52e03c82068"
+            },
+            {
+              "id": "9e7f5cc6-c033-4bb9-b5d4-7f1985268ed5",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-1",
+                "business_id": "test-biz",
+                "occurred_at": "2026-02-25T05:37:30.727595+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-e437855ffb9d4235a3ee926c01d7388f",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "2865c22c-a93d-4255-b09b-f2b0c15f49b4"
+            },
+            {
+              "id": "7f40df58-649f-42a7-84aa-d6802378d378",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-1",
+                "business_id": "test-biz",
+                "occurred_at": "2026-02-25T05:40:10.208551+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-3b11ab5480b44c4fa26965cd02241106",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "eee1da98-8feb-4b5b-a3ad-2ce81d90cee0"
+            },
+            {
+              "id": "745a640b-2d41-40b3-aafa-b99bcee5609a",
+              "event_type": "notification_send",
+              "payload": {
+                "channel": "in_app",
+                "payload": {
+                  "msme_code": "MSME-99760",
+                  "business_name": "Manual Seed Biz"
+                },
+                "user_id": "d2eec1a6-1246-4c80-99c7-604a047e6317",
+                "template": "msme_registered",
+                "business_id": "bfcc5418-7beb-4cb3-9e3c-82527b316043"
+              },
+              "dedupe_key": "b24f3dbf-c337-4283-bc6a-43b1357a8b52",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "651a8e9d-db55-4666-b165-453bad628021"
+            },
+            {
+              "id": "278997d3-03cd-40e5-a800-fbfc776d4ab1",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-1",
+                "business_id": "test-biz",
+                "occurred_at": "2026-02-25T05:44:05.685575+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-794fda7897544d10afe9e99c2269cd91",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "ff23247c-89f3-4295-9950-ded70c67b62d"
+            },
+            {
+              "id": "89fb39a2-cfef-40eb-84ab-3f17010bac48",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-1",
+                "business_id": "test-biz",
+                "occurred_at": "2026-02-25T05:52:58.630408+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-9ffc6930c071431a8dbe31160c6cb283",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "6f7f399c-8c01-4e21-ab92-e8bb9ecccd67"
+            },
+            {
+              "id": "fda6f5bc-81f5-468e-89d2-1e0fc9897070",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-034dfd7c",
+                "business_id": "Manual Seed Biz 1e5d4fbb",
+                "occurred_at": "2026-02-25T06:16:07.995913+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-e7113881ac784cedbd49e40d87e37a75",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "04916fd0-7684-40eb-be58-283d47231d85"
+            },
+            {
+              "id": "c2b40d83-f9ec-4ae8-883b-bdadf6a9a1d7",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-573e6c79",
+                "business_id": "Manual Seed Biz 1f2b6e3f",
+                "occurred_at": "2026-02-25T06:21:51.927343+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-5ec699f11cdf45a7919bcfa0a8341468",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "868f3e1f-dcac-4c61-8063-b30728e6cafc"
+            },
+            {
+              "id": "e5cb7b83-39eb-4daa-99ee-4700089fb08a",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-064f262a",
+                "business_id": "Manual Seed Biz 2ae49069",
+                "occurred_at": "2026-02-25T06:28:24.720674+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-21fc232d61b14b5099e3f52aeb5bbcce",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "e3b4e326-b665-4b81-9b21-3f2b2ce5d36c"
+            },
+            {
+              "id": "72a26d09-4c7c-444d-a63d-d8bb995e3496",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-40c5401a",
+                "business_id": "Manual Seed Biz af33897f",
+                "occurred_at": "2026-02-25T06:29:11.886185+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-52931c50fe71482ba2c11624e3bcdcfa",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "aef9b2c5-ea1c-43e2-8e06-d6ab5a25836e"
+            },
+            {
+              "id": "d9e3853e-8700-459e-a850-e8871b700f09",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-459e9285",
+                "business_id": "Manual Seed Biz 6d6a4862",
+                "occurred_at": "2026-02-25T06:33:23.385548+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-28faf781121a426b83e6fc352d726da5",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "20b3355b-0df3-4018-9fee-3de3a527ecb2"
+            },
+            {
+              "id": "9537ca6e-2a7b-4efa-bd66-274a9b603094",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-2d6df902",
+                "business_id": "Manual Seed Biz 0ae1c6bf",
+                "occurred_at": "2026-02-25T06:39:07.284388+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-3b67cbb6bd2049a29b02bdfa3a6e00cc",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "c2693ae2-0032-4d91-a94a-551b7da7fb29"
+            },
+            {
+              "id": "230fe8cf-8056-4ebd-93fa-b8e1297d19f5",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-427a3e04",
+                "business_id": "Manual Seed Biz 44fbc4f3",
+                "occurred_at": "2026-02-25T06:42:33.193739+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-49305ac3f90e46ee89e01010392ed6ad",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "55af3ef4-59a1-4196-af04-841829da11e8"
+            },
+            {
+              "id": "fee8d797-bf17-4250-a534-75f15aa360b9",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-83b9a5b4",
+                "business_id": "Manual Seed Biz 145bc1fd",
+                "occurred_at": "2026-02-25T08:18:48.822120+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-efd5f5ec3de945a8805d7dd4a74400e9",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "a8f08cd9-38c1-46e6-ba90-c9d0309f9768"
+            },
+            {
+              "id": "14248118-4409-4199-8eec-28c2fbbbb991",
+              "event_type": "msme.referral",
+              "payload": {
+                "meta": {
+                  "note": "referral from deposit flow",
+                  "source": "msme-engine-outbox"
+                },
+                "amount_zmw": 100.0,
+                "deposit_id": "dep-seed-a734a0ae",
+                "business_id": "Manual Seed Biz ee44d4a0",
+                "occurred_at": "2026-02-25T08:35:19.057510+00:00",
+                "affiliate_id": null
+              },
+              "dedupe_key": "msme-referral-3c2e452e62d14716b630270ec42c8c39",
+              "destination": "http://127.0.0.1:8510/events/msme/referral",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "ad674da7-05da-4070-ac47-e646e4f8d05b"
+            },
+            {
+              "id": "7345a8a3-e0cf-4841-a603-533536a6f03b",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "6399cccd-dced-4618-890c-c086e44d04fc",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "f8932934-aed5-4fec-b199-5115591d49cc"
+            },
+            {
+              "id": "b227714c-c7ab-4abe-abd2-ab5e7c634e6c",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "55b61999-97c6-4d06-ac86-4fb993d6dac0",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "a0211ef3-cf29-483d-bb56-206c07a09423"
+            },
+            {
+              "id": "6bf9be88-7cad-44dc-95cc-4c33d4e4ae7a",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "2b7efdf8-dd29-405c-9699-037b24ef63d1",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "623c85fa-79fd-46e9-980f-82a31f0e243c"
+            },
+            {
+              "id": "2fba10d1-8763-4096-849d-4d04032e48c6",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "49525525-d977-45b2-8c38-a770b794f9cc",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "b1368a90-8dd6-4870-be9c-a4a5d1964f14"
+            },
+            {
+              "id": "bea94305-6afd-4c56-ae1f-47873999533a",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "d1687922-b41e-48d2-aa8e-bdc7ffb655ca",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "c609cd7f-a22d-4f68-8410-b6cf7165120f"
+            },
+            {
+              "id": "ad504502-33e6-4b31-bf19-c981d4fc4319",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "bec489d3-3f6c-48e6-aa65-9fe70c59e5ee",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "dafd0a5a-cf55-4370-8283-316d579f470f"
+            },
+            {
+              "id": "95aada20-beb1-4a7e-bae0-b8b1902fc027",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "d365308c-a835-41ce-b48e-120a720d9e03",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "97008c57-9296-4d23-a2c0-b1d58661dff2"
+            },
+            {
+              "id": "8326ab49-206f-4072-9544-630a78752b46",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "6f3e26ba-b6c1-4ef8-8254-28a0f72792f1",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "18238960-b3a7-4413-9315-e2b22fae71d9"
+            },
+            {
+              "id": "62ff14f3-cf56-41e9-8e44-8a79a591ae2e",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "f594ce6f-f8f4-4521-bd97-93fad5180a09",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "f47fab97-a0a7-4074-b238-da8f87593be6"
+            },
+            {
+              "id": "f2a3477f-25dc-4330-b06c-af107b790efe",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "4cbae494-589b-484d-9505-57fc7387db7f",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "62ca405b-5d23-4082-bef3-06602c624bcb"
+            },
+            {
+              "id": "b13b8631-872d-4765-a33d-0adec81afa4e",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "41805a8b-8a32-442c-89c3-c678078a707b",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "0d3685d4-ce8c-45c9-954a-759a20c24483"
+            },
+            {
+              "id": "082014b0-28e2-4412-8bf9-ad6c497c3bc0",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "a4fca08c-e905-41dc-99ae-1696232b6c01",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "e26df789-cccf-44c4-a205-7db8cca06f3b"
+            },
+            {
+              "id": "479ca9c5-c91b-4c82-a7ab-425bd952ad92",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "204ff6aa-e724-4a29-b0da-4add609d24c9",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "bd8fe480-9e3a-47c6-995d-a4bd95ac5955"
+            },
+            {
+              "id": "939519b6-12f3-4531-baa2-c6e673e27dba",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "cb24d0d3-c607-42c1-aa41-369ca1dbcd3a",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "a8b449b3-2fbd-4eb2-af82-e16509f050de"
+            },
+            {
+              "id": "f563c822-8abd-44f4-b13c-364d76b8cead",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "a29c3059-f39f-4337-b7bc-7af66407fe0e",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "a347a08e-acd0-41be-b8da-316f1c729fb4"
+            },
+            {
+              "id": "f610fa0f-102e-4582-9ebd-7af166288448",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "3c048df8-54c6-49bd-a8df-ce412314ba0e",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "3542f585-cfb4-46d4-b19d-d70d75e202d5"
+            },
+            {
+              "id": "12a04721-491e-439a-81ba-c151d7ccb8ff",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "5c83bcd8-acda-4f44-9954-de8997b80e23",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "0e800805-6872-40ce-96fb-9d474bc5d1dd"
+            },
+            {
+              "id": "40a80de0-dc83-4525-a03c-b97961178a3f",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "26b7359f-15bd-44cf-8f30-91ee725dca34",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "1d9dd6de-7bf9-4b87-8542-03d613880303"
+            },
+            {
+              "id": "d492f2fe-3e03-436c-9476-5e3eb373e7dd",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "e207eb94-562a-454b-9024-dfc56ddcd98e",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "4332a61f-9cbd-4107-ad5e-6d6e71d970c1"
+            },
+            {
+              "id": "a8ee6188-fb9c-4878-86e5-893cbe860c6e",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "e3d626d2-bcc7-45fc-bf48-a7f1bf86c264",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "4ef9873c-829b-4c13-b5ad-dc82dde566c8"
+            },
+            {
+              "id": "47c94a58-fddd-4ba3-8c62-484704744593",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "26466615-b16a-4f82-a5d7-440091bd08d9",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "4655566d-06ca-44ce-80c0-20ae7818e1ab"
+            },
+            {
+              "id": "c984f934-c862-4622-ac26-5f7cea687a67",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "913c9d67-868f-4a51-aa2e-c8dedd63f3d1",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "d9c6830c-f8d8-4538-ac8c-de1fb084ed0e"
+            },
+            {
+              "id": "cddbfce0-bb8f-4e2f-8675-bb30958012a2",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "bb2bec32-6b00-4bb6-b510-71ce9f401d45",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "ddb06656-802d-46dc-9fb9-45cbb1967c16"
+            },
+            {
+              "id": "db359d94-f399-4513-ba1b-e6499fc86ec1",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "2b6b641f-b0c7-4a4d-8519-2109d52c56e8",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "20501e47-bebf-41d3-bf13-2c4b59452c08"
+            },
+            {
+              "id": "d296665f-8240-43f9-a594-49842fe05ee1",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "8e7d54b6-f7fc-4b1f-a2c4-8f8c525a3af4",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "c0593802-1af3-482d-8abf-4b2df4887ddf"
+            },
+            {
+              "id": "3e73bc57-ca6d-4679-9ac7-8b0920b8902c",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "ec928fe7-0cc2-44b9-be11-48cd92f70e54",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "de92143e-2371-441b-b943-84036767530e"
+            },
+            {
+              "id": "d28e7429-e0f1-4802-950c-59f241fb24df",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "a6fc8916-5384-4987-8a23-8958989e179f",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "3c910565-d4ed-410b-b1f4-ce43d4dfc79f"
+            },
+            {
+              "id": "918fccaf-86e8-42fb-a2f1-a5793f4ea40f",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "c8efd206-9ae7-4002-a845-1dd3223e1902",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "d4da3c98-1f28-4ecd-9f9e-409dc2de0990"
+            },
+            {
+              "id": "c0adc87e-05df-43ef-9ea5-d427ed665534",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "708873f0-0823-440a-b5b1-de8a03fae3ee",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "1d89efee-fc65-4a6e-877b-03ba1b7da3b0"
+            },
+            {
+              "id": "1f95d8d4-db23-4a7d-ac3c-1fbfba34c4c0",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "9f9251f9-d8da-4348-80ec-de1ed86004c5",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "9e5376f9-8775-4b1d-a2a6-61da0d77ee15"
+            },
+            {
+              "id": "b89c6a10-e22b-4830-9c5c-66a55d6a5fa1",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "886a698a-b8d6-4189-867f-d618ea2dfedd",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "04ac2faa-1fba-43ec-8354-8e174a15f3dc"
+            },
+            {
+              "id": "86ba30f6-44d5-4a33-8ca3-39447b708296",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "3694f629-dd1b-4726-9cca-5cd38118765d",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "0dfe7753-1c5a-4e93-bf0c-765c7a277d6f"
+            },
+            {
+              "id": "31f5a35e-8748-4b28-b785-03cd80451fcc",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "d0bef0dd-7e48-4276-a3d9-99c5b61d1446",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "4ae80d2f-d5fe-400b-a1ae-335bf5d7d555"
+            },
+            {
+              "id": "f397ce08-5329-41aa-94cd-e2467d8f56a7",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "6772b128-3df3-4614-bc72-02db872e9ed7",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "e6f34e00-cca1-4a3f-ba10-33854f729df9"
+            },
+            {
+              "id": "35c67a77-0d45-448c-886a-ade5a8d6916a",
+              "event_type": "notification.email",
+              "payload": {
+                "body": {
+                  "body": "This is a test broadcast",
+                  "subject": "Automation test"
+                },
+                "user_id": "5ab15423-9a92-4ed7-9cb7-468c902cbc51",
+                "business_id": null
+              },
+              "dedupe_key": "notification.email",
+              "destination": "http://127.0.0.1:8570/notification/send",
+              "attempts": 0,
+              "scheduled_at": null,
+              "correlation_id": "5d2f0a8a-cca8-4467-9bc1-3a10d51ac2c5"
+            }
+          ]
+        },
+        "internal_businesses": {
+          "status": 200,
+          "body": [
+            {
+              "id": "942a458c-da6d-473c-85b3-2c1cdebed0a2",
+              "name": "Acme Traders",
+              "phone": "+260971000001",
+              "location": "Lusaka"
+            },
+            {
+              "id": "343217d3-f153-4cb9-b920-ca31bd357bbb",
+              "name": "Test MSME One",
+              "phone": "string",
+              "location": "lusaka"
+            },
+            {
+              "id": "bfcc5418-7beb-4cb3-9e3c-82527b316043",
+              "name": "Manual Seed Biz",
+              "phone": "+260971000005",
+              "location": "Lusaka"
+            },
+            {
+              "id": "cb9a68df-bb59-49ee-93bb-285ca14ea442",
+              "name": "Seed Business Ltd",
+              "phone": "+260971000007",
+              "location": null
+            },
+            {
+              "id": "89605265-d48b-4c6f-86f4-5382194cf491",
+              "name": "Seed Business Ltd",
+              "phone": "+260971000007",
+              "location": null
+            },
+            {
+              "id": "96445f6c-7dbd-42ec-bbd7-1f5d3203c0d1",
+              "name": "Seed Business Ltd",
+              "phone": "+260971000007",
+              "location": null
+            },
+            {
+              "id": "78155953-5ca3-47b8-a786-a3b977a140ae",
+              "name": "Seed Business bc7cb0cf",
+              "phone": "+260971065034",
+              "location": null
+            },
+            {
+              "id": "00607f9e-bf76-4528-9de5-80b8ffd37035",
+              "name": "Seed Business fb4fe5f6",
+              "phone": "+260971114105",
+              "location": null
+            },
+            {
+              "id": "c69e8826-7636-4d4a-9e65-0be0df3073f3",
+              "name": "Seed Business b06ee7f7",
+              "phone": "+260971959107",
+              "location": null
+            },
+            {
+              "id": "df976179-b4e1-49f4-bf8b-3b2761cb81f1",
+              "name": "Seed Business 809fbfcf",
+              "phone": "+260971635666",
+              "location": "Automation-Update"
+            },
+            {
+              "id": "2426c9f1-3699-46b9-ab7a-715c1b9027ab",
+              "name": "Seed Business 2a6e845b",
+              "phone": "+260971892767",
+              "location": null
+            },
+            {
+              "id": "1e6a390f-53d7-4059-bf7a-378b05d6e224",
+              "name": "Seed Business dfa71182",
+              "phone": "+260971680641",
+              "location": null
+            },
+            {
+              "id": "e9f204c2-c9a9-407a-801b-d953fd081b50",
+              "name": "Seed Business ebd34160",
+              "phone": "+260971568847",
+              "location": null
+            },
+            {
+              "id": "2e5e1dc0-7d9a-48a4-a5f0-17ac8de7682c",
+              "name": "Seed Business 17b57acb",
+              "phone": "+260971123649",
+              "location": "Automation-Update"
+            },
+            {
+              "id": "fb6fe175-2b58-4199-989d-254157430ac0",
+              "name": "Seed Business dc3d8376",
+              "phone": "+260971072363",
+              "location": "Automation-Update"
+            },
+            {
+              "id": "d108bf64-d64c-4734-8154-b970e863b9c0",
+              "name": "Seed Business f2c2d0a4",
+              "phone": "+260971719962",
+              "location": "Automation-Update"
+            },
+            {
+              "id": "a456a92e-d2aa-43d3-aeeb-b1cb61e426f7",
+              "name": "Seed Business 4251fd1d",
+              "phone": "+260971139233",
+              "location": "Automation-Update"
+            },
+            {
+              "id": "06416074-51e6-4cdc-bac4-ea3b1afbdcb2",
+              "name": "Seed Business ccb43968",
+              "phone": "+260971620863",
+              "location": "Automation-Update"
+            },
+            {
+              "id": "be711af7-e333-43ed-9559-07b9fab79fa9",
+              "name": "Seed Business 4a79d4ea",
+              "phone": "+260971789410",
+              "location": "Automation-Update"
+            },
+            {
+              "id": "522b2cdb-ea5c-4d5b-9ce6-25e781c642a9",
+              "name": "Seed Business 97eaf156",
+              "phone": "+260971872687",
+              "location": "Automation-Update"
+            },
+            {
+              "id": "feadc1cf-a262-4774-b8f0-9c7fbab5c2a7",
+              "name": "Seed Business 02453e62",
+              "phone": "+260971549811",
+              "location": "Automation-Update"
+            },
+            {
+              "id": "3b500376-0322-4963-b5c6-f15f97a70412",
+              "name": "Seed Business 43f8734c",
+              "phone": "+260971516934",
+              "location": "Automation-Update"
+            },
+            {
+              "id": "58ff5a02-33b8-44be-a0a6-9c98593597ea",
+              "name": "Seed Business 6cd64ed0",
+              "phone": "+260971261638",
+              "location": "Automation-Update"
+            },
+            {
+              "id": "f88ccae4-f348-472f-9772-96258269ffff",
+              "name": "Seed Business 3bbb4208",
+              "phone": "+260971638514",
+              "location": null
+            }
+          ]
+        },
+        "internal_affiliates": {
+          "status": 200,
+          "body": [
+            {
+              "id": "9e4490e6-304b-4dc8-a0a7-b6314b5e151f",
+              "name": "seed-aff-1e332ae5",
+              "phone": "+260971354773"
+            },
+            {
+              "id": "67686469-e6db-43b8-a035-a1febe94fbfc",
+              "name": "seed-aff",
+              "phone": "+260971000006"
+            },
+            {
+              "id": "1da6aedb-c358-48d6-a344-7392b960e2fd",
+              "name": "seed-aff-9ec126bd",
+              "phone": "+260971349135"
+            },
+            {
+              "id": "3696bbfa-6fe8-4293-9dc7-d149c3bbb9f7",
+              "name": "seed-aff-75e92609",
+              "phone": "+260971077706"
+            },
+            {
+              "id": "c6313097-6ee4-4f3d-b595-e66a110d2b10",
+              "name": "seed-aff-c2da15d5",
+              "phone": "+260971629057"
+            },
+            {
+              "id": "9de3dfe1-cd5d-47e1-8b65-efc39acbf981",
+              "name": "seed-aff-1f71b67b",
+              "phone": "+260971670465"
+            },
+            {
+              "id": "33c50ef2-df84-4bfd-9552-fb3763169368",
+              "name": "seed-aff-3ecb6b7d",
+              "phone": "+260971764452"
+            },
+            {
+              "id": "18f8ae19-9d80-4762-af02-3a19d2f6a6fb",
+              "name": "seed-aff-91a34a17",
+              "phone": "+260971539426"
+            },
+            {
+              "id": "088f4df6-d4d5-4d81-a8cb-1e8112550e88",
+              "name": "seed-aff-5838cf51",
+              "phone": "+260971840338"
+            },
+            {
+              "id": "d045d2dd-c0eb-4d3d-9ec1-60fe14376b29",
+              "name": "seed-aff-8e589892",
+              "phone": "+260971396083"
+            },
+            {
+              "id": "fb20000d-94ee-478a-aa23-7be70a333b64",
+              "name": "seed-aff-5b1b8421",
+              "phone": "+260971867744"
+            },
+            {
+              "id": "1e23b319-7698-462a-944d-0972cc11b86d",
+              "name": "seed-aff-22a03a09",
+              "phone": "+260971776046"
+            },
+            {
+              "id": "a6f14a8a-c6e4-41ff-a5b1-6b7d4a954bc0",
+              "name": "seed-aff-a30d345c",
+              "phone": "+260971492264"
+            },
+            {
+              "id": "4a0fee29-5983-4c83-8693-77f8b092d0c4",
+              "name": "seed-aff-79c14a54",
+              "phone": "+260971972524"
+            },
+            {
+              "id": "1b16ee15-ddb9-4293-aedb-d5c8c6437ca2",
+              "name": "seed-aff-9d84fe74",
+              "phone": "+260971066268"
+            }
+          ]
+        }
+      }
+    },
+    "third_group_output.json": {
+      "path": "C:\\Users\\SMART PC\\Documents\\NTheemba\\services\\api-services\\soft-launch\\services\\msme-engine\\src\\scripts\\third_group_output.json",
+      "mtime": 1772025327.404773,
+      "data": {
+        "seed_file": "src\\scripts\\seed_output.json",
+        "login": {
+          "status": 200,
+          "body": {
+            "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZmZpbGlhdGVfaWQiOm51bGwsImJ1c2luZXNzX2lkIjpudWxsLCJleHAiOjE3NzIwMjg5MTMsImlhdCI6MTc3MjAyNTMxMywicm9sZSI6ImRlZmF1bHQiLCJzdWIiOiJlYWM2MjI2ZC00ODRlLTQxNzQtOTY1OS1lMjM0ZDA5NjllNWMiLCJ0eXAiOiJhY2Nlc3MifQ.X5E0c0_OmkBvwzLMzXxcPgxZ1nliaXQoFqQGHUqTS78",
+            "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZmZpbGlhdGVfaWQiOm51bGwsImJ1c2luZXNzX2lkIjpudWxsLCJleHAiOjE3NzQ2MTczMTMsImlhdCI6MTc3MjAyNTMxMywianRpIjoiVzdaVXgtSnV2VHBIY3ktVyIsInJvbGUiOiJkZWZhdWx0Iiwic3ViIjoiZWFjNjIyNmQtNDg0ZS00MTc0LTk2NTktZTIzNGQwOTY5ZTVjIiwidHlwIjoicmVmcmVzaCJ9.fYyZ0DB6_emWbqUfj1hO6QgNPJ1jpgGKXIr0X3Mi008",
+            "token_type": "bearer"
+          }
+        },
+        "auth_me": {
+          "status": 200,
+          "body": {
+            "id": "eac6226d-484e-4174-9659-e234d0969e5c",
+            "username": "seeduser_9cdfb2c7",
+            "email": "seed-user-9cdfb2c7@example.com",
+            "phone": "+260971132702",
+            "role": "default",
+            "business_id": null,
+            "affiliate_id": null,
+            "is_active": true,
+            "signed_terms": false,
+            "created_at": "2026-02-25T13:15:07.886936Z",
+            "updated_at": "2026-02-25T13:15:07.886936Z"
+          }
+        },
+        "service_token_business": {
+          "status": 404,
+          "body": {
+            "detail": "user_not_found"
+          }
+        },
+        "service_token_user": {
+          "status": 200,
+          "body": {
+            "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZmZpbGlhdGVfaWQiOm51bGwsImJ1c2luZXNzX2lkIjpudWxsLCJleHAiOjE3NzIwMjg5MTMsImlhdCI6MTc3MjAyNTMxMywicm9sZSI6ImRlZmF1bHQiLCJzdWIiOiJlYWM2MjI2ZC00ODRlLTQxNzQtOTY1OS1lMjM0ZDA5NjllNWMiLCJ0eXAiOiJhY2Nlc3MifQ.X5E0c0_OmkBvwzLMzXxcPgxZ1nliaXQoFqQGHUqTS78",
+            "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZmZpbGlhdGVfaWQiOm51bGwsImJ1c2luZXNzX2lkIjpudWxsLCJleHAiOjE3NzQ2MTczMTMsImlhdCI6MTc3MjAyNTMxMywianRpIjoiZ1NuZ3NFeTlvVnVRWXNjMSIsInJvbGUiOiJkZWZhdWx0Iiwic3ViIjoiZWFjNjIyNmQtNDg0ZS00MTc0LTk2NTktZTIzNGQwOTY5ZTVjIiwidHlwIjoicmVmcmVzaCJ9.Y0L2OnB3JfnCGa27DAmUxBdg0YL7ncPUAxwumHTczEk",
+            "token_type": "bearer"
+          }
+        },
+        "auth_phone": {
+          "status": 200,
+          "body": {
+            "user": {
+              "id": "eac6226d-484e-4174-9659-e234d0969e5c",
+              "username": "seeduser_9cdfb2c7",
+              "email": "seed-user-9cdfb2c7@example.com",
+              "phone": "+260971132702",
+              "role": "default",
+              "business_id": null,
+              "affiliate_id": null,
+              "is_active": true,
+              "signed_terms": false,
+              "created_at": "2026-02-25T13:15:07.886936Z",
+              "updated_at": "2026-02-25T13:15:07.886936Z"
+            },
+            "business": null
+          }
+        },
+        "business_get": {
+          "status": 200,
+          "body": {
+            "id": "f88ccae4-f348-472f-9772-96258269ffff",
+            "name": "Seed Business 3bbb4208",
+            "owner_id": "86df2262-c6cc-4f2e-927e-21578b181281",
+            "location": null,
+            "category": null,
+            "logo_url": null,
+            "affiliate_id": null,
+            "referred_by_msme_code": null,
+            "subscription_plan": null,
+            "subscription_expiry": null,
+            "delivery_locations": null,
+            "tags": null,
+            "is_active": true,
+            "created_at": "2026-02-25T13:15:10.639164Z",
+            "updated_at": "2026-02-25T13:15:10.639164Z"
+          }
+        },
+        "business_put": {
+          "status": 200,
+          "body": {
+            "id": "f88ccae4-f348-472f-9772-96258269ffff",
+            "name": "Seed Business 3bbb4208",
+            "owner_id": "86df2262-c6cc-4f2e-927e-21578b181281",
+            "location": "Automation-Update",
+            "category": null,
+            "logo_url": null,
+            "affiliate_id": null,
+            "referred_by_msme_code": null,
+            "subscription_plan": null,
+            "subscription_expiry": null,
+            "delivery_locations": null,
+            "tags": null,
+            "is_active": true,
+            "created_at": "2026-02-25T13:15:10.639164Z",
+            "updated_at": "2026-02-25T13:15:14.038897Z"
+          }
+        },
+        "business_subscription": {
+          "status": 404,
+          "body": {
+            "detail": "subscription_not_found"
+          }
+        },
+        "business_entitlements": {
+          "status": 200,
+          "body": {
+            "business_id": "f88ccae4-f348-472f-9772-96258269ffff",
+            "plan": "free",
+            "subscription_expiry": null,
+            "is_active": true,
+            "bot_instances_enabled": true,
+            "affiliate_promo_links_enabled": false,
+            "transaction_fee_pct": 0.07
+          }
+        },
+        "business_metadata": {
+          "status": 200,
+          "body": {
+            "business_id": "f88ccae4-f348-472f-9772-96258269ffff",
+            "name": "Seed Business 3bbb4208",
+            "location": "Automation-Update",
+            "category": null,
+            "tags": null,
+            "delivery_locations": null,
+            "is_active": true
+          }
+        },
+        "events_business": {
+          "status": 200,
+          "body": []
+        },
+        "business_by_phone": {
+          "status": 404,
+          "body": {
+            "detail": "business_not_found_for_phone"
+          }
+        },
+        "notification_user": {
+          "status": 502,
+          "body": {
+            "detail": "notification_service_unreachable"
+          }
+        },
+        "delivery_locations_put": {
+          "status": 403,
+          "body": {
+            "detail": "not_authorized"
+          }
+        },
+        "delivery_locations_get": {
+          "status": 200,
+          "body": {}
+        },
+        "business_reindex": {
+          "status": 200,
+          "body": {
+            "status": "ok",
+            "count": 24
+          }
+        },
+        "outbox_ack": {
+          "status": 200,
+          "body": {
+            "acked": []
+          }
+        },
+        "notification_broadcast_all": {
+          "status": 500,
+          "body": {
+            "detail": "commit_failed"
+          }
+        },
+        "notification_broadcast_role_admin": {
+          "status": 200,
+          "body": {
+            "role": "admin",
+            "count": 0,
+            "ids": []
+          }
+        },
+        "notification_broadcast_user": {
+          "status": 500,
+          "body": {
+            "detail": "emit_failed"
+          }
+        },
+        "delete_user": {
+          "status": 200,
+          "body": {
+            "status": "ok"
+          }
+        },
+        "delete_business": {
+          "status": 200,
+          "body": {
+            "status": "ok"
+          }
+        }
+      }
+    }
+  },
+  "logs": {}
+}

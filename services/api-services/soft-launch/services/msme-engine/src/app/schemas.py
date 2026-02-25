@@ -95,7 +95,7 @@ class BusinessRegister(BaseModel):
     category: Optional[str] = None
     logo_url: Optional[str] = None
 
-    affiliate_code: Optional[str] = None
+    affiliate_id: Optional[str] = None
     referred_by_msme_code: Optional[str] = None
 
     subscription_plan: Optional[str] = None
@@ -111,7 +111,7 @@ class BusinessOut(BaseModel):
     location: Optional[str]
     category: Optional[str]
     logo_url: Optional[str]
-    affiliate_code: Optional[str]
+    affiliate_id: Optional[str]
     referred_by_msme_code: Optional[str]
     subscription_plan: Optional[str]
     subscription_expiry: Optional[datetime]
@@ -132,7 +132,7 @@ class BusinessUpdate(BaseModel):
     location: Optional[str] = None
     category: Optional[str] = None
     logo_url: Optional[str] = None
-    affiliate_code: Optional[str] = None
+    affiliate_id: Optional[str] = None
     referred_by_msme_code: Optional[str] = None
     delivery_locations: Optional[dict[str, dict[str, Any]]] = None
     tags: Optional[list[str]] = None

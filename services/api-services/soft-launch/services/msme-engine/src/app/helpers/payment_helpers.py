@@ -64,9 +64,9 @@ async def emit_subscription_deposit_request(
     # Also enqueue an Outbox row so the local outbox dispatcher can post
     # the deposit initiation to Payment-Revenue. Best-effort.
     try:
-        from app.helpers.outbox.outbox import create_outbox_row
+        from src.app.helpers.outbox.outbox import create_outbox_row
         from src.app.config import get_payment_revenue_base_url, get_pg_schema
-        from libs.outbox.schemas import DepositRequested
+        from src.app.helpers.outbox.schemas import DepositRequested
 
         dest_base = (get_payment_revenue_base_url() or "http://127.0.0.1:8590").rstrip('/')
         target = f"{dest_base}/pawapay/deposits/initiate"
@@ -111,8 +111,9 @@ async def emit_subscription_deposit_request(
         try:
             from src.app.models import OutboxEvent, utcnow as _utcnow
 
+            # OutboxEvent.id is now a string column; ensure we pass a string
             oe = OutboxEvent(
-                id=out_id,
+                id=str(out_id),
                 event_type="deposit_requested",
                 payload=pawapay_model.model_dump(),
                 target=target,

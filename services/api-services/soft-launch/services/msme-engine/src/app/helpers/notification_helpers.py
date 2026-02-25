@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import uuid
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.config import get_notification_base_url
+
+from src.app.helpers.outbox.outbox import emit_notification
+
+logger = logging.getLogger("msme_engine.notification")
 
 
 async def emit_notification_outbox(
@@ -18,30 +23,20 @@ async def emit_notification_outbox(
 
     Channel should be 'whatsapp' or 'email'. Returns the outbox id.
     """
-    from app.helpers.outbox.outbox import create_outbox_row
-    from src.app.config import get_pg_schema
-
     base = (get_notification_base_url() or "http://notification:8570").rstrip("/")
     target = f"{base}/notification/send"
 
-    event_type = f"notification.{channel}"
-    out_id = str(uuid.uuid4())
+    logger.info("notification_outbox_prepare", extra={"topic": f"notification.{channel}", "destination": target})
 
-    schema = get_pg_schema()
-    table = f"{schema}.outbox_events"
-    await create_outbox_row(
+    out_id = await emit_notification(
         db,
-        event_type,
-        {
-            "user_id": user_id,
-            "business_id": business_id,
-            "channel": channel,
-            "payload": payload or {},
-        },
-        id=out_id,
-        destination=target,
-        table=table,
+        channel,
+        user_id=user_id,
+        business_id=business_id,
+        payload={"destination": target, **(payload or {})},
+        dedupe_key=dedupe_key,
+        producer="notification-emitter",
     )
 
-    await db.commit()
-    return out_id
+    logger.info("notification_outbox_written", extra={"out_id": str(out_id)})
+    return str(out_id)

@@ -67,7 +67,7 @@ Example payload (create new owner):
  "location": "Lusaka",
  "category": "Retail",
  "logo_url": "https://example.com/logos/acme.png",
- "affiliate_code": "ACME2026",
+ "affiliate_id": "ACME2026",
  "referred_by_msme_code": null,
  "subscription_plan": "free",
  "delivery_locations": {"zones": ["Lusaka Central", "Lusaka North"]},

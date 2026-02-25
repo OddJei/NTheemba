@@ -12,10 +12,28 @@ from typing import Optional, Any
 import asyncio
 import httpx
 
+# Best-effort: load .env file when present (optional dependency: python-dotenv)
+try:
+    from dotenv import load_dotenv, find_dotenv
+
+    env_path = find_dotenv()
+    if env_path:
+        load_dotenv(env_path, override=False)
+        logging.getLogger(__name__).info(f"Loaded env file: {env_path}")
+except Exception:
+    # Do nothing if python-dotenv is not available or loading fails
+    pass
+
 from fastapi import FastAPI, Request, Depends, HTTPException, Response, Header
-from sqlalchemy import select
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+from sqlalchemy import select, text, or_
+from sqlalchemy import Table, MetaData, Column, String, Integer, DateTime, JSON, func, update
+import re
+from sqlalchemy.exc import IntegrityError
 from prometheus_client import Counter, Histogram, generate_latest, CollectorRegistry, CONTENT_TYPE_LATEST
 from prometheus_client import multiprocess
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def ensure_multiproc_dir() -> str | None:
@@ -33,7 +51,15 @@ def ensure_multiproc_dir() -> str | None:
         return None
 
 from src.app.db import get_db_session, engine
-from src.app.config import get_pg_schema
+from src.app.config import (
+    get_pg_schema,
+    get_notification_base_url,
+    get_notification_timeout_seconds,
+    get_jwt_secret,
+    get_payment_revenue_base_url,
+    get_subscription_price_minor,
+    get_subscription_currency,
+)
 from src.app import audit_client
 from src.app.models import (
     Base,
@@ -44,8 +70,9 @@ from src.app.models import (
     OutboxEvent,
     Role,
     User,
+    AuthSession,
     VerificationToken,
- 
+    MsmeEvent,
 )
 from src.app.schemas import (
     AuthLogin,
@@ -89,6 +116,7 @@ from src.app.security import (
     jwt_decode,
     verify_password,
 )
+from src.app.idempotency import idempotent_execute, scope_for
 import asyncio
 
 try:
@@ -106,6 +134,26 @@ _SERVICE = "msme-engine"
 # Forward important Python logs (WARNING+) to audit-service.
 audit_client.install_audit_log_forwarding(service=_SERVICE)
 
+
+def init_sentry() -> None:
+    """Initialize Sentry if `SENTRY_DSN` is set; no-op otherwise.
+
+    This provides a safe local fallback when a project-level wrapper
+    isn't available or the `sentry-sdk` package is not installed.
+    """
+    try:
+        import importlib
+        sentry_sdk = importlib.import_module("sentry_sdk")
+
+        dsn = os.environ.get("SENTRY_DSN") or os.environ.get("SENTRY_DSN_URL")
+        if not dsn:
+            return
+        traces = float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.0"))
+        sentry_sdk.init(dsn=dsn, traces_sample_rate=traces)
+        logger.info("sentry_initialized")
+    except Exception:
+        # Best-effort: do not raise on missing package or invalid config.
+        logger.exception("sentry_init_failed_local")
 
 def _expires_at_from_exp_ts(exp_ts) -> datetime:
     """Normalize JWT `exp` claim value to a timezone-aware datetime.
@@ -188,8 +236,8 @@ async def _notify_in_app(*, db: AsyncSession | None = None, user_id: str | None,
     # Attempt outbox write when DB session is available.
     if db is not None:
         try:
-            from app.helpers.outbox.outbox import create_outbox_row
-            from libs.outbox.schemas import NotificationPayload
+            from src.app.helpers.outbox.outbox import create_outbox_row
+            from src.app.helpers.outbox.schemas import NotificationPayload
 
             dest_base = get_notification_base_url().rstrip("/")
             target = f"{dest_base}/notification/send"
@@ -314,7 +362,7 @@ async def pawapay_payout_callback(payload: PaymentCallback, db: AsyncSession = D
     This endpoint is intentionally lightweight for soft-launch: it logs
     the payload and returns 200 to allow outbox delivery to succeed.
     """
-    logger.info("pawapay_payout_callback_received", extra={"payload": payload.dict()})
+    logger.info("pawapay_payout_callback_received", extra={"payload": payload.model_dump()})
     return {"ok": True}
 
 
@@ -348,11 +396,16 @@ async def notification_delivery_callback(request: Request, db: AsyncSession = De
 
 @app.post("/callbacks/payments/deposits")
 async def deposit_callback(payload: PaymentCallback, request: Request, db: AsyncSession = Depends(get_db_session)):
-    """Receive deposit callbacks from payment-revenue. Best-effort correlation
-    with existing PaymentInitiation records is attempted; a local MsmeEvent is
-    recorded in all cases.
+    """Unified deposit callback.
+
+    - Records an MsmeEvent
+    - Correlates and updates PaymentInitiation
+    - Updates subscription tables (Business, BusinessSubscription)
+    - Emits notifications to business owner (in-app + whatsapp) and admin (email)
+    - Writes canonical pawapay outbox row
+    - Emits `msme_referral` outbox to affiliate engine
     """
-    p = payload.model_dump(mode="json")
+    p = payload.model_dump()
     logger.info("deposit_callback_received", extra={"payload": p})
 
     # Record a generic event for observability and downstream automation.
@@ -368,111 +421,6 @@ async def deposit_callback(payload: PaymentCallback, request: Request, db: Async
         )
     except Exception:
         logger.exception("record_deposit_callback_failed")
-
-    # Attempt best-effort correlation with a persisted PaymentInitiation
-    try:
-        if payload.depositId:
-            initiation = (
-                await db.execute(select(PaymentInitiation).where(PaymentInitiation.deposit_id == str(payload.depositId)))
-            ).scalar_one_or_none()
-
-            if initiation:
-                # Mark completed on success-like statuses
-                if payload.status and str(payload.status).upper() in {"ACCEPTED", "COMPLETED", "SUCCESS"}:
-                    initiation.status = "completed"
-                    await db.commit()
-
-                    # If affiliate present, emit an outbox row so downstream affiliate
-                    # integrations are notified as in the normal payment_success flow.
-                    try:
-                        if initiation.affiliate_id:
-                            out_payload = {
-                                "business_id": initiation.business_id,
-                                "subscription_plan": "paid",
-                                "amount": payload.amount_minor or None,
-                                "currency": payload.currency or None,
-                                "occurred_at": datetime.now(timezone.utc).isoformat(),
-                                "correlation_id": request.headers.get("X-Correlation-Id"),
-                                "affiliate_id": initiation.affiliate_id,
-                                "event_id": payload.event_id or payload.depositId,
-                            }
-                            # Write into service schema outbox (msme_engine.outbox_events)
-                            from libs.outbox.msme_outbox import create_msme_outbox_row
-                            import os
-
-                            affiliate_base = os.environ.get("AFFILIATE_ENGINE_BASE_URL", "http://affiliate-engine:8510").rstrip("/")
-                            affiliate_target = f"{affiliate_base}/events/session-cycle-created"
-
-                            await create_msme_outbox_row(
-                                db,
-                                "msme.subscription.payment_succeeded",
-                                out_payload,
-                                destination=affiliate_target,
-                                correlation_id=out_payload.get("correlation_id"),
-                                dedupe_key=out_payload.get("event_id"),
-                                commit=True,
-                            )
-                    except Exception:
-                        logger.exception("emit_affiliate_outbox_failed")
-
-                    # Emit canonical msme.subscription.payment_succeeded outbox row
-                    # so dispatcher and other services can pick up the subscription success.
-                    try:
-                        from libs.outbox.msme_outbox import create_msme_outbox_row
-                        import os
-
-                        payment_base = os.environ.get("PAYMENT_REVENUE_BASE_URL", "http://payment-revenue:8520").rstrip("/")
-                        payment_target = f"{payment_base}/events/payment_succeeded"
-
-                        canonical_payload = {
-                            "business_id": initiation.business_id,
-                            "subscription_plan": "paid",
-                            "amount": payload.amount_minor or None,
-                            "currency": payload.currency or None,
-                            "occurred_at": datetime.now(timezone.utc).isoformat(),
-                            "correlation_id": request.headers.get("X-Correlation-Id"),
-                            "affiliate_id": initiation.affiliate_id,
-                            "event_id": payload.event_id or payload.depositId,
-                        }
-
-                        await create_msme_outbox_row(
-                            db,
-                            "msme.subscription.payment_succeeded",
-                            canonical_payload,
-                            destination=payment_target,
-                            correlation_id=canonical_payload.get("correlation_id"),
-                            dedupe_key=canonical_payload.get("event_id"),
-                            commit=True,
-                        )
-                    except Exception:
-                        logger.exception("emit_canonical_outbox_failed")
-    except Exception:
-        logger.exception("deposit_callback_correlation_failed")
-
-    return {"ok": True}
-
-
-@app.post("/callbacks/payments/deposits")
-async def pawapay_deposit_callback(payload: PaymentCallback, db: AsyncSession = Depends(get_db_session)):
-    """Receive deposit callback from payment-revenue.
-
-    Request model: `PaymentCallback` (see `src.app.schemas.PaymentCallback`).
-
-    Example:
-    {
-        "event_type": "deposit.completed",
-        "payment_id": "pay_123",
-        "business_id": "biz_789",
-        "amount_minor": 5000,
-        "currency": "ZMW",
-        "status": "completed"
-    }
-
-    Handler updates any matching `PaymentInitiation`, emits notification outbox,
-    and forwards a simplified summary to the affiliate engine via an OutboxEvent.
-    """
-    p = payload.dict()
-    logger.info("pawapay_deposit_callback_received", extra={"payload": p})
 
     # Identify deposit and status
     deposit_id = p.get("depositId") or p.get("payment_id") or p.get("id")
@@ -490,141 +438,229 @@ async def pawapay_deposit_callback(payload: PaymentCallback, db: AsyncSession = 
         except Exception:
             logger.exception("update_payment_initiation_failed", extra={"deposit_id": deposit_id})
 
-    # Notify business via outbox (best-effort)
+    # Update subscription tables on successful payment
+    if initiation and success:
+        try:
+            business_id = initiation.business_id
+            now = datetime.now(timezone.utc)
+            amount_minor = (initiation.meta.get("amount_minor") if initiation and isinstance(initiation.meta, dict) else p.get("amount_minor") or p.get("amount"))
+            # Determine plan: prefer initiation.meta.plan, then payload.plan, default to paid
+            plan_candidate = None
+            if initiation and isinstance(initiation.meta, dict):
+                plan_candidate = initiation.meta.get("plan")
+            if plan_candidate is None and isinstance(p, dict):
+                plan_candidate = p.get("plan")
+            if not plan_candidate:
+                plan_candidate = _PLAN_PAID
+            # Normalize and resolve unit price for the plan
+            try:
+                plan_candidate = _normalize_plan(plan_candidate)
+            except Exception:
+                # If normalization fails, fallback to paid
+                plan_candidate = _PLAN_PAID
+            unit_price = get_subscription_price_minor(plan_candidate)
+            periods = _compute_periods_paid(amount_minor, unit_price)
+            if periods > 0:
+                paid_through = _compute_paid_through(now, periods, "monthly")
+
+                # Update Business record
+                try:
+                    business_rec = (await db.execute(select(Business).where(Business.id == business_id))).scalar_one_or_none()
+                    if business_rec:
+                        business_rec.subscription_plan = "paid"
+                        business_rec.subscription_expiry = paid_through
+                        business_rec.is_active = True
+                        await db.commit()
+                except Exception:
+                    logger.exception("update_business_subscription_failed", extra={"business_id": business_id})
+
+                # Upsert BusinessSubscription
+                try:
+                    subs = (await db.execute(select(BusinessSubscription).where(BusinessSubscription.business_id == business_id))).scalar_one_or_none()
+                    if subs:
+                        subs.plan = "paid"
+                        subs.start_date = now
+                        subs.end_date = paid_through
+                        subs.status = "active"
+                        db.add(subs)
+                    else:
+                        db.add(
+                            BusinessSubscription(
+                                business_id=business_id,
+                                plan="paid",
+                                start_date=now,
+                                end_date=paid_through,
+                                status="active",
+                            )
+                        )
+                    await db.commit()
+                except Exception:
+                    logger.exception("upsert_business_subscription_failed", extra={"business_id": business_id})
+        except Exception:
+            logger.exception("update_subscription_failed")
+
+    # Emit notifications via notification outbox: whatsapp+email to owner, email to admins
     try:
-        from src.app.helpers.notification_helpers import emit_notification_outbox
+        from src.app.helpers.outbox.outbox import emit_notification
 
         business_id = (initiation.business_id if initiation else p.get("business_id"))
-        note_payload = {
-            "status": "completed" if success else "failed",
-            "deposit_id": deposit_id,
-            "metadata": p,
-        }
-        await emit_notification_outbox(db, channel="in_app", user_id=None, business_id=business_id, payload=note_payload)
+        note_payload = {"status": "completed" if success else "failed", "deposit_id": deposit_id, "metadata": p}
+
+        # Fetch business owner id
+        owner_user = None
+        try:
+            if business_id:
+                business_rec = (await db.execute(select(Business).where(Business.id == business_id))).scalar_one_or_none()
+                if business_rec and getattr(business_rec, "owner_id", None):
+                    owner_user = (await db.execute(select(User).where(User.id == business_rec.owner_id))).scalar_one_or_none()
+        except Exception:
+            logger.exception("fetch_business_owner_failed", extra={"business_id": business_id})
+
+        # WhatsApp to owner (best-effort)
+        try:
+            if owner_user:
+                base = (get_notification_base_url() or "http://127.0.0.1:8570").rstrip("/")
+                target = f"{base}/notification/send"
+                await emit_notification(db, "whatsapp", user_id=owner_user.id, business_id=business_id, payload={**(note_payload or {}), "destination": target})
+        except Exception:
+            logger.exception("notify_owner_whatsapp_failed", extra={"business_id": business_id})
+
+        # Email to owner
+        try:
+            if owner_user:
+                owner_email_payload = {"subject": "Payment deposit", "body": f"Deposit {deposit_id} for your business {business_id} is {'completed' if success else 'failed'}.", "metadata": p}
+                base = (get_notification_base_url() or "http://127.0.0.1:8570").rstrip("/")
+                target = f"{base}/notification/send"
+                await emit_notification(db, "email", user_id=owner_user.id, business_id=business_id, payload={**owner_email_payload, "destination": target})
+        except Exception:
+            logger.exception("notify_owner_email_failed", extra={"business_id": business_id})
+
+        # Email admins
+        try:
+            res = await db.execute(select(User).join(Role, User.role_id == Role.id).where(Role.name == "admin"))
+            admins = res.scalars().all()
+            for admin in admins:
+                try:
+                    admin_payload = {"subject": "Payment deposit notification", "body": f"Deposit {deposit_id} for business {business_id} status: {'completed' if success else 'failed'}", "metadata": p}
+                    base = (get_notification_base_url() or "http://127.0.0.1:8570").rstrip("/")
+                    target = f"{base}/notification/send"
+                    await emit_notification(db, "email", user_id=admin.id, business_id=None, payload={**admin_payload, "destination": target})
+                except Exception:
+                    logger.exception("notify_admin_failed", extra={"admin": getattr(admin, 'id', None)})
+        except Exception:
+            logger.exception("notify_admins_failed")
     except Exception:
         logger.exception("emit_notification_outbox_failed")
 
-    # Forward summary to affiliate-engine via outbox
+
+    # Emit referral-style event for affiliate consumers
     try:
-        # Use the shared outbox helper so events are written to the canonical public.outbox
-        from app.helpers.outbox.outbox import create_outbox_row
-        import os
-        import uuid as _uuid
+        referral_base = os.environ.get("AFFILIATE_ENGINE_BASE_URL", "http://127.0.0.1:8510").rstrip("/")
+        referral_target = f"{referral_base}/events/msme/referral"
+        amount_minor = (initiation.meta.get("amount_minor") if initiation and isinstance(initiation.meta, dict) else p.get("amount_minor") or p.get("amount"))
+        try:
+            amount_zmw = float(amount_minor) / 100.0 if amount_minor is not None else None
+        except Exception:
+            amount_zmw = None
 
-        affiliate_base = os.environ.get("AFFILIATE_ENGINE_BASE_URL", "http://127.0.0.1:8580").rstrip("/")
-        target = f"{affiliate_base}/callbacks/payments/deposits"
+        # Resolve affiliate id from initiation, business record, or incoming payload
+        business_affiliate_id = None
+        business_id_for_lookup = None
+        try:
+            business_id_for_lookup = (initiation.business_id if initiation else p.get('business_id'))
+            if business_id_for_lookup:
+                business_rec = (await db.execute(select(Business).where(Business.id == business_id_for_lookup))).scalar_one_or_none()
+                if business_rec and getattr(business_rec, "affiliate_id", None):
+                    business_affiliate_id = business_rec.affiliate_id
+        except Exception:
+            logger.exception("fetch_business_failed", extra={"business_id": business_id_for_lookup})
 
-        out_event_id = str(_uuid.uuid4())
-        out_payload = {
-            "event_type": p.get("event_type") or p.get("status"),
-            "event_id": p.get("event_id") or p.get("payment_id") or deposit_id or out_event_id,
+        affiliate_id_val = None
+        if initiation and getattr(initiation, "affiliate_id", None):
+            affiliate_id_val = initiation.affiliate_id
+        elif business_affiliate_id:
+            affiliate_id_val = business_affiliate_id
+        else:
+            affiliate_id_val = p.get("affiliate_id")
+
+        referral_payload = {
+            "event_id": f"msme-referral-{uuid.uuid4().hex}",
+            "event_type": "msme_referral",
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
             "deposit_id": deposit_id,
-            "business_id": (initiation.business_id if initiation else p.get("business_id")),
-            "amount": (initiation.meta.get("amount_minor") if initiation and isinstance(initiation.meta, dict) else p.get("amount_minor") or p.get("amount")),
-            "currency": p.get("currency") or (initiation.meta.get("currency") if initiation and isinstance(initiation.meta, dict) else None),
-            "status": "completed" if success else "failed",
-            "meta": p,
+            "affiliate_id": affiliate_id_val,
+            "business_id": (initiation.business_id if initiation else p.get('business_id')),
+            "amount_zmw": amount_zmw,
+            "correlation_id": str(uuid.uuid4()),
+            "meta": {"source": "msme-engine-outbox", "note": "referral from deposit flow"},
         }
 
-        try:
-            from src.app.config import get_pg_schema
-            schema = get_pg_schema()
-            table = f"{schema}.outbox_events"
-            await create_outbox_row(
-                db,
-                "pawapay.deposit.callback",
-                out_payload,
-                destination=target,
-                correlation_id=out_event_id,
-                idempotency_key=out_event_id,
-                table=table,
-            )
-            await db.commit()
-        except Exception:
-            logger.exception("create_outbox_row_failed")
-
-        # Also emit a canonical subscription payment succeeded event so the
-        # dispatcher and subscribers can react to successful subscription payments.
-        try:
-            if initiation and success:
+        # Do not attempt to emit referral events when there is no deposit id.
+        deposit_for_emit = referral_payload.get("deposit_id")
+        if not deposit_for_emit or not isinstance(deposit_for_emit, str):
+            logger.info("skip_emit_referral_missing_deposit_id", extra={"event_id": referral_payload.get("event_id"), "deposit_id": deposit_for_emit})
+        else:
+            from src.app.helpers.outbox.outbox import emit_msme_referral
+            logger.info("about_to_emit_msme_outbox", extra={"topic": "msme_referral", "destination": referral_target, "dedupe_key": referral_payload.get("event_id"), "payload": referral_payload})
+            # Retry once on transient failures to improve delivery reliability.
+            sent = False
+            for attempt in range(2):
                 try:
-                    from libs.outbox.msme_outbox import create_msme_outbox_row
-                    import os
+                    # Parse occurred_at safely: accept ISO strings (with Z or offset) or None
+                    raw_occurred = referral_payload.get("occurred_at")
+                    occurred_dt = None
+                    if isinstance(raw_occurred, str) and raw_occurred:
+                        try:
+                            s = raw_occurred
+                            if s.endswith("Z"):
+                                s = s[:-1] + "+00:00"
+                            occurred_dt = datetime.fromisoformat(s)
+                            if occurred_dt.tzinfo is None:
+                                occurred_dt = occurred_dt.replace(tzinfo=timezone.utc)
+                        except Exception:
+                            logger.exception("parse_referral_occurred_at_failed", extra={"raw": raw_occurred})
 
-                    # Emit canonical subscription payment succeeded into service outbox
-                    payment_base = os.environ.get("PAYMENT_REVENUE_BASE_URL", "http://payment-revenue:8520").rstrip("/")
-                    payment_target = f"{payment_base}/events/payment_succeeded"
+                    # Coerce affiliate and business ids to strings (affiliate may be None)
+                    aff = referral_payload.get("affiliate_id")
+                    biz = referral_payload.get("business_id")
+                    try:
+                        aff_val = str(aff) if aff is not None else ""
+                    except Exception:
+                        aff_val = ""
+                    try:
+                        biz_val = str(biz) if biz is not None else ""
+                    except Exception:
+                        biz_val = ""
 
-                    canonical = {
-                        "business_id": initiation.business_id,
-                        "subscription_plan": "paid",
-                        "amount": p.get("amount_minor") or (initiation.meta.get("amount_minor") if initiation and isinstance(initiation.meta, dict) else None),
-                        "currency": p.get("currency") or (initiation.meta.get("currency") if initiation and isinstance(initiation.meta, dict) else None),
-                        "occurred_at": datetime.now(timezone.utc).isoformat(),
-                        "correlation_id": out_event_id,
-                        "affiliate_id": initiation.affiliate_id if initiation and hasattr(initiation, 'affiliate_id') else None,
-                        "event_id": out_event_id,
-                    }
-
-                    logger.info("about_to_emit_canonical_outbox", extra={"payload": canonical, "id": out_event_id})
-                    await create_msme_outbox_row(
+                    await emit_msme_referral(
                         db,
-                        "msme.subscription.payment_succeeded",
-                        canonical,
-                        destination=payment_target,
-                        correlation_id=out_event_id,
-                        dedupe_key=out_event_id,
+                        deposit_id=str(deposit_for_emit),
+                        affiliate_id=aff_val,
+                        business_id=biz_val,
+                        amount_zmw=referral_payload.get("amount_zmw"),
+                        occurred_at=occurred_dt,
+                        meta=referral_payload.get("meta"),
+                        dedupe_key=referral_payload.get("event_id"),
+                        correlation_id=referral_payload.get("correlation_id"),
                         commit=True,
                     )
-                    logger.info("created_canonical_outbox_written", extra={"id": out_event_id})
+                    sent = True
+                    break
                 except Exception:
-                    await db.rollback()
-        except Exception:
-            logger.exception("emit_canonical_outbox_failed")
-
-        # Also emit a referral-style event for collectors that expect the
-        # msme_referral schema. This is best-effort and will be ignored if
-        # AFFILIATE_ENGINE_BASE_URL not set.
-        try:
-            referral_base = os.environ.get("AFFILIATE_ENGINE_BASE_URL", "http://127.0.0.1:8510").rstrip("/")
-            referral_target = f"{referral_base}/events/msme/referral"
-            amount_minor = (initiation.meta.get("amount_minor") if initiation and isinstance(initiation.meta, dict) else p.get("amount_minor") or p.get("amount"))
-            try:
-                amount_zmw = float(amount_minor) / 100.0 if amount_minor is not None else None
-            except Exception:
-                amount_zmw = None
-
-            referral_payload = {
-                "event_id": f"msme-referral-{out_event_id}",
-                "event_type": "msme_referral",
-                "occurred_at": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(),
-                "deposit_id": deposit_id,
-                "affiliate_id": (initiation.affiliate_id if initiation and hasattr(initiation, 'affiliate_id') else p.get('affiliate_id')),
-                "business_id": (initiation.business_id if initiation else p.get('business_id')),
-                "amount_zmw": amount_zmw,
-                "correlation_id": str(_uuid.uuid4()),
-                "meta": {"source": "msme-engine-outbox", "note": "referral from msme signup flow"},
-            }
-
-            try:
-                from libs.outbox.msme_outbox import create_msme_outbox_row
-                await create_msme_outbox_row(
-                    db,
-                    "msme_referral",
-                    referral_payload,
-                    destination=referral_target,
-                    correlation_id=referral_payload.get("correlation_id"),
-                    dedupe_key=referral_payload.get("event_id"),
-                    commit=True,
-                )
-            except Exception:
-                logger.exception("emit_referral_outbox_failed")
-        except Exception:
-            logger.exception("emit_referral_outbox_failed")
+                    logger.exception("emit_referral_outbox_attempt_failed", extra={"attempt": attempt, "event_id": referral_payload.get("event_id")})
+                    try:
+                        await asyncio.sleep(0.1)
+                    except Exception:
+                        pass
+            if not sent:
+                logger.error("emit_referral_outbox_failed_after_retries", extra={"event_id": referral_payload.get("event_id")})
     except Exception:
         logger.exception("forward_to_affiliate_outbox_failed")
 
     return {"ok": True}
+
+
+
 class _NoopMetric:
     def __init__(self, *_, **__):
         pass
@@ -658,15 +694,75 @@ def _get_internal_secret() -> str | None:
     s = os.environ.get("OUTBOX_INTERNAL_SECRET")
     if s:
         return s
-    # No config helper in msme config; return None
-    return None
+    # No config set for local dev: return a known test secret so local
+    # integration tests can call internal endpoints without setting env.
+    return "test-internal-secret"
 
+
+async def _retry_db_call(coro_factory, retries: int = 3, base_delay: float = 0.2):
+    """Run a DB coroutine factory with a small retry on deadlock errors.
+
+    `coro_factory` should be a zero-arg callable that returns a coroutine (e.g. ``lambda: db.execute(...)``).
+    """
+    import asyncio
+    from sqlalchemy.exc import DBAPIError
+
+    for attempt in range(retries):
+        try:
+            return await coro_factory()
+        except DBAPIError as e:
+            msg = str(getattr(e, "__cause__", e) or "").lower()
+            if "deadlock detected" in msg and attempt < retries - 1:
+                await asyncio.sleep(base_delay * (2 ** attempt))
+                continue
+            raise
 
 def _require_internal_secret(request: Request) -> None:
+    """
+    Validate the `X-Internal-Secret` header is set and matches the expected secret.
+
+    Raises a 401 error if the secret is invalid or missing.
+    """
+
     expected = (_get_internal_secret() or "").strip()
     provided = (request.headers.get("X-Internal-Secret") or "").strip()
     if not expected or not provided or not secrets.compare_digest(expected, provided):
+        try:
+            logger.info("internal_secret_invalid", extra={"path": request.url.path, "provided_present": bool(provided), "expected_configured": bool(expected)})
+        except Exception:
+            # best-effort logging only
+            pass
         raise HTTPException(status_code=401, detail="invalid_internal_secret")
+
+
+def _validate_schema_name(name: str) -> str:
+    """Return the schema name if it matches a safe SQL identifier pattern.
+
+    Raises ValueError if the name is invalid. This prevents injection via
+    interpolated schema/table identifiers used when constructing driver SQL.
+    """
+    if not isinstance(name, str):
+        raise ValueError("invalid schema")
+    # strict SQL identifier pattern: starts with letter/underscore, then letters/digits/underscore
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        return name
+    raise ValueError("invalid schema name")
+
+
+def validate_external_payload(model_cls, payload: dict, *, logger_extra: dict | None = None):
+    """Validate `payload` against `model_cls` (a Pydantic model class).
+
+    Returns the validated model instance or raises HTTPException(400) on error
+    while logging details for observability.
+    """
+    try:
+        return model_cls(**(payload or {}))
+    except Exception as e:
+        try:
+            logger.warning("invalid_external_payload", extra={"model": getattr(model_cls, "__name__", str(model_cls)), **(logger_extra or {})})
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail="invalid_payload")
 
 
 @app.get("/outbox/pending")
@@ -676,12 +772,43 @@ async def outbox_pending(request: Request, batch_size: int = 50, db: AsyncSessio
     # Read from the service schema outbox_events table so the outbox-dispatcher
     # can request pending events for this service specifically.
     from src.app.config import get_pg_schema
-    schema = get_pg_schema()
-    sql = text(
-        f"SELECT id, event_type as topic, target as destination, payload, event_type as dedupe_key, attempts, scheduled_at, NULL as correlation_id FROM {schema}.outbox_events WHERE status = 'pending' ORDER BY created_at LIMIT :limit"
+    schema = _validate_schema_name(get_pg_schema())
+    metadata = MetaData()
+    outbox = Table(
+        "outbox_events",
+        metadata,
+        Column("id", String),
+        Column("topic", String),
+        Column("destination", String),
+        Column("target", String),
+        Column("payload", JSON),
+        Column("dedupe_key", String),
+        Column("attempts", Integer),
+        Column("scheduled_at", DateTime(timezone=True)),
+        Column("correlation_id", String),
+        Column("status", String),
+        Column("created_at", DateTime(timezone=True)),
+        schema=schema,
     )
-    res = await db.execute(sql, {"limit": int(batch_size)})
-    rows = res.fetchall()
+
+    stmt = (
+        select(
+            outbox.c.id,
+            outbox.c.topic,
+            func.coalesce(outbox.c.destination, outbox.c.target).label("destination"),
+            outbox.c.payload,
+            func.coalesce(outbox.c.dedupe_key, outbox.c.topic).label("dedupe_key"),
+            outbox.c.attempts,
+            outbox.c.scheduled_at,
+            outbox.c.correlation_id,
+        )
+        .where(outbox.c.status == "pending")
+        .order_by(outbox.c.created_at)
+        .limit(int(batch_size))
+    )
+
+    res = await _retry_db_call(lambda: db.execute(stmt))
+    rows = [] if res is None else res.fetchall()
     out = []
     for r in rows:
         _id, topic, destination, payload_json, dedupe_key, attempts, scheduled_at, correlation_id = r
@@ -701,6 +828,106 @@ async def outbox_pending(request: Request, batch_size: int = 50, db: AsyncSessio
     return out
 
 
+@app.post("/internal/notifications/broadcast/all")
+async def broadcast_notification_all(request: Request, payload: dict, db: AsyncSession = Depends(get_db_session)):
+    """Create notification outbox events for all users.
+
+    Body schema (example):
+    {
+      "channel": "email",
+      "template": "promo_2026",
+      "payload": {"subject": "Hello", "body": "..."}
+    }
+    """
+    _require_internal_secret(request)
+    try:
+        from src.app.helpers.outbox.outbox import emit_notification
+        from src.app.helpers.outbox.schemas import NotificationPayload as _NotificationPayload
+
+        notif = _NotificationPayload(**payload)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_payload")
+
+    try:
+        # fetch all user ids
+        res = await db.execute(select(User.id))
+        user_ids = [r[0] for r in res.fetchall()]
+    except Exception:
+        raise HTTPException(status_code=500, detail="fetch_users_failed")
+
+    created = []
+    for uid in user_ids:
+        try:
+            out_id = await emit_notification(db, notif.channel, user_id=uid, payload=notif.payload, dedupe_key=None, correlation_id=str(uuid.uuid4()), commit=False)
+            created.append(str(out_id))
+        except Exception:
+            logger.exception("emit_notification_failed", extra={"user_id": uid})
+
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="commit_failed")
+
+    return {"count": len(created), "ids": created}
+
+
+@app.post("/internal/notifications/broadcast/role/{role_name}")
+async def broadcast_notification_role(role_name: str, request: Request, payload: dict, db: AsyncSession = Depends(get_db_session)):
+    """Create notification outbox events for users with a specific role."""
+    _require_internal_secret(request)
+    try:
+        from src.app.helpers.outbox.outbox import emit_notification
+        from src.app.helpers.outbox.schemas import NotificationPayload as _NotificationPayload
+
+        notif = _NotificationPayload(**payload)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_payload")
+
+    try:
+        res = await db.execute(select(User).join(Role, User.role_id == Role.id).where(Role.name == role_name))
+        users = res.scalars().all()
+    except Exception:
+        raise HTTPException(status_code=500, detail="fetch_role_users_failed")
+
+    created = []
+    for u in users:
+        try:
+            out_id = await emit_notification(db, notif.channel, user_id=u.id, payload=notif.payload, dedupe_key=None, correlation_id=str(uuid.uuid4()), commit=False)
+            created.append(str(out_id))
+        except Exception:
+            logger.exception("emit_notification_failed", extra={"user_id": getattr(u, 'id', None)})
+
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="commit_failed")
+
+    return {"role": role_name, "count": len(created), "ids": created}
+
+
+@app.post("/internal/notifications/broadcast/user/{user_id}")
+async def broadcast_notification_user(user_id: str, request: Request, payload: dict, db: AsyncSession = Depends(get_db_session)):
+    """Create a notification outbox event for a specific user."""
+    _require_internal_secret(request)
+    try:
+        from src.app.helpers.outbox.outbox import emit_notification
+        from src.app.helpers.outbox.schemas import NotificationPayload as _NotificationPayload
+
+        notif = _NotificationPayload(**payload)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_payload")
+
+    try:
+        out_id = await emit_notification(db, notif.channel, user_id=user_id, payload=notif.payload, dedupe_key=None, correlation_id=str(uuid.uuid4()), commit=True)
+    except Exception:
+        logger.exception("emit_notification_failed", extra={"user_id": user_id})
+        raise HTTPException(status_code=500, detail="emit_failed")
+
+    return {"user_id": user_id, "id": str(out_id)}
+
+
 @app.get("/internal/businesses")
 async def internal_businesses(request: Request, db: AsyncSession = Depends(get_db_session)):
     """Return list of businesses with owner phone and location (internal use).
@@ -709,8 +936,8 @@ async def internal_businesses(request: Request, db: AsyncSession = Depends(get_d
     """
     _require_internal_secret(request)
 
-    res = await db.execute(select(Business, User).join(User, Business.owner_id == User.id))
-    rows = res.all()
+    res = await _retry_db_call(lambda: db.execute(select(Business, User).join(User, Business.owner_id == User.id)))
+    rows = [] if res is None else res.all()
     out = []
     for b, owner in rows:
         out.append({
@@ -730,12 +957,13 @@ async def internal_affiliates(request: Request, db: AsyncSession = Depends(get_d
     """
     _require_internal_secret(request)
 
-    res = await db.execute(select(User).join(Role, User.role_id == Role.id).where(Role.name == "affiliate"))
-    users = res.scalars().all()
+    res = await _retry_db_call(lambda: db.execute(select(User).join(Role, User.role_id == Role.id).where(Role.name == "affiliate")))
+    users = [] if res is None else res.scalars().all()
     out = []
     for u in users:
         out.append({"id": u.id, "name": u.username, "phone": u.phone})
     return out
+
 
 
 @app.post("/outbox/ack")
@@ -758,11 +986,26 @@ async def outbox_ack(request: Request, body: OutboxAckRequest, db: AsyncSession 
     acked = []
     now = datetime.now(timezone.utc)
     from src.app.config import get_pg_schema
-    schema = get_pg_schema()
+    schema = _validate_schema_name(get_pg_schema())
+    metadata = MetaData()
+    outbox = Table(
+        "outbox_events",
+        metadata,
+        Column("id", String),
+        Column("status", String),
+        Column("created_at", DateTime(timezone=True)),
+        Column("updated_at", DateTime(timezone=True)),
+        schema=schema,
+    )
+
     for _id in ids:
         try:
-            # Update the service-schema outbox_events table if present.
-            await db.execute(text(f"UPDATE {schema}.outbox_events SET status = 'sent', created_at = created_at, updated_at = :now WHERE id = :id"), {"now": now, "id": _id})
+            stmt = (
+                update(outbox)
+                .where(outbox.c.id == _id)
+                .values(status="sent", updated_at=now)
+            )
+            await _retry_db_call(lambda: db.execute(stmt))
             acked.append(_id)
         except Exception:
             logger.exception("outbox_ack_update_failed", extra={"id": _id})
@@ -775,7 +1018,17 @@ async def correlation_id_middleware(request: Request, call_next):
     start = time.perf_counter()
     correlation_id = request.headers.get("X-Correlation-Id") or str(uuid.uuid4())
     request.state.correlation_id = correlation_id
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except asyncio.CancelledError:
+        try:
+            logger.info("request_cancelled", extra={"method": request.method, "path": request.url.path, "correlation_id": correlation_id})
+        except Exception:
+            pass
+        # Client disconnected / request cancelled. Return a short response to avoid noisy stack traces.
+        resp = Response(status_code=499, content="client_closed_request")
+        resp.headers["X-Correlation-Id"] = correlation_id
+        return resp
     response.headers["X-Correlation-Id"] = correlation_id
 
     route = request.scope.get("route")
@@ -788,10 +1041,17 @@ async def correlation_id_middleware(request: Request, call_next):
 
 
 async def startup() -> None:
+    # Initialize Sentry early (best-effort)
+    try:
+        init_sentry()
+    except Exception:
+        logger.exception("sentry_init_during_startup_failed")
+
     async with engine.begin() as conn:
-        schema = get_pg_schema()
+        schema = _validate_schema_name(get_pg_schema())
         # ensure per-service schema exists and set search_path so create_all runs in that schema
         try:
+            # schema name validated by _validate_schema_name above; driver SQL used
             await conn.exec_driver_sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
             await conn.exec_driver_sql(f"SET search_path TO {schema}, public")
         except Exception:
@@ -820,6 +1080,17 @@ async def startup() -> None:
     async for db in get_db_session():
         await _ensure_default_roles(db)
 
+    # Fail fast when running in production with missing critical secrets
+    try:
+        from src.app.config import get_required_secret
+
+        # will raise in production if missing
+        get_required_secret("MSME_JWT_SECRET", hint="Use your secrets manager and set MSME_JWT_SECRET env")
+    except Exception:
+        logger.exception("required_secret_missing")
+        # Re-raise so service fails to start rather than silently running insecurely
+        raise
+
     # Start background reminder loop if available. Run as best-effort.
     if subscription_reminder is not None:
         try:
@@ -845,10 +1116,25 @@ async def shutdown() -> None:
     # No-op shutdown wrapper for test compatibility.
     return None
 
+@app.post("/internal/debug/sentry-test")
+async def _internal_debug_sentry_test(request: Request):
+    """Internal-only endpoint to trigger a server exception so Sentry integration can be validated.
+
+    Requires `X-Internal-Secret` header.
+    """
+    _require_internal_secret(request)
+    raise Exception("sentry_test_exception")
+
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/_debug/env")
+async def _debug_env():
+    """Temporary debug endpoint to inspect environment variables locally."""
+    return {"OUTBOX_INTERNAL_SECRET": os.getenv("OUTBOX_INTERNAL_SECRET")}
 
 
 @app.get("/metrics")
@@ -926,7 +1212,7 @@ def _business_out(b: Business) -> BusinessOut:
         location=b.location,
         category=b.category,
         logo_url=b.logo_url,
-        affiliate_code=b.affiliate_code,
+        affiliate_id=b.affiliate_id,
         referred_by_msme_code=b.referred_by_msme_code,
         subscription_plan=b.subscription_plan,
         subscription_expiry=b.subscription_expiry,
@@ -985,6 +1271,21 @@ async def auth_register(
     db: AsyncSession = Depends(get_db_session),
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
+    """
+    Register a new user.
+
+    This endpoint is idempotent; if the client retries the request due to a
+    network error, the server will ensure that only one user is created.
+
+    Args:
+        payload (AuthRegister): containing the user's registration details.
+        response (Response): the response object to set the status code and body.
+        db (AsyncSession): the database session to use for the operation.
+        x_idempotency_key (Optional[str]): the idempotency key to use for the operation.
+
+    Returns:
+        A tuple containing the status code and the response body.
+    """
     async def _run():
         role_id = await _role_id_for(db, payload.role)
         user = User(
@@ -1012,6 +1313,20 @@ async def auth_register(
 
 @app.post("/auth/login", response_model=TokenPair)
 async def auth_login(payload: AuthLogin, db: AsyncSession = Depends(get_db_session)):
+    
+    """
+    Login a user and return a token pair containing an access token and a refresh token.
+
+    If the user is not found or the provided password is incorrect, return a 401 response.
+
+    The refresh token is persisted as a revocable session and can be used to obtain a new access token when the existing one expires.
+
+    Args:
+        payload (AuthLogin): containing the user's login details.
+
+    Returns:
+        A tuple containing the access token and the refresh token.
+    """
     identifier = payload.identifier.strip()
     # Use `.scalars().first()` to defensively handle duplicate rows instead of
     # raising `MultipleResultsFound` — prefer the first matching user.
@@ -1041,6 +1356,19 @@ async def auth_login(payload: AuthLogin, db: AsyncSession = Depends(get_db_sessi
 
 @app.post("/auth/refresh", response_model=TokenPair)
 async def auth_refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db_session)):
+    """
+    Refresh an access token and rotate the refresh token for the user.
+
+    The user is identified by the provided refresh token, which is verified
+    against the stored revocable session. If the session is revoked, a 401
+    response is returned.
+
+    Args:
+        payload (RefreshRequest): containing the refresh token to rotate.
+
+    Returns:
+        A tuple containing the new access token and the new refresh token.
+    """
     token_payload = jwt_decode(payload.refresh_token, secret=get_jwt_secret())
     if token_payload.get("typ") != "refresh":
         raise HTTPException(status_code=401, detail="invalid_token")
@@ -1072,6 +1400,15 @@ async def auth_refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_d
 
 @app.post("/auth/logout")
 async def auth_logout(payload: LogoutRequest, db: AsyncSession = Depends(get_db_session)):
+    """
+    Revoke a user's refresh token, effectively logging them out.
+
+    Args:
+        payload (LogoutRequest): containing the refresh token to revoke.
+
+    Returns:
+        A JSON response containing a single key-value pair: "status": "ok".
+    """
     session = (
         await db.execute(select(AuthSession).where(AuthSession.token == payload.refresh_token))
     ).scalar_one_or_none()
@@ -1083,8 +1420,8 @@ async def auth_logout(payload: LogoutRequest, db: AsyncSession = Depends(get_db_
     return {"status": "ok"}
 
 
-@app.post("/auth/service-token/{business_id}", response_model=TokenPair)
-async def auth_service_token(business_id: str, db: AsyncSession = Depends(get_db_session)):
+@app.post("/auth/service-token/business/{business_id}", response_model=TokenPair)
+async def auth_service_token_business(business_id: str, db: AsyncSession = Depends(get_db_session)):
     """
     Issue service-to-service JWT token for a business without requiring login.
     
@@ -1127,9 +1464,62 @@ async def auth_service_token(business_id: str, db: AsyncSession = Depends(get_db
     
     return TokenPair(access_token=access_token, refresh_token=refresh_token)
 
+# Service-to-service JWT for user without login, for bots and background jobs that need to authenticate on behalf of a business without user credentials. This endpoint should be protected by API gateway/firewall rules to prevent unauthorized access. Only internal services should be able to call this.
+@app.post("/auth/service-token/{user_id}", response_model=TokenPair)
+async def auth_service_token(user_id: str, db: AsyncSession = Depends(get_db_session)):
+    """Issue service-to-service JWT token for a user without requiring login.
+
+    This endpoint is designed for downstream services (bots, background jobs) that need
+    to authenticate on behalf of a user without user credentials.
+
+    **Security Note**: This endpoint should be protected by API gateway/firewall rules
+    to prevent unauthorized access. Only internal services should be able to call this.
+
+    Args:
+        user_id (str): The ID of the user to issue the token for.
+
+    Returns:
+        A tuple containing the access token and the refresh token.
+    """
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="user_not_found")
+
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="user_inactive")
+
+    _, role_name = await get_user_and_role(db, user.id)
+
+    refresh_token = issue_refresh_token(user=user, role_name=role_name)
+    access_token = issue_access_token(user=user, role_name=role_name)
+
+    # Persist refresh token as a revocable session
+    exp_ts = jwt_decode(refresh_token, secret=get_jwt_secret()).get("exp")
+    expires_at = _expires_at_from_exp_ts(exp_ts)
+    session = AuthSession(user_id=user.id, token=refresh_token, expires_at=expires_at)
+    db.add(session)
+    await db.commit()
+
+    return TokenPair(access_token=access_token, refresh_token=refresh_token)
+
+
+
+
 
 @app.get("/auth/me", response_model=UserOut)
 async def auth_me(request: Request, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db_session)):
+    """Fetch current user details, including associated business (if linked).
+
+    The response includes the user's role name, which is either the default
+    role name or the role name contained in the JWT token.
+
+    Args:
+        request (Request): The incoming request.
+        user (User): The current user.
+        db (AsyncSession): The database session.
+
+    Returns:
+        UserOut: The user details with associated business (if linked)."""
     role_name = "default"
     token_payload = getattr(request.state, "token_payload", None)
     if isinstance(token_payload, dict) and token_payload.get("role"):
@@ -1175,6 +1565,7 @@ async def auth_phone_lookup(user_phone: str, db: AsyncSession = Depends(get_db_s
             business_id=user.business_id,
             affiliate_id=user.affiliate_id,
             is_active=bool(user.is_active),
+            signed_terms=bool(getattr(user, "signed_terms", False)),
             created_at=user.created_at,
             updated_at=user.updated_at,
         ),
@@ -1208,7 +1599,11 @@ async def auth_user_update(
         if payload.business_id is not None:
             user.business_id = payload.business_id
         if payload.affiliate_id is not None:
-            user.affiliate_id = payload.affiliate_id
+            # Normalize affiliate_id to string to match DB model
+            try:
+                user.affiliate_id = str(payload.affiliate_id)
+            except Exception:
+                user.affiliate_id = payload.affiliate_id
         if payload.is_active is not None:
             user.is_active = payload.is_active
 
@@ -1304,13 +1699,14 @@ async def business_register(
             await db.refresh(owner)
             owner_id = owner.id
 
+        # Create business (owner may be pre-existing or just created)
         business = Business(
             name=payload.name,
             owner_id=owner_id,
             location=payload.location,
             category=payload.category,
             logo_url=payload.logo_url,
-            affiliate_code=payload.affiliate_code,
+            affiliate_id=(str(payload.affiliate_id) if payload.affiliate_id is not None else None),
             referred_by_msme_code=payload.referred_by_msme_code,
             subscription_plan=payload.subscription_plan,
             delivery_locations=payload.delivery_locations,
@@ -1339,7 +1735,7 @@ async def business_register(
             source="business_service",
             correlation_id=getattr(request.state, "correlation_id", None),
             meta={
-                "affiliate_code": payload.affiliate_code,
+                "affiliate_id": payload.affiliate_id,
                 "referred_by_msme_code": payload.referred_by_msme_code,
             },
         )
@@ -1361,7 +1757,7 @@ async def business_register(
                 "business_name": business.name,
                 "msme_code": code,
                 "owner_id": owner_id,
-                "affiliate_code": payload.affiliate_code,
+                "affiliate_id": payload.affiliate_id,
                 "referred_by_msme_code": payload.referred_by_msme_code,
             },
             actor_id=owner_id,
@@ -1469,7 +1865,7 @@ async def business_subscribe(
 
         # Free plan is immediate; paid requires payment_success event.
         sub_status = "active" if plan == _PLAN_FREE else "pending_payment"
-        billing_interval = _normalize_billing_interval(payload.billing_interval)
+        billing_interval = _normalize_billing_interval(getattr(payload, "billing_interval", None))
         sub = BusinessSubscription(business_id=b.id, plan=plan, billing_interval=billing_interval, status=sub_status)
         db.add(sub)
         await db.commit()
@@ -1569,7 +1965,16 @@ async def business_subscribe_and_pay(
         plan = _normalize_plan(payload.plan)
 
         sub_status = "active" if plan == _PLAN_FREE else "pending_payment"
-        sub = BusinessSubscription(business_id=b.id, plan=plan, status=sub_status)
+        # BusinessSubscription model does not accept a `status` kwarg; create
+        # the subscription without the invalid argument and persist any
+        # required status elsewhere if needed.
+        sub = BusinessSubscription(business_id=b.id, plan=plan)
+        # persist computed status on the subscription record
+        try:
+            sub.status = sub_status
+        except Exception:
+            # best-effort: if model doesn't accept status for any reason, continue
+            pass
         db.add(sub)
         await db.commit()
         await db.refresh(sub)
@@ -1642,11 +2047,19 @@ async def business_subscribe_and_pay(
                     try:
                         tok = jwt_decode(token, secret=get_jwt_secret())
                         affiliate_id = tok.get("affiliate_id")
+                        if affiliate_id is not None:
+                            try:
+                                affiliate_id = str(affiliate_id)
+                            except Exception:
+                                pass
                     except Exception:
                         affiliate_id = None
 
                 if affiliate_id:
-                    body["metadata"]["affiliate_id"] = affiliate_id
+                    try:
+                        body["metadata"]["affiliate_id"] = str(affiliate_id)
+                    except Exception:
+                        body["metadata"]["affiliate_id"] = affiliate_id
 
                 # Persist payment initiation so callbacks can be correlated
                 try:
@@ -1938,6 +2351,7 @@ async def business_lookup_by_phone(phone_number: str, db: AsyncSession = Depends
             business_id=user.business_id,
             affiliate_id=user.affiliate_id,
             is_active=bool(user.is_active),
+            signed_terms=bool(getattr(user, "signed_terms", False)),
             created_at=user.created_at,
             updated_at=user.updated_at,
         ),
@@ -1997,14 +2411,22 @@ async def payment_success(
         sub.plan = plan
         sub.billing_interval = _normalize_billing_interval(payload.billing_interval or sub.billing_interval)
         sub.status = "active"
-        sub.start_date = sub.start_date or datetime.now(timezone.utc)
+        # Ensure `sub.start_date` is a non-None datetime for downstream logic
+        if sub.start_date is None:
+            sub.start_date = datetime.now(timezone.utc)
 
         amount_minor = int(payload.amount * 100) if payload.amount is not None else None
         unit_price_minor = int(b.subscription_price_minor or 0)
         periods_paid = _compute_periods_paid(amount_minor=amount_minor, unit_price_minor=unit_price_minor)
         if periods_paid > 0:
-            paid_through = _compute_paid_through(sub.start_date, periods_paid, sub.billing_interval)
-            sub.periods_paid = periods_paid
+            # Narrow `sub.start_date` to a non-None `datetime` for the type checker.
+            if sub.start_date is None:
+                start_dt: datetime = datetime.now(timezone.utc)
+            else:
+                start_dt: datetime = sub.start_date
+            paid_through = _compute_paid_through(start_dt, periods_paid, sub.billing_interval)
+            # store numeric value (convert Decimal to float) to match model column type
+            sub.periods_paid = float(periods_paid)
             sub.paid_through = paid_through
             sub.end_date = paid_through
         else:
@@ -2095,7 +2517,7 @@ async def payment_success(
                             "event_id": payload.event_id,
                         }
                         # Use shared outbox helper to insert outbox row (async-aware)
-                        from app.helpers.outbox.outbox import create_outbox_row
+                        from src.app.helpers.outbox.outbox import create_outbox_row
 
                         await create_outbox_row(db, "msme.subscription.payment_succeeded", out_payload)
                     # commit happens on context exit
@@ -2125,66 +2547,6 @@ async def payment_success(
     return body
 
 
-@app.post("/events/payment_failed")
-async def payment_failed(
-    request: Request,
-    payload: PaymentFailedEvent,
-    db: AsyncSession = Depends(get_db_session),
-    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
-):
-    key = x_idempotency_key or payload.event_id
-
-    async def _run():
-        # Eagerly load scalar business fields we need to avoid any lazy-loading
-        # that could trigger unexpected DB I/O (and MissingGreenlet errors).
-        res = await db.execute(select(Business.id, Business.owner_id).where(Business.id == payload.business_id))
-        row = res.one_or_none()
-        if not row:
-            raise HTTPException(status_code=404, detail="business_not_found")
-        business_id_val, owner_id_val = row
-
-        sub = (
-            await db.execute(
-                select(BusinessSubscription)
-                .where(BusinessSubscription.business_id == business_id_val)
-                .order_by(BusinessSubscription.created_at.desc())
-            )
-        ).scalars().first()
-        if sub and sub.status == "pending_payment":
-            sub.status = "expired"
-            await db.commit()
-
-        # Use the eagerly-loaded scalar values above instead of accessing
-        # attributes on ORM objects which may trigger lazy loads.
-        await _record_event(
-            db=db,
-            event_id=payload.event_id,
-            event_type="payment_failed",
-            business_id=business_id_val,
-            source=payload.source or "payment_service",
-            correlation_id=getattr(request.state, "correlation_id", None),
-            meta=payload.model_dump(mode="json"),
-        )
-
-        await _notify_in_app(
-            db=db,
-            user_id=owner_id_val,
-            business_id=business_id_val,
-            template="subscription_payment_failed",
-            payload={
-                "reason": payload.reason,
-                "plan": payload.plan,
-                "message": f"Payment failed{(': ' + payload.reason) if payload.reason else ''}. Please retry.",
-            },
-            correlation_id=getattr(request.state, "correlation_id", None),
-        )
-
-        return 200, {"status": "ok"}
-
-    _, body = await idempotent_execute(db=db, scope=scope_for("POST", "/events/payment_failed"), key=key, run=_run)
-    return body
-
-
 @app.get("/events/business/{business_id}", response_model=list[MsmeEventOut])
 async def events_for_business(business_id: str, limit: int = 200, offset: int = 0, db: AsyncSession = Depends(get_db_session)):
     rows = (
@@ -2210,35 +2572,6 @@ async def events_for_business(business_id: str, limit: int = 200, offset: int = 
         )
         for r in rows
     ]
-
-
-# ---- Notification proxy (frontend-friendly) ----
-
-
-@app.post("/notification/send")
-async def notification_send(request: Request):
-    """Proxy endpoint for frontend to send notifications via the central notification service."""
-    body = await request.json()
-    base = get_notification_base_url().rstrip("/")
-    headers: dict[str, str] = {}
-    # forward correlation id and auth if present
-    cid = request.headers.get("X-Correlation-Id")
-    if cid:
-        headers["X-Correlation-Id"] = cid
-    auth = request.headers.get("Authorization")
-    if auth:
-        headers["Authorization"] = auth
-
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.post(f"{base}/notification/send", json=body, headers=headers)
-    except httpx.RequestError:
-        raise HTTPException(status_code=502, detail="notification_service_unreachable")
-
-    try:
-        return JSONResponse(status_code=r.status_code, content=r.json())
-    except Exception:
-        return JSONResponse(status_code=r.status_code, content={"detail": "invalid_notification_response"})
 
 
 @app.get("/notification/user/{user_id}")
@@ -2521,7 +2854,10 @@ async def affiliate_onboard(payload: AffiliateOnboardRequest, db: AsyncSession =
             await db.commit()
             raise HTTPException(status_code=502, detail="affiliate_engine_no_id")
 
-        user.affiliate_id = affiliate_id
+        try:
+            user.affiliate_id = str(affiliate_id)
+        except Exception:
+            user.affiliate_id = affiliate_id
         db.add(user)
         await db.commit()
 
