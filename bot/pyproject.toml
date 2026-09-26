@@ -1,0 +1,79 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ntheemba"
+version = "0.12.0"
+description = "Ntheemba WhatsApp conversation and workflow orchestration engine."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [
+  { name = "NTheemba Digital Services" }
+]
+dependencies = [
+  "fastapi>=0.116,<1.0",
+  "pydantic>=2.11,<3.0",
+  "pydantic-settings>=2.8,<3.0",
+  "uvicorn[standard]>=0.34,<1.0",
+  "httpx>=0.28,<1.0",
+  "redis>=7.0,<9.0",
+    "psycopg[binary,pool]>=3.2,<4.0"
+]
+
+[project.scripts]
+ntheemba-inbound-worker = "ntheemba.inbound_worker:main"
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.15,<2.0",
+  "pytest>=8.3,<10.0",
+  "pytest-asyncio>=0.25,<2.0",
+  "ruff>=0.11,<1.0"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["ntheemba"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["ntheemba", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E",
+  "F",
+  "I",
+  "UP",
+  "B",
+  "ASYNC",
+  "RUF"
+]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+pretty = true
+show_error_codes = true
+plugins = ["pydantic.mypy"]
+
+[pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true

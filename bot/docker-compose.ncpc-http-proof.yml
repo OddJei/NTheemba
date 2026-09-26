@@ -1,0 +1,122 @@
+name: ntheemba-ncpc-http-proof
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nint
+      POSTGRES_USER: nint
+      POSTGRES_PASSWORD: ${NINT_POSTGRES_PASSWORD:?set a local synthetic proof password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [ncpc-private]
+
+  ncpc:
+    image: ncpc08-auth-ncpc:local
+    pull_policy: never
+    working_dir: /app
+    volumes:
+      - ../../central-catalogue/service:/app
+    environment:
+      PYTHONPATH: /app/src
+      NCPC_DATABASE_URL: postgresql+psycopg://nint:${NINT_POSTGRES_PASSWORD}@postgres:5432/nint
+      NCPC_ENVIRONMENT: test
+      NCPC_ADMIN_BOOTSTRAP_TOKEN: ${NINT_NCPC_ADMIN_TOKEN:?set a local synthetic admin token}
+      NCPC_NTHEEMBA_BOOTSTRAP_TOKEN: ${NINT_NCPC_NTHEEMBA_TOKEN:?set a local synthetic Ntheemba token}
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn ncpc_service.api:app --host 0.0.0.0 --port 8080"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 3s
+      timeout: 10s
+      retries: 45
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [ncpc-private, integration]
+
+  tradeflow-a:
+    image: nds-local-ntheemba:latest
+    pull_policy: never
+    volumes: [".:/app"]
+    environment:
+      TRADEFLOW_ACCEPTANCE_TOKEN: local-proof-tradeflow-token
+      TRADEFLOW_ACCEPTANCE_BUSINESS_ID: nint-a
+      TRADEFLOW_ACCEPTANCE_PRODUCT_ID: NINT-A-ITEM
+      TRADEFLOW_ACCEPTANCE_SELLING_PRICE: "12.50"
+      TRADEFLOW_ACCEPTANCE_NCPC_PRODUCT_ID: PRD-000001
+      TRADEFLOW_ACCEPTANCE_NCPC_VARIANT_ID: VAR-000001
+    command: ["sh", "-c", "openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout /tmp/key -out /tmp/cert -subj /CN=tradeflow-a >/dev/null 2>&1 && exec uvicorn ntheemba.devtools.tradeflow_acceptance_stub:app --host 0.0.0.0 --port 8443 --ssl-keyfile /tmp/key --ssl-certfile /tmp/cert"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import ssl, urllib.request; urllib.request.urlopen('https://127.0.0.1:8443/health', context=ssl._create_unverified_context(), timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [integration]
+
+  tradeflow-b:
+    image: nds-local-ntheemba:latest
+    pull_policy: never
+    volumes: [".:/app"]
+    environment:
+      TRADEFLOW_ACCEPTANCE_TOKEN: local-proof-tradeflow-token
+      TRADEFLOW_ACCEPTANCE_BUSINESS_ID: nint-b
+      TRADEFLOW_ACCEPTANCE_PRODUCT_ID: NINT-B-ITEM
+      TRADEFLOW_ACCEPTANCE_SELLING_PRICE: "19.75"
+      TRADEFLOW_ACCEPTANCE_AVAILABILITY: out_of_stock
+      TRADEFLOW_ACCEPTANCE_NCPC_PRODUCT_ID: PRD-000001
+      TRADEFLOW_ACCEPTANCE_NCPC_VARIANT_ID: VAR-000001
+    command: ["sh", "-c", "openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout /tmp/key -out /tmp/cert -subj /CN=tradeflow-b >/dev/null 2>&1 && exec uvicorn ntheemba.devtools.tradeflow_acceptance_stub:app --host 0.0.0.0 --port 8443 --ssl-keyfile /tmp/key --ssl-certfile /tmp/cert"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import ssl, urllib.request; urllib.request.urlopen('https://127.0.0.1:8443/health', context=ssl._create_unverified_context(), timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [integration]
+
+  proof:
+    image: nds-local-ntheemba-worker:latest
+    pull_policy: never
+    volumes: [".:/app"]
+    environment:
+      PYTHONPATH: /app
+      NCPC_PROOF_URL: http://ncpc:8080
+      NTHEEMBA_NCPC_API_TOKEN: ${NINT_NCPC_NTHEEMBA_TOKEN:?set a local synthetic Ntheemba token}
+    command: ["python", "scripts/prove_ncpc_http_integration.py"]
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      tradeflow-a:
+        condition: service_healthy
+      tradeflow-b:
+        condition: service_healthy
+    networks: [integration]
+
+  seed:
+    image: nds-local-ntheemba-worker:latest
+    pull_policy: never
+    volumes: [".:/app"]
+    environment:
+      PYTHONPATH: /app
+      NCPC_PROOF_URL: http://ncpc:8080
+      NCPC_ADMIN_BOOTSTRAP_TOKEN: ${NINT_NCPC_ADMIN_TOKEN:?set a local synthetic admin token}
+    command: ["python", "scripts/seed_ncpc_http_integration.py"]
+    depends_on:
+      ncpc:
+        condition: service_healthy
+    networks: [integration]
+
+networks:
+  ncpc-private:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${NINT_NCPC_PRIVATE_SUBNET:-192.168.64.0/20}
+  integration:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${NINT_INTEGRATION_SUBNET:-192.168.240.0/20}

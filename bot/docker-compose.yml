@@ -1,0 +1,184 @@
+name: ntheemba-stack
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    init: true
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-ntheemba_local_redis_change_me}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$${REDIS_PASSWORD}"
+    ports:
+      - "${NTHEEMBA_REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping 2>/dev/null | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      messaging:
+        aliases:
+          - nds-streams-redis
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ntheemba}
+      POSTGRES_USER: ${POSTGRES_USER:-ntheemba}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ntheemba_local_change_me}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ntheemba-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ntheemba-migrate:
+    build:
+      context: .
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - python
+      - scripts/migrate_postgres.py
+      - --dsn
+      - postgresql://ntheemba:ntheemba_local_change_me@postgres:5432/ntheemba
+
+  ntheemba:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      ntheemba-migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      NTHEEMBA_REDIS_URL: redis://:${REDIS_PASSWORD:-ntheemba_local_redis_change_me}@redis:6379/0
+      NTHEEMBA_POSTGRES_DSN: postgresql://ntheemba:ntheemba_local_change_me@postgres:5432/ntheemba
+      NTHEEMBA_DEV_TOOLS_ALLOWED_NETWORKS: 0.0.0.0/0,::/0
+      NTHEEMBA_DEV_TOOLS_TOKEN: ${NTHEEMBA_DEV_TOOLS_TOKEN:-ntheemba-local-dev-token-change-me-123456}
+    ports:
+      - "${NTHEEMBA_PORT:-8000}:8000"
+    networks:
+      - default
+      - messaging
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  waha:
+    image: ${WAHA_IMAGE:-devlikeapro/waha:noweb-2026.7.2}
+    profiles:
+      - whatsapp
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ./nds-whatsapp-gateway-v1.0.0/.env
+    environment:
+      PORT: "3000"
+      WAHA_API_KEY: ${WAHA_API_KEY:-local-waha-api-key-change-me}
+      WHATSAPP_DEFAULT_ENGINE: ${WAHA_ENGINE:-NOWEB}
+      WAHA_DASHBOARD_ENABLED: "false"
+      WHATSAPP_SWAGGER_ENABLED: "false"
+      WAHA_LOG_LEVEL: ${WAHA_LOG_LEVEL:-info}
+    shm_size: "1gb"
+    volumes:
+      - waha-sessions:/app/.sessions
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3000/api/server/status',
+          {headers:{'X-Api-Key':process.env.WAHA_API_KEY}})
+          .then(r=>{if(!r.ok)process.exit(1)})
+          .catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    networks:
+      - provider
+
+  gateway:
+    build:
+      context: ./nds-whatsapp-gateway-v1.0.0
+    profiles:
+      - whatsapp
+    restart: unless-stopped
+    init: true
+    depends_on:
+      redis:
+        condition: service_healthy
+      waha:
+        condition: service_healthy
+    env_file:
+      - ./nds-whatsapp-gateway-v1.0.0/.env
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      WAHA_API_KEY: ${WAHA_API_KEY:-local-waha-api-key-change-me}
+      WAHA_WEBHOOK_HMAC_KEY: ${WAHA_WEBHOOK_HMAC_KEY:-local-waha-webhook-hmac-key-change-me}
+      METRICS_TOKEN: ${METRICS_TOKEN:-local-metrics-token-change-me-123456}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@example.local}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-local-admin-password-change-me}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-ntheemba_local_redis_change_me}@nds-streams-redis:6379/0
+      WAHA_BASE_URL: http://waha:3000
+      WAHA_WEBHOOK_URL: http://gateway:8080/webhooks/waha
+      INBOUND_STREAM: ntheemba:development:gateway:inbound
+      OUTBOUND_STREAM: ntheemba:development:gateway:outbound
+      DEAD_STREAM: ntheemba:development:gateway:outbound:dead-letter
+    ports:
+      - "${GATEWAY_BIND_ADDRESS:-0.0.0.0}:${GATEWAY_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - edge
+      - messaging
+      - provider
+
+volumes:
+  redis-data:
+  ntheemba-postgres-data:
+  waha-sessions:
+
+networks:
+  edge:
+  messaging:
+    name: ${MESSAGING_NETWORK_NAME:-nds-messaging}
+    internal: true
+  provider:
